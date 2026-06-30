@@ -1,0 +1,5 @@
+google-adk[extensions]
+google-cloud-firestore
+python-dotenv
+./trainingpeaks-mcp
+google-cloud-secret-manager

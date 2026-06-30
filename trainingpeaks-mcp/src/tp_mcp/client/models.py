@@ -1,0 +1,312 @@
+"""Pydantic models for TrainingPeaks API responses.
+
+These models extract only essential fields to minimize token consumption
+when returned to AI assistants.
+"""
+
+from datetime import date as date_type
+from typing import Annotated, Any
+
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+
+
+def _strip_datetime_to_date(v: Any) -> Any:
+    """Strip time/timezone from a datetime string so Pydantic takes the date
+    component directly, avoiding local-timezone conversion."""
+    if isinstance(v, str) and "T" in v:
+        return v.split("T")[0]
+    return v
+
+
+DateOnly = Annotated[date_type, BeforeValidator(_strip_datetime_to_date)]
+
+
+# Maps a TrainingPeaks base-sport id (``workoutTypeValueId``) to a sport name.
+#
+# The v6 workouts endpoints (list and single detail) do NOT return the legacy
+# ``workoutTypeFamilyId`` field; they carry the base sport in
+# ``workoutTypeValueId`` (the specific subtype, if any, lives in the separate
+# ``workoutSubTypeId`` field). The ids below match the families returned by
+# ``GET /fitness/v6/workouttypes`` and the values in ``SPORT_TYPE_MAP`` used by
+# the create/update tools, so the resolved name round-trips back into
+# ``tp_create_workout`` / ``tp_update_workout`` unchanged.
+WORKOUT_TYPE_VALUE_TO_SPORT: dict[int, str] = {
+    1: "Swim",
+    2: "Bike",
+    3: "Run",
+    4: "Brick",
+    5: "Crosstrain",
+    6: "Race",
+    7: "DayOff",
+    8: "MtnBike",
+    9: "Strength",
+    10: "Custom",
+    11: "XCSki",
+    12: "Rowing",
+    13: "Walk",
+    29: "Strength",  # newer Strength family (Mobility/Yoga/etc. subtypes)
+    100: "Other",
+}
+
+
+def _sport_from_type_value(value: Any) -> str | None:
+    """Resolve a TrainingPeaks base-sport name from a ``workoutTypeValueId``."""
+    if isinstance(value, bool):  # bool is an int subclass; never a valid id
+        return None
+    if isinstance(value, int):
+        return WORKOUT_TYPE_VALUE_TO_SPORT.get(value)
+    if isinstance(value, str):
+        try:
+            return WORKOUT_TYPE_VALUE_TO_SPORT.get(int(value))
+        except ValueError:
+            return None
+    return None
+
+
+class UserProfile(BaseModel):
+    """User profile information."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    athlete_id: int = Field(alias="athleteId")
+    user_id: int | None = Field(default=None, alias="userId")
+    email: str | None = Field(default=None, alias="username")
+    first_name: str | None = Field(default=None, alias="firstName")
+    last_name: str | None = Field(default=None, alias="lastName")
+    account_type: str | None = Field(default=None, alias="accountType")
+
+    @property
+    def name(self) -> str:
+        """Get full name."""
+        parts = [self.first_name, self.last_name]
+        return " ".join(p for p in parts if p) or "Unknown"
+
+
+class WorkoutSummary(BaseModel):
+    """Summary of a workout (for list responses)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: int = Field(alias="workoutId")
+    workout_date: DateOnly = Field(alias="workoutDay")
+    title: str | None = None
+    workout_type: str | int | None = Field(default=None, alias="workoutTypeValueId")
+    duration_planned: int | float | None = Field(default=None, alias="totalTimePlanned")
+    duration_actual: int | float | None = Field(default=None, alias="totalTime")
+    tss_planned: float | None = Field(default=None, alias="tssPlanned")
+    tss_actual: float | None = Field(default=None, alias="tssActual")
+    distance_planned: float | None = Field(default=None, alias="distancePlanned")
+    distance_actual: float | None = Field(default=None, alias="distance")
+    completed: bool | None = Field(default=None)
+    description: str | None = None
+    start_time: str | None = Field(default=None, alias="startTime")
+
+    @property
+    def date(self) -> date_type:
+        """Alias for workout_date for backwards compatibility."""
+        return self.workout_date
+
+    @property
+    def sport(self) -> str | None:
+        """Base sport name, derived from ``workoutTypeValueId``.
+
+        The v6 list response omits ``workoutTypeFamilyId``, so the sport is
+        resolved from the type value id present on every workout.
+        """
+        return _sport_from_type_value(self.workout_type)
+
+    @property
+    def is_completed(self) -> bool:
+        """Check if workout is completed."""
+        return bool(self.completed) or self.duration_actual is not None
+
+    @property
+    def workout_status(self) -> str:
+        """Get workout status as string."""
+        return "completed" if self.is_completed else "planned"
+
+
+class WorkoutInterval(BaseModel):
+    """Single interval in a workout structure."""
+
+    name: str | None = None
+    duration: int | None = None  # seconds
+    intensity_target: str | None = None
+    power_low: int | None = None
+    power_high: int | None = None
+    hr_low: int | None = None
+    hr_high: int | None = None
+    cadence_low: int | None = None
+    cadence_high: int | None = None
+    notes: str | None = None
+
+
+class WorkoutStructure(BaseModel):
+    """Structured workout details."""
+
+    warmup: list[WorkoutInterval] = Field(default_factory=list)
+    main_set: list[WorkoutInterval] = Field(default_factory=list)
+    cooldown: list[WorkoutInterval] = Field(default_factory=list)
+
+
+class WorkoutDetail(BaseModel):
+    """Full workout details."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: int = Field(alias="workoutId")
+    workout_date: DateOnly = Field(alias="workoutDay")
+    title: str | None = None
+    workout_type: str | int | None = Field(default=None, alias="workoutTypeValueId")
+    description: str | None = None
+    duration_planned: int | float | None = Field(default=None, alias="totalTimePlanned")
+    duration_actual: int | float | None = Field(default=None, alias="totalTime")
+    tss_planned: float | None = Field(default=None, alias="tssPlanned")
+    tss_actual: float | None = Field(default=None, alias="tssActual")
+    if_planned: float | None = Field(default=None, alias="ifPlanned")
+    if_actual: float | None = Field(default=None, alias="if")
+    distance_planned: float | None = Field(default=None, alias="distancePlanned")
+    distance_actual: float | None = Field(default=None, alias="distance")
+    calories: int | None = None
+    avg_power: float | None = Field(default=None, alias="powerAverage")
+    normalized_power: float | None = Field(default=None, alias="normalizedPowerActual")
+    avg_hr: int | None = Field(default=None, alias="heartRateAverage")
+    avg_cadence: float | None = Field(default=None, alias="cadenceAverage")
+    elevation_gain: float | None = Field(default=None, alias="elevationGain")
+    completed: bool | None = Field(default=None)
+    structure: dict[str, Any] | None = None
+
+    @property
+    def date(self) -> date_type:
+        """Alias for workout_date for backwards compatibility."""
+        return self.workout_date
+
+    @property
+    def sport(self) -> str | None:
+        """Base sport name, derived from ``workoutTypeValueId``.
+
+        The v6 detail response omits ``workoutTypeFamilyId``, so the sport is
+        resolved from the type value id present on every workout.
+        """
+        return _sport_from_type_value(self.workout_type)
+
+
+class AnalysisTotal(BaseModel):
+    """Single total metric from workout analysis."""
+
+    name: str
+    value: Any
+    unit: str | None = None
+
+
+class AnalysisChannel(BaseModel):
+    """Data channel with optional stats and zones."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    identifier: str | None = None
+    name: str | None = None
+    unit: str | None = None
+    min: float | None = None
+    max: float | None = None
+    average: float | None = None
+    zones: list[dict[str, Any]] | None = None
+
+
+class WorkoutAnalysis(BaseModel):
+    """Parsed workout analysis response."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    workout_id: int = Field(alias="workoutId")
+    start_timestamp: str | None = Field(default=None, alias="startTimestamp")
+    stop_timestamp: str | None = Field(default=None, alias="stopTimestamp")
+    totals: list[AnalysisTotal] = Field(default_factory=list)
+    data_elements: list[AnalysisChannel] = Field(default_factory=list, alias="dataElements")
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    lap_data: list[dict[str, Any]] = Field(default_factory=list, alias="lapData")
+    lap_columns: list[dict[str, Any]] = Field(default_factory=list, alias="lapColumns")
+
+
+class PeakData(BaseModel):
+    """Power or pace peak data point."""
+
+    duration: str  # e.g., "5s", "1m", "5m", "20m", "60m"
+    duration_seconds: int
+    value: float  # watts for power, pace for running
+    peak_date: DateOnly
+    activity_id: int | None = None
+
+    @property
+    def date(self) -> date_type:
+        """Alias for peak_date for backwards compatibility."""
+        return self.peak_date
+
+
+class PeaksResponse(BaseModel):
+    """Response containing peak data."""
+
+    peaks: list[PeakData]
+    sport: str
+    peak_type: str  # "power" or "pace"
+    days: int
+
+
+# Helper functions to parse API responses
+
+
+def parse_workout_analysis(data: dict[str, Any]) -> WorkoutAnalysis:
+    """Parse workout analysis from API response."""
+    return WorkoutAnalysis.model_validate(data)
+
+
+def parse_user_profile(data: dict[str, Any]) -> UserProfile:
+    """Parse user profile from API response."""
+    return UserProfile.model_validate(data)
+
+
+def parse_workout_summary(data: dict[str, Any]) -> WorkoutSummary:
+    """Parse workout summary from API response."""
+    return WorkoutSummary.model_validate(data)
+
+
+def parse_workout_list(data: list[dict[str, Any]]) -> list[WorkoutSummary]:
+    """Parse list of workout summaries."""
+    return [parse_workout_summary(w) for w in data]
+
+
+def parse_workout_detail(data: dict[str, Any]) -> WorkoutDetail:
+    """Parse full workout details from API response."""
+    return WorkoutDetail.model_validate(data)
+
+
+def duration_to_string(seconds: int) -> str:
+    """Convert seconds to human-readable duration string."""
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        minutes = seconds // 60
+        return f"{minutes}m"
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    if minutes:
+        return f"{hours}h{minutes}m"
+    return f"{hours}h"
+
+
+def parse_peak_duration(duration_str: str) -> int:
+    """Parse duration string to seconds.
+
+    Args:
+        duration_str: Duration like "5s", "1m", "5m", "20m", "60m"
+
+    Returns:
+        Duration in seconds.
+    """
+    if duration_str.endswith("s"):
+        return int(duration_str[:-1])
+    if duration_str.endswith("m"):
+        return int(duration_str[:-1]) * 60
+    if duration_str.endswith("h"):
+        return int(duration_str[:-1]) * 3600
+    return int(duration_str)

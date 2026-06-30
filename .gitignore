@@ -1,0 +1,31 @@
+# Local Environment & Secrets 
+.env
+.env.*
+*.cookie
+
+# Python Virtual Environments & Cache
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.eggs/
+dist/
+build/
+*.egg-info/
+
+# Terraform State & Lock Files 
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# IDEs & Editor Temp Files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
