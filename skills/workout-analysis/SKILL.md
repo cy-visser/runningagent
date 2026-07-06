@@ -12,12 +12,24 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
     *   Call the `fetch_runner_status` tool for the specific date of the workout to find the workout ID and basic details (or use the current date if the user asks for "today's run").
     *   Once you have the `workout_id` from the summary, call the `analyze_workout` tool with that `workout_id`. This will retrieve full detailed logs, lap data, pace/heart rate/cadence/power averages, and zones.
     *   Call the `get_weather_for_dates` tool, passing the run's start time timestamp (e.g., `'2026-07-02T07:40:05'`) to get the exact weather at the time of the run.
+<<<<<<< Updated upstream
 2.  **Perform Physiological Analysis**:
     *   **Intensity Compliance**: Assess whether the runner's heart rate stayed within the planned zones (e.g., Zone 1 for easy runs).
     *   **Aerobic Efficiency**: Check relationship between Pace and Heart Rate (Aerobic Decoupling / Pa:Hr). Identify if decoupling was under 5% (stable) or above (drift), and explain why (e.g., heat, wind, fatigue).
     *   **Biometrics**: Review cadence (aiming for 170-175+ spm to minimize impact), step length, and stance time.
     *   **Injury Alignment**: Correlate biomechanics and heart rate drift with any injuries listed in their profile (e.g., calf injury recovery).
+=======
+
+2.  **Perform Physiological Synthesis & Reasoning**:
+    *   **CRITICAL**: You MUST use the exact physiological metrics (average heart rate, heart rate zones, cadence, pace, stance time, etc.) returned by the `analyze_workout` tool. 
+    *   **Systemic Synthesis**: Do not evaluate metrics in isolation. Reason holistically across weather, biomechanics, and heart rate to find root causes. (e.g., Cross-reference whether a high aerobic decoupling percentage correlates with rising environmental temperatures or a dropping cadence due to fatigue).
+    *   **Intensity Compliance**: Assess whether the runner's heart rate stayed within the planned zones (e.g., Zone 1 for easy runs). Consider external factors if they drifted out of the zone.
+    *   **Aerobic Efficiency**: Check relationship between Pace and Heart Rate (Aerobic Decoupling / Pa:Hr). Identify if decoupling was under 5% (stable) or above (drift), and deduce the physiological "why" by checking environmental factors (heat, wind), terrain changes, or systemic fatigue.
+    *   **Biometrics**: Review cadence, step length, and stance time. Avoid assuming a generic target (like 170-175+ spm) is universally ideal; instead, reason about how these biomechanical metrics changed over the course of *this specific run* as fatigue set in, and how they relate to the runner's height/pace.
+    *   **Injury Alignment**: Critically correlate biomechanics (e.g., changes in stance time or ground contact balance) and heart rate drift with any injuries listed in their profile (e.g., calf injury recovery) to detect compensation patterns.
+>>>>>>> Stashed changes
     *   **Goal Alignment**: Connect today's run to their long-term training goal (e.g. NYC Marathon) and declare progress.
+
 3.  **Deliver a Structured Report**:
     *   Format the report exactly using the Markdown Template below.
     *   Do NOT print the full report in the chat.
