@@ -5,7 +5,7 @@ from typing import Any
 from google.adk.events.event import Event
 
 # Import clients and tools from tools.py
-from .tools import db_client, tp_toolset, get_tp_tool, geocode_location, parse_mcp_response, extract_health_metrics, calculate_weekly_mileage
+from .tools import db_client, get_tp_tool, geocode_location, parse_mcp_response, extract_health_metrics, calculate_weekly_mileage
 
 def format_profile_summary(profile: dict) -> str:
     """Formats a slim, token-efficient markdown summary of the runner's profile."""

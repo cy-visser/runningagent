@@ -10,9 +10,10 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
 ## Protocol:
 1.  **Gather Data**:
     *   Call the `fetch_runner_status` tool for the specific date of the workout to find the workout ID and basic details (or use the current date if the user asks for "today's run").
-    *   Once you have the `workout_id` from the summary, call the `analyze_workout` tool with that `workout_id`. This will retrieve full detailed logs, lap data, pace/heart rate/cadence/power averages, and zones.
+    *   **CRITICAL**: Once you have the `workout_id` from the summary, you MUST call the `analyze_workout` tool with that `workout_id`. Do NOT skip this step or attempt to analyze the workout without it.
     *   Call the `get_weather_for_dates` tool, passing the run's start time timestamp (e.g., `'2026-07-02T07:40:05'`) to get the exact weather at the time of the run.
 2.  **Perform Physiological Analysis**:
+    *   **CRITICAL**: You MUST use the exact physiological metrics (average heart rate, heart rate zones, cadence, pace, stance time, etc.) returned by the `analyze_workout` tool. 
     *   **Intensity Compliance**: Assess whether the runner's heart rate stayed within the planned zones (e.g., Zone 1 for easy runs).
     *   **Aerobic Efficiency**: Check relationship between Pace and Heart Rate (Aerobic Decoupling / Pa:Hr). Identify if decoupling was under 5% (stable) or above (drift), and explain why (e.g., heat, wind, fatigue).
     *   **Biometrics**: Review cadence (aiming for 170-175+ spm to minimize impact), step length, and stance time.

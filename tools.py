@@ -41,7 +41,7 @@ def parse_mcp_response(response: Any) -> Any:
         return None
 
 def get_current_date() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return datetime.now().strftime("%Y-%m-%d (%A)")
 
 current_date_tool = FunctionTool(get_current_date)
 
@@ -310,17 +310,20 @@ inject_production_secrets()
 cookie_value = os.environ.get("TP_AUTH_COOKIE")
 tp_env = {"TP_AUTH_COOKIE": cookie_value} if cookie_value else None
 
-tp_toolset = McpToolset(
-    connection_params=StdioServerParameters(
-        command=tp_mcp_path,
-        args=["serve"],
-        env=tp_env
-    )
-)
+_tp_toolset = None
 
 async def get_tp_tool(name: str) -> Any:
     """Asynchronously retrieves a specific tool from the TrainingPeaks MCP toolset by name."""
-    tools = await tp_toolset.get_tools()
+    global _tp_toolset
+    if _tp_toolset is None:
+        _tp_toolset = McpToolset(
+            connection_params=StdioServerParameters(
+                command=tp_mcp_path,
+                args=["serve"],
+                env=tp_env
+            )
+        )
+    tools = await _tp_toolset.get_tools()
     try:
         return next(t for t in tools if t.name == name)
     except StopIteration:
@@ -503,10 +506,8 @@ async def fetch_runner_status(
     """Fetches and summarizes the runner's training, recovery, and fitness status.
     
     Args:
-        start_date: Optional start date (YYYY-MM-DD) to query. If omitted, defaults to 
-                    fetching recent history based on last active date.
-        end_date: Optional end date (YYYY-MM-DD) to query. If omitted, defaults to 
-                  fetching the upcoming 7 days of planned workouts.
+        start_date: Optional start date (YYYY-MM-DD) to query. Must be calculated and passed explicitly if the user is asking about a specific period.
+        end_date: Optional end date (YYYY-MM-DD) to query. Must be calculated and passed explicitly if the user is asking about a specific period.
     """
     profile = tool_context.state.get("user_profile")
     if not profile:
@@ -619,7 +620,54 @@ async def analyze_workout(tool_context: ToolContext, workout_id: str) -> str:
             node_input={"workout_id": workout_id}
         )
         data = parse_mcp_response(result)
-        return json.dumps(data) if data else "No analysis data returned."
+        if not data:
+            return "No analysis data returned."
+            
+        filtered_data = {
+            "workoutId": data.get("workoutId"),
+            "startTimestamp": data.get("startTimestamp"),
+            "stopTimestamp": data.get("stopTimestamp"),
+            "totals": data.get("totals"),
+        }
+        
+        # Filter channels to key physiological metrics
+        if "dataChannels" in data:
+            filtered_channels = []
+            for ch in data["dataChannels"]:
+                if ch.get("identifier") in ["HeartRate", "Pace", "Power", "Cadence"]:
+                    filtered_channels.append({
+                        "identifier": ch.get("identifier"),
+                        "name": ch.get("name"),
+                        "unit": ch.get("unit"),
+                        "min": ch.get("min"),
+                        "max": ch.get("max"),
+                        "average": ch.get("average"),
+                        "zones": ch.get("zones")
+                    })
+            filtered_data["dataChannels"] = filtered_channels
+            
+        # Filter laps to strip redundant columns
+        if "lapData" in data:
+            filtered_laps = []
+            for lap in data["lapData"]:
+                filtered_laps.append({
+                    "id": lap.get("id"),
+                    "Name": lap.get("Name"),
+                    "TotalElapsedTime": lap.get("TotalElapsedTime"),
+                    "TotalDistance": lap.get("TotalDistance"),
+                    "AveragePace": lap.get("AveragePace"),
+                    "AverageHeartRate": lap.get("AverageHeartRate"),
+                    "MaximumHeartRate": lap.get("MaximumHeartRate"),
+                    "AverageCadence": lap.get("AverageCadence"),
+                    "AveragePower": lap.get("AveragePower"),
+                    "NormalizedPower": lap.get("NormalizedPower"),
+                    "TSS": lap.get("TSS"),
+                    "hrTSS": lap.get("hrTSS"),
+                    "PowerPulseDecoupling": lap.get("PowerPulseDecoupling")
+                })
+            filtered_data["lapData"] = filtered_laps
+            
+        return json.dumps(filtered_data)
     except Exception as e:
         print(f"Error in analyze_workout tool: {e}")
         return f"Error: Failed to analyze workout {workout_id}: {e}"

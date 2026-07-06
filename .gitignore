@@ -2,6 +2,7 @@
 .env
 .env.*
 *.cookie
+cli_client.py
 
 # Python Virtual Environments & Cache
 venv/

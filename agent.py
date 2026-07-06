@@ -15,7 +15,7 @@ from .tools import get_weather_tool, get_tp_tool, current_date_tool, skill_tools
 from .steps import check_profile_step, create_profile_step, update_last_active_step
 from . import services
 
-current_date_str = datetime.now().strftime("%Y-%m-%d")
+current_date_str = datetime.now().strftime("%Y-%m-%d (%A)")
 
 class OnboardingAnswers(BaseModel):
     age: Optional[str] = Field(None, description="Age of the runner")
@@ -128,7 +128,7 @@ coaching_agent = Agent(
 @node(name="running_coach_app", rerun_on_resume=True)
 async def running_coach_app(ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
     # Set dynamic date in state so it is resolved correctly in the coaching instructions
-    ctx.state["current_date_str"] = datetime.now().strftime("%Y-%m-%d")
+    ctx.state["current_date_str"] = datetime.now().strftime("%Y-%m-%d (%A)")
 
     # 1. Check if profile is already loaded in session state (active session)
     profile = ctx.state.get("user_profile")
