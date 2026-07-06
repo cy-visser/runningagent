@@ -45,10 +45,15 @@ def desanitize_state(state: Any) -> Any:
 
 class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
     def __init__(self, *args, **kwargs):
-        # Ensure we use the correct Firestore database 'running-coach'
-        if "client" not in kwargs or kwargs["client"] is None:
-            project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-            kwargs["client"] = firestore.AsyncClient(project=project, database="running-coach")
+        project = os.environ.get("FIRESTORE_PROJECT_ID")
+        database = os.environ.get("FIRESTORE_DATABASE", "running-coach")
+        
+        client = kwargs.get("client")
+        if (client is None 
+            or not hasattr(client, "_database") 
+            or client._database != database):
+            logger.info(f"Initializing custom Firestore AsyncClient for database '{database}' (project: '{project}')")
+            kwargs["client"] = firestore.AsyncClient(project=project, database=database)
         super().__init__(*args, **kwargs)
 
     async def create_session(
@@ -115,6 +120,16 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
         session = await super().get_session(*args, **kwargs)
         if session:
             session.state = desanitize_state(session.state)
+        else:
+            app_name = kwargs.get("app_name")
+            user_id = kwargs.get("user_id")
+            session_id = kwargs.get("session_id")
+            logger.info(f"Session '{session_id}' not found. Auto-creating session for app '{app_name}', user '{user_id}'...")
+            session = await self.create_session(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=session_id
+            )
         return session
 
     async def list_sessions(self, *args, **kwargs) -> ListSessionsResponse:

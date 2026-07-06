@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 import json
 from typing import Any
@@ -65,13 +66,6 @@ async def check_profile_step(ctx: Any, tp_profile: Any) -> bool:
                     doc_ref.update({"latitude": coords[0], "longitude": coords[1]})
                     print(f"Cached coordinates in Firestore: {coords}")
             
-            # Map session
-            session_id = ctx.session.id
-            sessions = profile.get("sessions", [])
-            if session_id not in sessions:
-                sessions.append(session_id)
-                doc_ref.update({"sessions": sessions})
-                profile["sessions"] = sessions
             
             ctx.state["user_profile"] = profile
             # Generate and store the slim token-efficient summary
@@ -112,34 +106,43 @@ async def create_profile_step(ctx: Any) -> None:
     today = datetime.now()
     end_date_str = today.strftime("%Y-%m-%d")
     
-    # 1. Fetch recent metrics (past 14 days) for sleep average
+    # Fetch metrics and workouts concurrently to optimize network latency
     sleep_avg = 7.0
-    try:
-        start_date_metrics = (today - timedelta(days=14)).strftime("%Y-%m-%d")
-        tp_get_metrics_tool = await get_tp_tool("tp_get_metrics")
-        raw_response = await ctx.run_node(
-            tp_get_metrics_tool, 
-            node_input={"start_date": start_date_metrics, "end_date": end_date_str}
-        )
-        extracted = extract_health_metrics(raw_response)
-        sleep_hours = extracted["sleep"]
-        if sleep_hours:
-            sleep_avg = round(sum(sleep_hours) / len(sleep_hours), 2)
-    except Exception as e:
-        print(f"Error fetching metrics: {e}")
-        
-    # 2. Fetch workouts (past 28 days) for weekly mileage
     weekly_mileage = 0.0
-    try:
-        start_date_workouts = (today - timedelta(days=28)).strftime("%Y-%m-%d")
-        tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
-        raw_response = await ctx.run_node(
-            tp_get_workouts_tool,
-            node_input={"start_date": start_date_workouts, "end_date": end_date_str}
-        )
-        weekly_mileage = calculate_weekly_mileage(raw_response, weeks=4.0)
-    except Exception as e:
-        print(f"Error fetching workouts: {e}")
+    
+    async def fetch_sleep_avg():
+        try:
+            start_date_metrics = (today - timedelta(days=14)).strftime("%Y-%m-%d")
+            tp_get_metrics_tool = await get_tp_tool("tp_get_metrics")
+            raw_response = await ctx.run_node(
+                tp_get_metrics_tool, 
+                node_input={"start_date": start_date_metrics, "end_date": end_date_str}
+            )
+            extracted = extract_health_metrics(raw_response)
+            sleep_hours = extracted["sleep"]
+            if sleep_hours:
+                return round(sum(sleep_hours) / len(sleep_hours), 2)
+        except Exception as e:
+            print(f"Error fetching metrics: {e}")
+        return 7.0
+        
+    async def fetch_weekly_mileage():
+        try:
+            start_date_workouts = (today - timedelta(days=28)).strftime("%Y-%m-%d")
+            tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
+            raw_response = await ctx.run_node(
+                tp_get_workouts_tool,
+                node_input={"start_date": start_date_workouts, "end_date": end_date_str}
+            )
+            return calculate_weekly_mileage(raw_response, weeks=4.0)
+        except Exception as e:
+            print(f"Error fetching workouts: {e}")
+        return 0.0
+
+    sleep_avg, weekly_mileage = await asyncio.gather(
+        fetch_sleep_avg(),
+        fetch_weekly_mileage()
+    )
 
     # Geocode location during profile creation
     location = onboarding_answers.get("location") or temp_data.get("location") or ""
@@ -168,7 +171,6 @@ async def create_profile_step(ctx: Any) -> None:
         "cross_training_strength": onboarding_answers.get("cross_training_strength"),
         "sleep_hours_2w_avg": sleep_avg,
         "weekly_mileage_past_month": weekly_mileage,
-        "sessions": [ctx.session.id],
         "last_active": datetime.now().strftime("%Y-%m-%d")
     }
     
@@ -196,6 +198,10 @@ async def update_last_active_step(ctx: Any) -> None:
     user_id = f"{firstname.lower()}_{lastname.lower()}"
     today_str = datetime.now().strftime("%Y-%m-%d")
     
+    # Only update if the date has changed
+    if profile.get("last_active") == today_str:
+        return
+        
     # Update local state
     profile["last_active"] = today_str
     ctx.state["user_profile"] = profile

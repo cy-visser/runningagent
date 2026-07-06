@@ -1,20 +1,33 @@
 from datetime import datetime
 import os
 from typing import Any, AsyncGenerator
-from google.adk.agents import Agent
-from google.adk.workflow._base_node import BaseNode
-from google.adk.agents.context import Context
-from google.adk.events.event import Event
+from google.adk import Agent, Context, Event, Workflow
+from google.adk.workflow import node
+from google.adk.apps import App
+from google.adk.agents.context_cache_config import ContextCacheConfig
+from google.adk.models import LlmRequest
+from google.genai import types
+from pydantic import BaseModel, Field
+from typing import Optional, Any
 
 # Import tools and steps
-from .tools import get_weather_tool, get_tp_tool, current_date_tool, skill_toolset, save_canvas_tool, fetch_runner_status_tool, save_checkin_report_tool
+from .tools import get_weather_tool, get_tp_tool, current_date_tool, skill_toolset, save_artifacts_tool, fetch_runner_status_tool, save_checkin_report_tool, analyze_workout_tool
 from .steps import check_profile_step, create_profile_step, update_last_active_step
+from . import services
 
 current_date_str = datetime.now().strftime("%Y-%m-%d")
 
-# ==============================================================================
-# 1. Onboarding Agent (gemini-2.5-flash) - TASK MODE
-# ==============================================================================
+class OnboardingAnswers(BaseModel):
+    age: Optional[str] = Field(None, description="Age of the runner")
+    height: Optional[str] = Field(None, description="Height of the runner")
+    weight: Optional[str] = Field(None, description="Weight of the runner")
+    location: Optional[str] = Field(None, description="Location of the runner")
+    training_goal: Optional[str] = Field(None, description="Specific race or fitness goal")
+    timeline: Optional[str] = Field(None, description="Training timeline")
+    recent_race_times: Optional[str] = Field(None, description="Recent race or time trial times")
+    injuries: Optional[str] = Field(None, description="Past or present injuries")
+    cross_training_strength: Optional[str] = Field(None, description="Cross-training or strength work")
+
 onboarding_agent = Agent(
     model="gemini-2.5-flash-lite",
     name="onboarding_agent",
@@ -39,30 +52,44 @@ onboarding_agent = Agent(
     CRITICAL RULES:
     - Greet them warmly by their name. Explain that you've imported their basic metrics from TrainingPeaks, and need to ask a few questions to tailor their plan.
     - Never ask all questions at once. Ask only 1 to 2 questions at a time, wait for their response, acknowledge it, and then move to the next.
-    - Store the answers you gather in the `onboarding_answers` dictionary in the session state (e.g., `tool_context.state["onboarding_answers"]["training_goal"] = ...`).
-    - Once you have answers for all missing data points, you MUST call the `finish_task` tool immediately. Do not ask any more questions or continue chatting.
+    - Once you have answers for all missing data points, you MUST call the `finish_task` tool immediately passing the collected information in the expected JSON schema format. Do not ask any more questions or continue chatting.
     """,
+    output_schema=OnboardingAnswers,
     mode="task"
 )
 
 # ==============================================================================
 # 2. Coaching Agent (gemini-2.5-pro) - CHAT MODE
 # ==============================================================================
-coaching_agent_tools = [get_weather_tool, current_date_tool, skill_toolset, fetch_runner_status_tool, save_checkin_report_tool]
-if os.environ.get("K_SERVICE"):
-    coaching_agent_tools.append(save_canvas_tool)
+coaching_agent_tools = [get_weather_tool, current_date_tool, skill_toolset, fetch_runner_status_tool, save_checkin_report_tool, save_artifacts_tool, analyze_workout_tool]
+
+def inject_profile_context_cb(callback_context: Context, llm_request: LlmRequest) -> Optional[Any]:
+    """Injects the dynamic runner profile into the message history."""
+    summary = callback_context.state.get("user_profile_summary")
+    
+    # Inject the permanent runner profile context at the absolute beginning
+    if summary:
+        context_msg = types.Content(
+            role="user",
+            parts=[types.Part(text=f"[System Context: Runner Profile]\n{summary}")]
+        )
+        ack_msg = types.Content(
+            role="model",
+            parts=[types.Part(text="Understood. I will use this runner profile context to guide my coaching.")]
+        )
+        llm_request.contents.insert(0, context_msg)
+        llm_request.contents.insert(1, ack_msg)
+        
+    return None
 
 coaching_agent = Agent(
     model="gemini-2.5-pro",
     name="coaching_agent",
     description="Expert running coach and physiologist that analyzes workouts and guides runners.",
-    instruction=f"""
+    instruction="""
     You are a world-class running coach and exercise physiologist. Your goal is to guide the runner in becoming a better, faster, and healthier runner.
     
-    Here is the runner's profile:
-    {{user_profile_summary?}}
-    
-    You are in active coaching mode. Proactively use the `fetch_runner_status` tool to retrieve their training load (CTL, ATL, TSB), workouts, and recovery metrics whenever they ask for an update, check-in, or advice on their training.
+    You are in active coaching mode. Proactively use the `fetch_runner_status` tool to retrieve their training load (CTL, ATL, TSB), workouts, and recovery metrics whenever they ask for a general status update or advice on their training.
     
     CRITICAL: The low-level tools `tp_get_workouts`, `tp_get_metrics`, and `tp_get_fitness` are DEPRECATED and have been removed. You do not have access to them. You MUST ONLY use `fetch_runner_status` to retrieve training data. Do not attempt to call the deprecated tools under any circumstances, even if you see them in the conversation history of this session.
     
@@ -72,8 +99,11 @@ coaching_agent = Agent(
       2. Run the `calculate_nutrition.py` script using the `run_skill_script` tool, passing their weight, height, age, gender, and weekly mileage (which you can get from their profile summary).
       3. Use the calculated daily targets to build a practical meal plan, and use the workout fueling targets to give them exact pre/intra/post-workout fueling advice (in grams) for their big sessions.
     - You are equipped with the `check-in-report` skill. If the runner says "Checking in" (or similar check-in phrases), you MUST:
-      1. Load the skill using the `load_skill` tool (pass 'check-in-report').
-      2. Follow its instructions to gather their training data using the `fetch_runner_status` tool, analyze their progress, and deliver a structured weekly progress report.
+      1. Load the skill using the `load_skill` tool (pass 'check-in-report') before doing anything else. Do NOT call other tools before loading the skill.
+      2. Follow the instructions returned by the `load_skill` tool to gather their training data, analyze their progress, and deliver the report.
+    - You are equipped with the `workout-analysis` skill. If the runner asks to analyze a specific workout or run (e.g., "Analyze today's run", "How was my workout yesterday?"), you MUST:
+      1. Load the skill using the `load_skill` tool (pass 'workout-analysis') before doing anything else. Do NOT call other tools before loading the skill.
+      2. Follow the instructions returned by the `load_skill` tool to gather their training data, fetch weather, and deliver the report.
     
     CRITICAL COACHING PROTOCOLS:
     1. Do not rely solely on raw hrTSS or ATL spikes to determine fatigue. When reviewing a workout, check the relationship between Pace and Heart Rate (Aerobic Decoupling / Pa:Hr).
@@ -85,64 +115,67 @@ coaching_agent = Agent(
        - If the weather data shows high heat (above 22°C/72°F), high humidity, or high winds, explicitly factor this into your analysis.
     3. Always anchor your feedback, analysis, and recommendations in the runner's long-term goal (e.g., their target marathon date and time). Every check-in report MUST include a dedicated section assessing their progress toward this goal, explaining whether they are on pace based on their current CTL, consistency, and mileage, and what adjustments are needed.
         
-    Today's date is {current_date_str}.
+    Today's date is {current_date_str?}.
     """,
     tools=coaching_agent_tools,
+    before_model_callback=inject_profile_context_cb,
     mode="chat"
 )
 
 # ==============================================================================
 # 3. Custom Orchestration Node (The App)
 # ==============================================================================
-class RunningCoachApp(BaseNode):
-    name: str = "running_coach_app"
-    description: str = "Orchestrates the running coach onboarding and coaching lifecycle."
+@node(name="running_coach_app", rerun_on_resume=True)
+async def running_coach_app(ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
+    # Set dynamic date in state so it is resolved correctly in the coaching instructions
+    ctx.state["current_date_str"] = datetime.now().strftime("%Y-%m-%d")
+
+    # 1. Check if profile is already loaded in session state (active session)
+    profile = ctx.state.get("user_profile")
     
-    # Enable rerun_on_resume so the orchestrator can resume after child agents interrupt
-    rerun_on_resume: bool = True
-    
-    async def _run_impl(
-        self,
-        *,
-        ctx: Context,
-        node_input: Any,
-    ) -> AsyncGenerator[Any, None]:
-        # 1. Check if profile is already loaded in session state (active session)
-        profile = ctx.state.get("user_profile")
-        
-        if not profile:
-            # 2. Fetch the TrainingPeaks profile to get the runner's name
-            try:
-                tp_get_profile_tool = await get_tp_tool("tp_get_profile")
-                tp_profile = await ctx.run_node(tp_get_profile_tool)
-            except Exception as e:
-                print(f"Error fetching TP profile: {e}")
-                tp_profile = None
-                
-            # 3. Check if they have an existing profile in Firestore
-            profile_exists = await check_profile_step(ctx, tp_profile)
-            
-            if not profile_exists:
-                # 4. Profile is missing: Run the onboarding agent (task mode)
-                # We pass raise_on_wait=True to suspend the orchestrator when the agent waits for user input.
-                await ctx.run_node(onboarding_agent, node_input=node_input, raise_on_wait=True)
-                    
-                # 5. Onboarding completed: Compile and save the profile to Firestore
-                await create_profile_step(ctx)
-                
-                # Yield a nice transition message to the user
-                firstname = ctx.state["user_profile"].get("firstname", "Runner")
-                yield Event(
-                    author="model", 
-                    message=f"Perfect, {firstname}! Your runner profile is now officially built and saved to Firestore. I've calculated your baseline metrics from TrainingPeaks. We are ready to transition to active coaching!"
-                )
-                
-        # 6. Run the active coaching agent (chat mode)
-        # We pass raise_on_wait=True to suspend the orchestrator when the agent waits for user input.
+    if not profile:
+        # 2. Fetch the TrainingPeaks profile to get the runner's name
         try:
-            await ctx.run_node(coaching_agent, node_input=node_input, raise_on_wait=True)
-        finally:
-            await update_last_active_step(ctx)
+            tp_get_profile_tool = await get_tp_tool("tp_get_profile")
+            tp_profile = await ctx.run_node(tp_get_profile_tool)
+        except Exception as e:
+            print(f"Error fetching TP profile: {e}")
+            tp_profile = None
+            
+        # 3. Check if they have an existing profile in Firestore
+        profile_exists = await check_profile_step(ctx, tp_profile)
+        
+        if not profile_exists:
+            # 4. Profile is missing: Run the onboarding agent (task mode)
+            # We pass raise_on_wait=True to suspend the orchestrator when the agent waits for user input.
+            onboarding_answers = await ctx.run_node(onboarding_agent, node_input=node_input, raise_on_wait=True)
+            if onboarding_answers:
+                ctx.state["onboarding_answers"] = onboarding_answers
+                
+            # 5. Onboarding completed: Compile and save the profile to Firestore
+            await create_profile_step(ctx)
+            
+            # Yield a nice transition message to the user
+            firstname = ctx.state["user_profile"].get("firstname", "Runner")
+            yield Event(
+                author="model", 
+                message=f"Perfect, {firstname}! Your runner profile is now officially built and saved to Firestore. I've calculated your baseline metrics from TrainingPeaks. We are ready to transition to active coaching!"
+            )
+            
+    # 6. Run the active coaching agent (chat mode)
+    # We pass raise_on_wait=True to suspend the orchestrator when the agent waits for user input.
+    try:
+        await ctx.run_node(coaching_agent, node_input=node_input, raise_on_wait=True)
+    finally:
+        await update_last_active_step(ctx)
 
 # Set the root agent of the application
-root_agent = RunningCoachApp()
+root_agent = Workflow(
+    name="running_coach_workflow",
+    edges=[("START", running_coach_app)],
+)
+
+app = App(
+    name="running_coach",
+    root_agent=root_agent,
+)

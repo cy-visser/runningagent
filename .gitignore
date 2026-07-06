@@ -21,6 +21,7 @@ build/
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
+.terraform.tfstate.lock.info
 
 # IDEs & Editor Temp Files
 .vscode/

@@ -6,18 +6,18 @@ import urllib.parse
 import json
 import shutil
 from typing import Optional, Any
-from google.adk.tools import FunctionTool, ToolContext
-from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
-from google.adk.skills.models import Skill, Frontmatter, Resources, Script
+from google.adk.tools import FunctionTool, ToolContext, McpToolset
 from google.adk.tools.skill_toolset import SkillToolset
+from google.adk.skills import load_skill_from_dir
 from google.cloud import firestore
 from google.genai import types
 from mcp import StdioServerParameters
-from google.adk.code_executors.unsafe_local_code_executor import UnsafeLocalCodeExecutor
+from google.adk.code_executors import UnsafeLocalCodeExecutor
 
 # --- Clients ---
-project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-db_client = firestore.Client(project=project, database="running-coach")
+project = os.environ.get("FIRESTORE_PROJECT_ID")
+database = os.environ.get("FIRESTORE_DATABASE", "running-coach")
+db_client = firestore.Client(project=project, database=database)
 
 # --- Helper Tools ---
 def parse_mcp_response(response: Any) -> Any:
@@ -307,10 +307,14 @@ def inject_production_secrets():
 # Call this during module initialization to ensure the MCP subprocess inherits it
 inject_production_secrets()
 
+cookie_value = os.environ.get("TP_AUTH_COOKIE")
+tp_env = {"TP_AUTH_COOKIE": cookie_value} if cookie_value else None
+
 tp_toolset = McpToolset(
     connection_params=StdioServerParameters(
         command=tp_mcp_path,
-        args=["serve"]
+        args=["serve"],
+        env=tp_env
     )
 )
 
@@ -323,70 +327,21 @@ async def get_tp_tool(name: str) -> Any:
         raise ValueError(f"Tool '{name}' not found in TrainingPeaks MCP toolset.")
 
 # --- Skills ---
-def load_nutrition_skill() -> Skill:
-    """Helper to load the nutrition skill files from the local filesystem."""
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    skill_dir = os.path.join(current_dir, "skills", "nutrition")
-    
-    # Read SKILL.md
-    with open(os.path.join(skill_dir, "SKILL.md"), "r") as f:
-        skill_md = f.read()
-        
-    parts = skill_md.split("---")
-    instructions = parts[2].strip() if len(parts) > 2 else skill_md
-    
-    # Read calculate_nutrition.py
-    with open(os.path.join(skill_dir, "calculate_nutrition.py"), "r") as f:
-        script_src = f.read()
-        
-    return Skill(
-        frontmatter=Frontmatter(
-            name="nutrition-planner",
-            description="Calculates daily caloric needs, macronutrient splits, and specific pre/intra/post-workout fueling targets for runners."
-        ),
-        instructions=instructions,
-        resources=Resources(
-            scripts={
-                "calculate_nutrition.py": Script(src=script_src)
-            }
-        )
-    )
-
-def load_checkin_skill() -> Skill:
-    """Helper to load the check-in report skill files from the local filesystem."""
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    skill_dir = os.path.join(current_dir, "skills", "check-in")
-    
-    # Read SKILL.md
-    with open(os.path.join(skill_dir, "SKILL.md"), "r") as f:
-        skill_md = f.read()
-        
-    parts = skill_md.split("---")
-    instructions = parts[2].strip() if len(parts) > 2 else skill_md
-    
-    return Skill(
-        frontmatter=Frontmatter(
-            name="check-in-report",
-            description="Proactively pulls workouts, physiological metrics, and fitness load from TrainingPeaks to generate a comprehensive weekly progress report."
-        ),
-        instructions=instructions
-    )
-
-# Instantiate and export the SkillToolset
-nutrition_skill = load_nutrition_skill()
-checkin_skill = load_checkin_skill()
+nutrition_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "nutrition-planner"))
+checkin_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "check-in-report"))
+workout_analysis_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "workout-analysis"))
 skill_toolset = SkillToolset(
-    skills=[nutrition_skill, checkin_skill],
+    skills=[nutrition_skill, checkin_skill, workout_analysis_skill],
     code_executor=UnsafeLocalCodeExecutor()
 )
 
-# --- Canvas / Artifacts Tool ---
-async def save_report_to_canvas(
+# --- Artifacts Tool ---
+async def save_report_to_artifacts(
     filename: str,
     content_markdown: str,
     tool_context: ToolContext
 ) -> str:
-    """Saves a structured coaching report (markdown) to the session Canvas.
+    """Saves a structured coaching report (markdown) to the session artifacts.
     
     Args:
         filename: The filename of the report (e.g., 'weekly_checkin_report.md').
@@ -395,11 +350,11 @@ async def save_report_to_canvas(
     try:
         part = types.Part(text=content_markdown)
         await tool_context.save_artifact(filename=filename, artifact=part)
-        return f"Successfully saved and rendered '{filename}' in the Canvas."
+        return f"Successfully saved and rendered '{filename}' in artifacts."
     except Exception as e:
-        return f"Failed to save report to Canvas: {e}"
+        return f"Failed to save report to artifacts: {e}"
 
-save_canvas_tool = FunctionTool(save_report_to_canvas)
+save_artifacts_tool = FunctionTool(save_report_to_artifacts)
 
 # --- Consolidated Check-In Tool ---
 def compile_data_summary(
@@ -430,9 +385,10 @@ def compile_data_summary(
                     planned_km = round(planned_km, 2)
                     actual_tss = w.get("tss_actual") or w.get("tss") or 0
                     planned_tss = w.get("tss_planned") or 0
+                    w_id = w.get("id", "")
                     time_identifier = w.get("start_time") or w.get("date", "")
                     completed_runs.append(
-                        f"- Run on {time_identifier}: {dist_km}km (Planned: {planned_km}km) | TSS: {actual_tss} (Planned: {planned_tss})"
+                        f"- Run [ID: {w_id}] on {time_identifier}: {dist_km}km (Planned: {planned_km}km) | TSS: {actual_tss} (Planned: {planned_tss})"
                     )
                 elif "strength" in sport.lower() or "strength" in w_title:
                     completed_strength += 1
@@ -450,9 +406,10 @@ def compile_data_summary(
                 planned_km = w.get("distance_planned_km") or 0.0
                 planned_km = round(planned_km, 2)
                 planned_tss = w.get("tss_planned") or 0
+                w_id = w.get("id", "")
                 date_str = w.get("date", "")[:10]
                 upcoming_runs.append(
-                    f"- Planned Run on {date_str}: {planned_km}km | Planned TSS: {planned_tss}"
+                    f"- Planned Run [ID: {w_id}] on {date_str}: {planned_km}km | Planned TSS: {planned_tss}"
                 )
         workouts_future_summary = "\n".join(upcoming_runs) if upcoming_runs else "No upcoming runs planned."
 
@@ -567,7 +524,7 @@ async def fetch_runner_status(
         q_end = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else today_date
         
         # Determine if this is a future-only query
-        is_future_only = (q_start >= today_date)
+        is_future_only = (q_start > today_date)
     else:
         # Default Check-In Behavior
         last_active_str = profile.get("last_active", "Never")
@@ -604,16 +561,10 @@ async def fetch_runner_status(
         # Bypassing past data
         print(f"DEBUG: Smart Routing - Future-Only Query ({start_str} to {end_str}). Bypassing recovery/past data.")
         
-        # Fetch workouts for the future range
-        workouts_future_raw = await tool_context.run_node(
-            tp_get_workouts_tool,
-            node_input={"start_date": start_str, "end_date": end_str}
-        )
-        # Fetch notes for the future range
-        notes_raw = await tool_context.run_node(
-            tp_list_notes_tool,
-            node_input={"start_date": start_str, "end_date": end_str}
-        )
+        # Fetch workouts and notes concurrently
+        t_fut = tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": end_str})
+        t_not = tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str})
+        workouts_future_raw, notes_raw = await asyncio.gather(t_fut, t_not)
         n_days = 0
     else:
         # Full Fetch (Past + Future or Past-Only)
@@ -623,36 +574,25 @@ async def fetch_runner_status(
         
         # Split range at 'today' to separate past and future workouts
         if q_start < today_date and q_end > today_date:
-            # Overlapping range
-            workouts_past_raw = await tool_context.run_node(
-                tp_get_workouts_tool,
-                node_input={"start_date": start_str, "end_date": today_str}
-            )
-            workouts_future_raw = await tool_context.run_node(
-                tp_get_workouts_tool,
-                node_input={"start_date": today_str, "end_date": end_str}
-            )
-            metrics_end = today_str
-        else:
-            # Past-only range
-            workouts_past_raw = await tool_context.run_node(
-                tp_get_workouts_tool,
-                node_input={"start_date": start_str, "end_date": end_str}
-            )
-            metrics_end = end_str
+            # Overlapping range: run all 5 queries concurrently
+            t_past = tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": today_str})
+            t_fut = tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": today_str, "end_date": end_str})
+            t_met = tool_context.run_node(tp_get_metrics_tool, node_input={"start_date": start_str, "end_date": today_str})
+            t_fit = tool_context.run_node(tp_get_fitness_tool, node_input={"start_date": start_str, "end_date": today_str})
+            t_not = tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str})
             
-        metrics_raw = await tool_context.run_node(
-            tp_get_metrics_tool,
-            node_input={"start_date": start_str, "end_date": metrics_end}
-        )
-        fitness_raw = await tool_context.run_node(
-            tp_get_fitness_tool,
-            node_input={"start_date": start_str, "end_date": metrics_end}
-        )
-        notes_raw = await tool_context.run_node(
-            tp_list_notes_tool,
-            node_input={"start_date": start_str, "end_date": end_str}
-        )
+            results = await asyncio.gather(t_past, t_fut, t_met, t_fit, t_not)
+            workouts_past_raw, workouts_future_raw, metrics_raw, fitness_raw, notes_raw = results
+        else:
+            # Past-only range: run all 4 queries concurrently
+            t_past = tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": end_str})
+            t_met = tool_context.run_node(tp_get_metrics_tool, node_input={"start_date": start_str, "end_date": end_str})
+            t_fit = tool_context.run_node(tp_get_fitness_tool, node_input={"start_date": start_str, "end_date": end_str})
+            t_not = tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str})
+            
+            results = await asyncio.gather(t_past, t_met, t_fit, t_not)
+            workouts_past_raw, metrics_raw, fitness_raw, notes_raw = results
+            
         n_days = (today_date - q_start).days
 
     return compile_data_summary(
@@ -665,6 +605,26 @@ async def fetch_runner_status(
     )
 
 fetch_runner_status_tool = FunctionTool(fetch_runner_status)
+
+async def analyze_workout(tool_context: ToolContext, workout_id: str) -> str:
+    """Gets detailed analysis for a specific workout ID, including metrics, zones, and laps.
+    
+    Args:
+        workout_id: The unique TrainingPeaks workout ID.
+    """
+    try:
+        tp_analyze_tool = await get_tp_tool("tp_analyze_workout")
+        result = await tool_context.run_node(
+            tp_analyze_tool,
+            node_input={"workout_id": workout_id}
+        )
+        data = parse_mcp_response(result)
+        return json.dumps(data) if data else "No analysis data returned."
+    except Exception as e:
+        print(f"Error in analyze_workout tool: {e}")
+        return f"Error: Failed to analyze workout {workout_id}: {e}"
+
+analyze_workout_tool = FunctionTool(analyze_workout)
 
 async def save_checkin_report(tool_context: ToolContext, report_content: str) -> str:
     """Saves the generated check-in report to Firestore for historical tracking.

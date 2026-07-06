@@ -3,7 +3,7 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "~> 5.0"
+      version = ">= 5.45.2"
     }
   }
 }
@@ -32,7 +32,7 @@ resource "google_project_service" "services" {
 
 # 2. Create the Dedicated Service Account
 resource "google_service_account" "agent_sa" {
-  account_id   = "running-coach-agent"
+  account_id   = var.agent_sa_name
   display_name = "Running Coach Agent Identity"
   description  = "Dedicated identity for the AI Running Coach agent in Vertex AI"
   depends_on   = [google_project_service.services]
@@ -81,4 +81,28 @@ resource "google_service_account_iam_member" "vertex_sa_user" {
   service_account_id = google_service_account.agent_sa.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-aiplatform.iam.gserviceaccount.com"
+}
+
+resource "google_service_account_iam_member" "vertex_re_sa_user" {
+  service_account_id = google_service_account.agent_sa.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"
+}
+
+# 7. Provision Firestore Database Instance (if not exists)
+resource "google_firestore_database" "default_db" {
+  project                           = var.project_id
+  name                              = var.firestore_db_name
+  location_id                       = var.region
+  type                              = "FIRESTORE_NATIVE"
+  database_edition                  = "ENTERPRISE"
+  point_in_time_recovery_enablement = "POINT_IN_TIME_RECOVERY_ENABLED"
+  
+  # Ensure the firestore API is fully enabled before database creation
+  depends_on = [google_project_service.services]
+}
+
+output "agent_service_account_email" {
+  value       = google_service_account.agent_sa.email
+  description = "The service account email to configure in the agent deployment"
 }

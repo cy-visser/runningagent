@@ -1,12 +1,12 @@
-# AI Running Coach 🏃‍♂️💨
+# AI Running Coach
 
-An elite, production-grade AI Running Coach and Exercise Physiologist built using the Google ADK framework. The coach integrates directly with **TrainingPeaks** (to fetch workouts, physiological metrics, and calendar notes), **Open-Meteo** (for hourly weather correlation), and **Google Cloud Firestore** (for session state persistence and historical check-in reports).
+An AI Running Coach and Exercise Physiologist built using the Google ADK framework. The coach integrates directly with **TrainingPeaks** (to fetch workouts, physiological metrics, and calendar notes), **Open-Meteo** (for hourly weather correlation), and **Google Cloud Firestore** (for session state persistence and historical check-in reports).
 
 When deployed, the agent integrates seamlessly with **Gemini Enterprise**, rendering rich, interactive progress reports in the **Canvas UI** and falling back gracefully to chat in local environments.
 
 ---
 
-## 🚀 Features
+## Features
 *   **Multi-Agent Orchestration**: Dynamically routes between onboarding (profile creation) and coaching.
 *   **Consolidated Data Pulling**: Fetches workouts, sleep, HRV, RHR, and calendar notes.
 *   **Hourly Weather Correlation**: Fetches the weather at the *exact hour* of your runs and compares it to the daily peak, explaining the physiological impact.
@@ -16,7 +16,7 @@ When deployed, the agent integrates seamlessly with **Gemini Enterprise**, rende
 
 ---
 
-## 💻 Local Development
+## Local Development
 
 ### 1. Setup Virtual Environment
 ```bash
@@ -26,11 +26,24 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment Variables
-Create a `.env` file in the project root:
+Create a `.env` file in the project root containing the configuration parameters. Copy the template below and replace placeholder values with your actual configuration:
+
 ```env
+# Enable Vertex AI GenAI SDK mode
 GOOGLE_GENAI_USE_VERTEXAI=1
+
+# Google Cloud Deployment project details
 GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
+FIRESTORE_PROJECT_ID=YOUR_PROJECT_ID
 GOOGLE_CLOUD_LOCATION=YOUR_LOCATION
+
+# Firestore database name for the agent (defaults to running-coach)
+FIRESTORE_DATABASE=running-coach
+
+# PYTHONPATH injection needed specifically for container deployment startup
+PYTHONPATH=/app/agents/running_coach
+
+# TrainingPeaks Cookie (Required for local test runs; Secret Manager handles production)
 TP_AUTH_COOKIE=YOUR_TRAININGPEAKS_COOKIE_HERE
 ```
 
@@ -43,7 +56,7 @@ Open your browser and navigate to `http://127.0.0.1:8000`.
 
 ---
 
-## ☁️ Production Deployment Guide
+## Production Deployment Guide
 
 We follow production best practices: managing infrastructure via **Terraform (IaC)** and storing sensitive credentials securely in **GCP Secret Manager** .
 
@@ -67,12 +80,12 @@ Return to the project root and run the deployment script, passing your TrainingP
 ```bash
 cd ..
 chmod +x deploy.sh
-./deploy.sh --tp-cookie "YOUR_ACTUAL_TP_COOKIE_HERE"
+./deploy.sh --tp-cookie 'YOUR_ACTUAL_TP_COOKIE_HERE'
 ```
 
 ---
 
-## 📊 Monitoring & Telemetry (Production)
+## Monitoring & Telemetry (Production)
 
 Once deployed, the agent is fully instrumented with OpenTelemetry (`--otel_to_cloud`), allowing you to monitor performance, latencies, and costs in the **Google Cloud Console**:
 

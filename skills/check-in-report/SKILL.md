@@ -17,14 +17,11 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
     *   **Long-Term Goal Alignment**: Compare their current fitness (CTL), weekly mileage, and consistency against their ultimate goal and target race date (from their profile). Assess if they are on pace, ahead, or behind, and identify what they need to focus on next.
     *   **Actionable Recommendations**: Formulate clear, specific advice (e.g., adjustments to upcoming workouts, recovery strategies, sleep focus, or heart rate monitoring) based on the data.
 3.  **Deliver a Structured Progress Report**:
-    *   Check if the `save_report_to_canvas` tool is available in your tools list.
-    *   **If `save_report_to_canvas` IS available (Gemini Enterprise/Canvas Mode)**:
-        *   Format the report exactly using the Markdown Template below.
-        *   Call `save_report_to_canvas` to render the report in the Canvas pane.
-        *   In the chat, provide a warm, encouraging summary of their week and highlight 2-3 key recommendations. Tell them they can see the full report in the Canvas pane.
-    *   **If `save_report_to_canvas` IS NOT available (Fallback/Chat Mode)**:
-        *   Render the full report directly in the chat using the Markdown Template below.
-4.  **Offer to Save the Report**: Immediately after delivering the report (either in the Canvas pane or directly in the chat), ask the runner: *"Would you like me to save this check-in report to your training history?"* (or similar). Stop and wait for their response.
+    *   Format the report exactly using the Markdown Template below.
+    *   You MUST call the `save_report_to_artifacts` tool to save and render the report in the Artifacts pane (use filename `weekly_checkin_report.md`).
+    *   Do NOT print the full report in the chat.
+    *   In the chat, provide a warm, encouraging summary of their week, highlight 2-3 key recommendations, and let them know the full report is available for more details.
+4.  **Offer to Save the Report**: Immediately after delivering the report, ask the runner: *"Would you like me to save this check-in report to your training history?"* (or similar). Stop and wait for their response.
 5.  **Save the Report**:
     *   If they say **yes** (or a yes-like response), call the `save_checkin_report` tool, passing the full markdown text of the report. Acknowledge and confirm when the tool returns success.
     *   If they say **no** (or a no-like response), acknowledge and conclude the session without calling the tool.

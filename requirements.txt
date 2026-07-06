@@ -1,5 +1,6 @@
-google-adk[extensions]
+google-adk[extensions,a2a]
 google-cloud-firestore
 python-dotenv
-./trainingpeaks-mcp
+./agents/running_coach/tp_mcp-2.0.0-py3-none-any.whl
 google-cloud-secret-manager
+google-cloud-aiplatform
