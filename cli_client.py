@@ -7,7 +7,7 @@ import sys
 
 project = "firestore-cyvisser"
 location = "europe-west4"
-engine_id = "681459714709520384"
+engine_id = ""
 
 # Generate a unique session ID for this CLI run
 session_id = f"cli-session-{uuid.uuid4().hex[:8]}"
