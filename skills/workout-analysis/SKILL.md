@@ -12,49 +12,33 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
     *   Call the `fetch_runner_status` tool for the specific date of the workout to find the workout ID and basic details (or use the current date if the user asks for "today's run").
     *   **CRITICAL**: Once you have the `workout_id` from the summary, you MUST call the `analyze_workout` tool with that `workout_id`. Do NOT skip this step or attempt to analyze the workout without it.
     *   Call the `get_weather_for_dates` tool, passing the run's start time timestamp (e.g., `'2026-07-02T07:40:05'`) to get the exact weather at the time of the run.
+<<<<<<< HEAD
 2.  **Perform Physiological Analysis**:
     *   **CRITICAL**: You MUST use the exact physiological metrics (average heart rate, heart rate zones, cadence, pace, stance time, etc.) returned by the `analyze_workout` tool. 
     *   **Intensity Compliance**: Assess whether the runner's heart rate stayed within the planned zones (e.g., Zone 1 for easy runs).
     *   **Aerobic Efficiency**: Check relationship between Pace and Heart Rate (Aerobic Decoupling / Pa:Hr). Identify if decoupling was under 5% (stable) or above (drift), and explain why (e.g., heat, wind, fatigue).
     *   **Biometrics**: Review cadence (aiming for 170-175+ spm to minimize impact), step length, and stance time.
     *   **Injury Alignment**: Correlate biomechanics and heart rate drift with any injuries listed in their profile (e.g., calf injury recovery).
+=======
+
+2.  **Perform Physiological Synthesis & Reasoning**:
+    *   **CRITICAL**: You MUST use the exact physiological metrics (average heart rate, heart rate zones, cadence, pace, stance time, etc.) returned by the `analyze_workout` tool. 
+    *   **Systemic Synthesis**: Do not evaluate metrics in isolation. Reason holistically across weather, biomechanics, and heart rate to find root causes. (e.g., Cross-reference whether a high aerobic decoupling percentage correlates with rising environmental temperatures or a dropping cadence due to fatigue).
+    *   **Intensity Compliance**: Assess whether the runner's heart rate stayed within the planned zones (e.g., Zone 1 for easy runs). Consider external factors if they drifted out of the zone.
+    *   **Aerobic Efficiency**: Check relationship between Pace and Heart Rate (Aerobic Decoupling / Pa:Hr). Identify if decoupling was under 5% (stable) or above (drift), and deduce the physiological "why" by checking environmental factors (heat, wind), terrain changes, or systemic fatigue.
+    *   **Biometrics**: Review cadence, step length, and stance time. Avoid assuming a generic target (like 170-175+ spm) is universally ideal; instead, reason about how these biomechanical metrics changed over the course of *this specific run* as fatigue set in, and how they relate to the runner's height/pace.
+    *   **Injury Alignment**: Critically correlate biomechanics (e.g., changes in stance time or ground contact balance) and heart rate drift with any injuries listed in their profile (e.g., calf injury recovery) to detect compensation patterns.
+>>>>>>> dev
     *   **Goal Alignment**: Connect today's run to their long-term training goal (e.g. NYC Marathon) and declare progress.
-3.  **Deliver a Structured Report**:
-    *   Format the report exactly using the Markdown Template below.
-    *   Do NOT print the full report in the chat.
-    *   You MUST call the `save_report_to_artifacts` tool to save and render the report in the Artifacts pane (use filename `workout_analysis_report.md`).
-    *   In the chat, provide a brief summary of the key findings and let them know the full report is available for more details.
 
-## Mandatory Report Template:
+3.  **Deliver Lightweight Workout Summary (Chat Only)**:
+    *   **CRITICAL - NO ARTIFACT RULE**: Do NOT call `save_report_to_artifacts` and do NOT generate a full multi-section detailed report.
+    *   In your chat message to the runner, output ONLY a concise summary formatted with these exact sections:
+        1. **Warm Note**: Identifying the workout being analyzed.
+        2. **🌟 Workout Highlights**: 1-2 bullet points celebrating their execution, effort, or environmental adaptation.
+        3. **🚀 Key Takeaway & Next Step**: 1-2 actionable coaching insights based on this run (especially on **pacing** and relating execution directly to their long-term goal, e.g., NYC Marathon).
+        4. **Next Step Offer**: Conclude by offering: *"Would you like me to create a detailed physiological report for this workout?"* Stop and wait for their response.
 
-# Workout Analysis: [Workout Title] ([Date])
-
-### 1. Workout Overview
-- **Date**: [Date, e.g. July 2, 2026]
-- **Title**: [Workout Title, e.g. 6km Easy Run]
-- **Distance**: [Actual Distance, e.g. 6.27 km] (Planned: [Planned Distance, e.g. 6.00 km])
-- **Duration**: [Elapsed Time / Duration in MM:SS or HH:MM:SS, e.g. 37:37]
-- **Average Pace**: [Average Pace, e.g. 6:02 min/km]
-- **Average Heart Rate**: [Avg HR, e.g. 138 bpm] (Max: [Max HR, e.g. 152 bpm])
-- **Total Elevation Gain**: [Elevation Gain, e.g. 10 m]
-- **Cadence**: [Cadence, e.g. 172 spm]
-
-### 2. Environmental Factors & Stress Correlation
-- **Run Time**: [Start Time, e.g. 07:40 AM]
-- **Temperature**: [Temperature Range at run time, e.g. ~18.4°C - 19.2°C] (Apparent: [Apparent/Feels Like, e.g. ~17.1°C - 17.4°C])
-- **Humidity**: [Humidity, e.g. 77%]
-- **Wind**: [Wind Speed and direction if known, e.g. ~20 - 24 km/h]
-- **Daily Peak Temperature**: [Daily Max Temperature, e.g. 20.9°C]
-- **Coaching Context**: [Explain how weather and timing choices impacted physiological stress and cardiac drift.]
-
-### 3. Physiological Analysis & Intensity Compliance
-- **Intensity Compliance**: [Coaching assessment of effort zones. E.g. "Excellent. Stayed in Zone 1 for recovery."]
-- **Pace vs. Heart Rate Efficiency**: [Assess aerobic efficiency. E.g., "Maintaining Zone 1 HR at Zone 2 pace indicates strong aerobic efficiency."]
-- **Aerobic Decoupling (Pa:Hr)**: [Decoupling percentage, e.g. 6.16%, and brief analysis of lap-by-lap HR drift vs speed/effort.]
-
-### 4. Biomechanical & Injury Context
-- [Biomechanical analysis, e.g. cadence impact on joint loading, step length, and compliance with recovery guidelines from injuries like calf build-up.]
-
-### 5. Long-Term Goal Progress
-- **Goal**: [Goal, e.g. Completing the NYC Marathon on November 1st, 2026]
-- **Status**: [Status assessment: ON TRACK, AHEAD OF SCHEDULE, or ADJUSTMENTS REQUIRED]
+4.  **Handle Runner Response**:
+    *   If they ask to create a detailed report for this workout or any period, load the `detailed-report` skill using `load_skill` and follow its instructions.
+    *   If they say **no** (or a no-like response), acknowledge and conclude the session without calling any tool.

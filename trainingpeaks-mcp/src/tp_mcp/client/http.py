@@ -115,6 +115,7 @@ class TPClient:
     # Class-level caches: persist across instances within the MCP server process
     _cached_athlete_id: int | None = None
     _cached_user_data: dict | None = None
+    _cached_user_data_future: asyncio.Future | None = None
     _shared_token_cache: TokenCache | None = None
 
     @classmethod
@@ -557,13 +558,32 @@ class TPClient:
         if TPClient._cached_user_data is not None:
             return TPClient._cached_user_data
 
-        response = await self.get("/users/v3/user")
-        if not response.success or not response.data:
-            return None
+        if TPClient._cached_user_data_future is not None:
+            return await TPClient._cached_user_data_future
 
-        user_data = response.data.get("user", response.data)
-        TPClient._cached_user_data = user_data
-        return user_data
+        # Create a future/task and cache it immediately
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        TPClient._cached_user_data_future = future
+
+        try:
+            response = await self.get("/users/v3/user")
+            if not response.success or not response.data:
+                user_data = None
+            else:
+                user_data = response.data.get("user", response.data)
+
+            TPClient._cached_user_data = user_data
+            future.set_result(user_data)
+            return user_data
+        except Exception as e:
+            future.set_exception(e)
+            TPClient._cached_user_data_future = None  # Reset so it can be retried on next call
+            raise e
+        finally:
+            # Once resolved, clear the active future cache so next calls read from value cache
+            # or hit a fresh fetch if value cache gets cleared.
+            TPClient._cached_user_data_future = None
 
     async def ensure_athlete_id(self) -> int | None:
         """Get athlete ID, resolving coach athlete targeting via context var.

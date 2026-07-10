@@ -333,8 +333,10 @@ async def get_tp_tool(name: str) -> Any:
 nutrition_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "nutrition-planner"))
 checkin_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "check-in-report"))
 workout_analysis_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "workout-analysis"))
+schedule_audit_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "schedule-audit"))
+detailed_report_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "detailed-report"))
 skill_toolset = SkillToolset(
-    skills=[nutrition_skill, checkin_skill, workout_analysis_skill],
+    skills=[nutrition_skill, checkin_skill, workout_analysis_skill, schedule_audit_skill, detailed_report_skill],
     code_executor=UnsafeLocalCodeExecutor()
 )
 
@@ -362,19 +364,17 @@ save_artifacts_tool = FunctionTool(save_report_to_artifacts)
 # --- Consolidated Check-In Tool ---
 def compile_data_summary(
     n_days: int,
-    workouts_past_raw: Any,
-    workouts_future_raw: Any,
-    metrics_raw: Any,
-    fitness_raw: Any,
-    notes_raw: Any
+    workouts_past: Optional[list[dict]],
+    workouts_future: Optional[list[dict]],
+    metrics_data: Optional[dict],
+    fitness_data: Optional[dict],
+    notes_list: Optional[list[dict]]
 ) -> str:
-    """Parses and compiles a highly compact, token-efficient summary of the runner's data."""
+    """Compiles a highly compact, token-efficient summary of the runner's data."""
     
     # 1. Summarize past workouts (if available)
     workouts_past_summary = ""
-    if workouts_past_raw is not None:
-        workouts_past_data = parse_mcp_response(workouts_past_raw) or {}
-        workouts_past = workouts_past_data.get("workouts", [])
+    if workouts_past is not None:
         completed_runs = []
         completed_strength = 0
         for w in workouts_past:
@@ -390,8 +390,17 @@ def compile_data_summary(
                     planned_tss = w.get("tss_planned") or 0
                     w_id = w.get("id", "")
                     time_identifier = w.get("start_time") or w.get("date", "")
+                    try:
+                        if "T" in time_identifier:
+                            dt = datetime.strptime(time_identifier.split(".")[0], "%Y-%m-%dT%H:%M:%S")
+                            time_display = dt.strftime("%A, %b %d, %Y at %H:%M:%S")
+                        else:
+                            dt = datetime.strptime(time_identifier[:10], "%Y-%m-%d")
+                            time_display = dt.strftime("%A, %b %d, %Y")
+                    except Exception:
+                        time_display = time_identifier
                     completed_runs.append(
-                        f"- Run [ID: {w_id}] on {time_identifier}: {dist_km}km (Planned: {planned_km}km) | TSS: {actual_tss} (Planned: {planned_tss})"
+                        f"- Run [ID: {w_id}] on {time_display}: {dist_km}km (Planned: {planned_km}km) | TSS: {actual_tss} (Planned: {planned_tss})"
                     )
                 elif "strength" in sport.lower() or "strength" in w_title:
                     completed_strength += 1
@@ -400,9 +409,7 @@ def compile_data_summary(
 
     # 2. Summarize upcoming workouts (if available)
     workouts_future_summary = ""
-    if workouts_future_raw is not None:
-        workouts_future_data = parse_mcp_response(workouts_future_raw) or {}
-        workouts_future = workouts_future_data.get("workouts", [])
+    if workouts_future is not None:
         upcoming_runs = []
         for w in workouts_future:
             if w.get("sport") == "Run":
@@ -411,18 +418,22 @@ def compile_data_summary(
                 planned_tss = w.get("tss_planned") or 0
                 w_id = w.get("id", "")
                 date_str = w.get("date", "")[:10]
+                try:
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    date_display = dt.strftime("%A, %b %d, %Y")
+                except Exception:
+                    date_display = date_str
                 upcoming_runs.append(
-                    f"- Planned Run [ID: {w_id}] on {date_str}: {planned_km}km | Planned TSS: {planned_tss}"
+                    f"- Planned Run [ID: {w_id}] on {date_display}: {planned_km}km | Planned TSS: {planned_tss}"
                 )
         workouts_future_summary = "\n".join(upcoming_runs) if upcoming_runs else "No upcoming runs planned."
 
     # 3. Summarize recovery metrics (if available)
     metrics_summary = ""
-    if metrics_raw is not None:
-        extracted = extract_health_metrics(metrics_raw)
-        sleep_hours = extracted["sleep"]
-        hrv_clean = extracted["hrv"]
-        rhr_clean = extracted["rhr"]
+    if metrics_data is not None:
+        sleep_hours = metrics_data.get("sleep", [])
+        hrv_clean = metrics_data.get("hrv", [])
+        rhr_clean = metrics_data.get("rhr", [])
         
         sleep_avg = round(sum(sleep_hours) / len(sleep_hours), 2) if sleep_hours else "N/A"
         hrv_trend = ", ".join(str(h) for h in hrv_clean) if hrv_clean else "N/A"
@@ -438,38 +449,29 @@ def compile_data_summary(
 
     # 3.5. Summarize calendar notes (if available)
     notes_summary = ""
-    if notes_raw is not None:
-        notes_data = parse_mcp_response(notes_raw) or {}
-        notes_list = notes_data.get("notes", [])
+    if notes_list is not None:
         notes_summary_list = []
         for n in notes_list:
             n_date = n.get("date")
+            try:
+                dt = datetime.strptime(n_date[:10], "%Y-%m-%d")
+                date_display = dt.strftime("%A, %b %d, %Y")
+            except Exception:
+                date_display = n_date
             n_title = n.get("title") or "Note"
             n_desc = n.get("description") or ""
-            notes_summary_list.append(f"- {n_date}: {n_title} | {n_desc}")
+            notes_summary_list.append(f"- {date_display}: {n_title} | {n_desc}")
         notes_summary = "\n".join(notes_summary_list) if notes_summary_list else "No calendar notes."
 
     # 4. Summarize fitness PMC trends (if available)
     fitness_summary = ""
-    if fitness_raw is not None:
-        fitness_data = parse_mcp_response(fitness_raw) or {}
-        fitness_list = fitness_data.get("daily_data", [])
-        ctl_start, ctl_end = "N/A", "N/A"
-        atl_start, atl_end = "N/A", "N/A"
-        tsb_start, tsb_end = "N/A", "N/A"
-        if isinstance(fitness_list, list) and len(fitness_list) > 0:
-            try:
-                fitness_sorted = sorted(fitness_list, key=lambda x: x.get("date", ""))
-                start_entry = fitness_sorted[0]
-                end_entry = fitness_sorted[-1]
-                ctl_start = round(start_entry.get("ctl", 0), 1)
-                ctl_end = round(end_entry.get("ctl", 0), 1)
-                atl_start = round(start_entry.get("atl", 0), 1)
-                atl_end = round(end_entry.get("atl", 0), 1)
-                tsb_start = round(start_entry.get("tsb", 0), 1)
-                tsb_end = round(end_entry.get("tsb", 0), 1)
-            except Exception as e:
-                print(f"Error parsing fitness trend: {e}")
+    if fitness_data is not None:
+        ctl_start = round(fitness_data.get("ctl_start", 0), 1)
+        ctl_end = round(fitness_data.get("ctl_end", 0), 1)
+        atl_start = round(fitness_data.get("atl_start", 0), 1)
+        atl_end = round(fitness_data.get("atl_end", 0), 1)
+        tsb_start = round(fitness_data.get("tsb_start", 0), 1)
+        tsb_end = round(fitness_data.get("tsb_end", 0), 1)
         fitness_summary = (
             f"- CTL (Fitness): Started at {ctl_start} -> Ended at {ctl_end}\n"
             f"- ATL (Fatigue): Started at {atl_start} -> Ended at {atl_end}\n"
@@ -478,22 +480,22 @@ def compile_data_summary(
 
     # Build the final output dynamically
     parts = []
-    if workouts_past_raw is not None:
-        parts.append(f"### Summary of Your Training & Recovery (Past {n_days} Days)\n")
-        parts.append(f"**1. Training Consistency & Compliance (Past {n_days} days):**\n{workouts_past_summary}\n")
+    if workouts_past is not None:
+        parts.append(f"### Summary of Your Training & Recovery\n")
+        parts.append(f"**1. Completed Workouts & Training Compliance:**\n{workouts_past_summary}\n")
     else:
         parts.append(f"### Summary of Your Training Calendar (Future Query)\n")
         
-    if workouts_future_raw is not None:
+    if workouts_future is not None:
         parts.append(f"**2. Planned Workouts:**\n{workouts_future_summary}\n")
         
-    if metrics_raw is not None:
+    if metrics_data is not None:
         parts.append(f"**3. Recovery & Physiological Metrics (Past {n_days} days):**\n{metrics_summary}\n")
         
-    if notes_raw is not None:
+    if notes_list is not None:
         parts.append(f"**4. Calendar Notes:**\n{notes_summary}\n")
         
-    if fitness_raw is not None:
+    if fitness_data is not None:
         parts.append(f"**5. Fitness PMC Trends (Past {n_days} days):**\n{fitness_summary}\n")
         
     return "\n".join(parts)
@@ -521,11 +523,8 @@ async def fetch_runner_status(
     
     if is_custom_query:
         # Parse custom dates (fallback to today if one is missing)
-        q_start = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else today_date
-        q_end = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else today_date
-        
-        # Determine if this is a future-only query
-        is_future_only = (q_start > today_date)
+        q_start = datetime.strptime(start_date[:10], "%Y-%m-%d").date() if start_date else today_date
+        q_end = datetime.strptime(end_date[:10], "%Y-%m-%d").date() if end_date else today_date
     else:
         # Default Check-In Behavior
         last_active_str = profile.get("last_active", "Never")
@@ -541,68 +540,116 @@ async def fetch_runner_status(
         
         q_start = (today - timedelta(days=n_days)).date()
         q_end = (today + timedelta(days=7)).date()
-        is_future_only = False
 
-    # Convert back to strings for API calls
     start_str = q_start.strftime("%Y-%m-%d")
     end_str = q_end.strftime("%Y-%m-%d")
     today_str = today.strftime("%Y-%m-%d")
-    
-    # Initialize variables
-    workouts_past_raw = None
-    workouts_future_raw = None
-    metrics_raw = None
-    fitness_raw = None
-    notes_raw = None
-    
-    tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
-    tp_list_notes_tool = await get_tp_tool("tp_list_notes")
-    
-    if is_future_only:
-        # Bypassing past data
-        print(f"DEBUG: Smart Routing - Future-Only Query ({start_str} to {end_str}). Bypassing recovery/past data.")
+
+    # Get required tools
+    tools = await tp_toolset.get_tools()
+    tp_get_workouts_tool = next(t for t in tools if t.name == "tp_get_workouts")
+    tp_list_notes_tool = next(t for t in tools if t.name == "tp_list_notes")
+
+    # Create concurrent tasks for workouts and notes across the full range
+    tasks = [
+        tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": end_str}),
+        tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str})
+    ]
+
+    # Fetch metrics and fitness only if the query starts in the past or today
+    has_past = (q_start <= today_date)
+    if has_past:
+        tp_get_metrics_tool = next(t for t in tools if t.name == "tp_get_metrics")
+        tp_get_fitness_tool = next(t for t in tools if t.name == "tp_get_fitness")
         
-        # Fetch workouts and notes concurrently
-        t_fut = tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": end_str})
-        t_not = tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str})
-        workouts_future_raw, notes_raw = await asyncio.gather(t_fut, t_not)
-        n_days = 0
-    else:
-        # Full Fetch (Past + Future or Past-Only)
-        print(f"DEBUG: Smart Routing - Full Query ({start_str} to {end_str}). Fetching history and recovery.")
-        tp_get_metrics_tool = await get_tp_tool("tp_get_metrics")
-        tp_get_fitness_tool = await get_tp_tool("tp_get_fitness")
+        # Query metrics up to today (or end_date if the query is past-only)
+        recovery_end_str = min(q_end, today_date).strftime("%Y-%m-%d")
         
-        # Split range at 'today' to separate past and future workouts
-        if q_start < today_date and q_end > today_date:
-            # Overlapping range: run all 5 queries concurrently
-            t_past = tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": today_str})
-            t_fut = tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": today_str, "end_date": end_str})
-            t_met = tool_context.run_node(tp_get_metrics_tool, node_input={"start_date": start_str, "end_date": today_str})
-            t_fit = tool_context.run_node(tp_get_fitness_tool, node_input={"start_date": start_str, "end_date": today_str})
-            t_not = tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str})
-            
-            results = await asyncio.gather(t_past, t_fut, t_met, t_fit, t_not)
-            workouts_past_raw, workouts_future_raw, metrics_raw, fitness_raw, notes_raw = results
-        else:
-            # Past-only range: run all 4 queries concurrently
-            t_past = tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": end_str})
-            t_met = tool_context.run_node(tp_get_metrics_tool, node_input={"start_date": start_str, "end_date": end_str})
-            t_fit = tool_context.run_node(tp_get_fitness_tool, node_input={"start_date": start_str, "end_date": end_str})
-            t_not = tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str})
-            
-            results = await asyncio.gather(t_past, t_met, t_fit, t_not)
-            workouts_past_raw, metrics_raw, fitness_raw, notes_raw = results
-            
-        n_days = (today_date - q_start).days
+        tasks.append(tool_context.run_node(tp_get_metrics_tool, node_input={"start_date": start_str, "end_date": recovery_end_str}))
+        tasks.append(tool_context.run_node(tp_get_fitness_tool, node_input={"start_date": start_str, "end_date": recovery_end_str}))
+
+    # Await all results
+    results = await asyncio.gather(*tasks)
+    workouts_raw = results[0]
+    notes_raw = results[1]
+    metrics_raw = results[2] if len(results) > 2 else None
+    fitness_raw = results[3] if len(results) > 3 else None
+
+    # Parse and partition workouts locally based on today's date
+    workouts_past = None
+    workouts_future = None
+    if workouts_raw:
+        workouts_data = parse_mcp_response(workouts_raw) or {}
+        workouts_list = workouts_data.get("workouts", [])
+        
+        past_list = []
+        future_list = []
+        for w in workouts_list:
+            w_date = datetime.strptime(w.get("date", "")[:10], "%Y-%m-%d").date()
+            is_completed = (
+                bool(w.get("completed"))
+                or (w.get("distance_actual_km") is not None and w.get("distance_actual_km") > 0)
+                or (w.get("tss_actual") is not None and w.get("tss_actual") > 0)
+                or (w.get("duration_actual_min") is not None and w.get("duration_actual_min") > 0)
+                or (w.get("duration_actual") is not None and w.get("duration_actual") > 0)
+            )
+            if w_date < today_date or (w_date == today_date and is_completed):
+                past_list.append(w)
+            else:
+                future_list.append(w)
+                
+        if past_list or has_past:
+            workouts_past = past_list
+        if future_list:
+            workouts_future = future_list
+
+    # Parse recovery metrics
+    metrics_data = None
+    if metrics_raw:
+        metrics_data = extract_health_metrics(metrics_raw)
+
+    # Parse calendar notes
+    notes_list = None
+    if notes_raw:
+        notes_parsed = parse_mcp_response(notes_raw) or {}
+        notes_list = notes_parsed.get("notes", [])
+
+    # Parse fitness performance metrics
+    fitness_data = None
+    if fitness_raw:
+        fit_parsed = parse_mcp_response(fitness_raw) or {}
+        fitness_list = fit_parsed.get("daily_data", [])
+        ctl_start, ctl_end = 0.0, 0.0
+        atl_start, atl_end = 0.0, 0.0
+        tsb_start, tsb_end = 0.0, 0.0
+        if isinstance(fitness_list, list) and len(fitness_list) > 0:
+            try:
+                fitness_sorted = sorted(fitness_list, key=lambda x: x.get("date", ""))
+                start_entry = fitness_sorted[0]
+                end_entry = fitness_sorted[-1]
+                ctl_start = start_entry.get("ctl", 0.0)
+                ctl_end = end_entry.get("ctl", 0.0)
+                atl_start = start_entry.get("atl", 0.0)
+                atl_end = end_entry.get("atl", 0.0)
+                tsb_start = start_entry.get("tsb", 0.0)
+                tsb_end = end_entry.get("tsb", 0.0)
+            except Exception as e:
+                print(f"Error parsing fitness trend: {e}")
+        fitness_data = {
+            "ctl_start": ctl_start, "ctl_end": ctl_end,
+            "atl_start": atl_start, "atl_end": atl_end,
+            "tsb_start": tsb_start, "tsb_end": tsb_end
+        }
+
+    n_days = (today_date - q_start).days if has_past else 0
 
     return compile_data_summary(
         n_days,
-        workouts_past_raw,
-        workouts_future_raw,
-        metrics_raw,
-        fitness_raw,
-        notes_raw
+        workouts_past,
+        workouts_future,
+        metrics_data,
+        fitness_data,
+        notes_list
     )
 
 fetch_runner_status_tool = FunctionTool(fetch_runner_status)

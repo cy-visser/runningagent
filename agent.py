@@ -29,7 +29,7 @@ class OnboardingAnswers(BaseModel):
     cross_training_strength: Optional[str] = Field(None, description="Cross-training or strength work")
 
 onboarding_agent = Agent(
-    model="gemini-2.5-flash-lite",
+    model="gemini-3.1-flash-lite",
     name="onboarding_agent",
     description="Onboarding assistant that gathers runner profile details.",
     instruction="""
@@ -59,7 +59,7 @@ onboarding_agent = Agent(
 )
 
 # ==============================================================================
-# 2. Coaching Agent (gemini-2.5-pro) - CHAT MODE
+# 2. Coaching Agent (gemini-3.5) - CHAT MODE
 # ==============================================================================
 coaching_agent_tools = [get_weather_tool, current_date_tool, skill_toolset, fetch_runner_status_tool, save_checkin_report_tool, save_artifacts_tool, analyze_workout_tool]
 
@@ -67,7 +67,7 @@ def inject_profile_context_cb(callback_context: Context, llm_request: LlmRequest
     """Injects the dynamic runner profile into the message history."""
     summary = callback_context.state.get("user_profile_summary")
     
-    # Inject the permanent runner profile context at the absolute beginning
+    # Inject the permanent runner profile context
     if summary:
         context_msg = types.Content(
             role="user",
@@ -83,7 +83,7 @@ def inject_profile_context_cb(callback_context: Context, llm_request: LlmRequest
     return None
 
 coaching_agent = Agent(
-    model="gemini-2.5-pro",
+    model="gemini-3.5-flash",
     name="coaching_agent",
     description="Expert running coach and physiologist that analyzes workouts and guides runners.",
     instruction="""
@@ -94,16 +94,21 @@ coaching_agent = Agent(
     CRITICAL: The low-level tools `tp_get_workouts`, `tp_get_metrics`, and `tp_get_fitness` are DEPRECATED and have been removed. You do not have access to them. You MUST ONLY use `fetch_runner_status` to retrieve training data. Do not attempt to call the deprecated tools under any circumstances, even if you see them in the conversation history of this session.
     
     SPECIALIZED SKILLS:
-    - You are equipped with the `nutrition-planner` skill. If the runner asks about their diet, daily calories, macronutrient splits, what they should eat today, or how they should fuel for big workouts, you MUST:
-      1. Load the skill using the `load_skill` tool (pass 'nutrition-planner').
-      2. Run the `calculate_nutrition.py` script using the `run_skill_script` tool, passing their weight, height, age, gender, and weekly mileage (which you can get from their profile summary).
-      3. Use the calculated daily targets to build a practical meal plan, and use the workout fueling targets to give them exact pre/intra/post-workout fueling advice (in grams) for their big sessions.
+    - You are equipped with the `nutrition-planner` skill. If the runner asks about their diet, daily calories, carbohydrate/fueling strategies, what they should eat today, or how they should fuel for workouts/races, you MUST:
+      1. Load the skill using the `load_skill` tool (pass 'nutrition-planner') before doing anything else. Do NOT call other tools before loading the skill.
+      2. Follow the instructions returned by the `load_skill` tool to synthesize a sports-science-based nutrition strategy and deliver a lightweight summary in chat.
     - You are equipped with the `check-in-report` skill. If the runner says "Checking in" (or similar check-in phrases), you MUST:
       1. Load the skill using the `load_skill` tool (pass 'check-in-report') before doing anything else. Do NOT call other tools before loading the skill.
-      2. Follow the instructions returned by the `load_skill` tool to gather their training data, analyze their progress, and deliver the report.
+      2. Follow the instructions returned by the `load_skill` tool to gather their training data, analyze their progress, and deliver a lightweight check-in summary in chat.
     - You are equipped with the `workout-analysis` skill. If the runner asks to analyze a specific workout or run (e.g., "Analyze today's run", "How was my workout yesterday?"), you MUST:
       1. Load the skill using the `load_skill` tool (pass 'workout-analysis') before doing anything else. Do NOT call other tools before loading the skill.
-      2. Follow the instructions returned by the `load_skill` tool to gather their training data, fetch weather, and deliver the report.
+      2. Follow the instructions returned by the `load_skill` tool to gather their training data, fetch weather, and deliver a lightweight workout summary in chat.
+    - You are equipped with the `schedule-audit` skill. If the runner asks you to audit, assess, analyze, review, or check their training schedule or plan (e.g., "Assess my schedule until my race", "Audit my running schedule for this month"), you MUST:
+      1. Load the skill using the `load_skill` tool (pass 'schedule-audit') before doing anything else. Do NOT call other tools before loading the skill.
+      2. Follow the instructions returned by the `load_skill` tool to gather their training data, perform calculations, and deliver the audit.
+    - You are equipped with the `detailed-report` skill. If the runner explicitly asks to create or generate a detailed report for a specific period or topic (e.g., "create a detailed report for last week", "generate a detailed report for last month", "give me a detailed report for today/yesterday/period X", or "create a detailed report for this workout"), you MUST:
+      1. Load the skill using the `load_skill` tool (pass 'detailed-report') before doing anything else. Do NOT call other tools before loading the skill.
+      2. Follow the instructions returned by the `load_skill` tool to gather data for that period, perform multi-dimensional analysis, and save the detailed report to the Artifacts pane.
     
     CRITICAL COACHING PROTOCOLS:
     1. Do not rely solely on raw hrTSS or ATL spikes to determine fatigue. When reviewing a workout, check the relationship between Pace and Heart Rate (Aerobic Decoupling / Pa:Hr).
@@ -114,7 +119,7 @@ coaching_agent = Agent(
        - If you notice high heart rate or slow pace but the weather was cool, look for other factors (like sleep, stress, or actual physical fatigue) and ask the user about it.
        - If the weather data shows high heat (above 22°C/72°F), high humidity, or high winds, explicitly factor this into your analysis.
     3. Always anchor your feedback, analysis, and recommendations in the runner's long-term goal (e.g., their target marathon date and time). Every check-in report MUST include a dedicated section assessing their progress toward this goal, explaining whether they are on pace based on their current CTL, consistency, and mileage, and what adjustments are needed.
-        
+    
     Today's date is {current_date_str?}.
     """,
     tools=coaching_agent_tools,
@@ -123,7 +128,7 @@ coaching_agent = Agent(
 )
 
 # ==============================================================================
-# 3. Custom Orchestration Node (The App)
+# 3. Workflow
 # ==============================================================================
 @node(name="running_coach_app", rerun_on_resume=True)
 async def running_coach_app(ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
@@ -178,4 +183,5 @@ root_agent = Workflow(
 app = App(
     name="running_coach",
     root_agent=root_agent,
+    context_cache_config=ContextCacheConfig(ttl_seconds=300, min_tokens=4096),
 )
