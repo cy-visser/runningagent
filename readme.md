@@ -70,7 +70,7 @@ terraform apply
 ```
 *Review the plan and type `yes` to approve. This will provision:*
 *   **APIs**: Vertex AI, Secret Manager, Firestore, Cloud Trace, Cloud Logging.
-*   **Service Account**: `running-coach-agent@firestore-cyvisser.iam.gserviceaccount.com`.
+*   **Service Account**: `running-coach-agent@your_project_id.iam.gserviceaccount.com`.
 *   **IAM Roles**: Vertex AI User, Firestore User, Trace Agent, Logs Writer, Secret Accessor, and the critical Vertex AI Service Agent binding.
 *   **Secret**: A secure container named `tp-auth-cookie`.
 
@@ -97,7 +97,7 @@ Once deployed, the agent is fully instrumented with OpenTelemetry (`--otel_to_cl
 To monitor your token consumption and set up budget alerts:
 *   Go to **Monitoring** -> **Metrics Explorer**.
 *   Select the metric: `aiplatform.googleapis.com/prediction/token_count`.
-*   Group by `model_id` to track and compare token usage between `gemini-2.5-pro` and `gemini-2.5-flash`.
+*   Group by `model_id` to track and compare token usage.
 *   Set up an **Alerting Policy** to notify you if token consumption spikes, protecting you against billing surprises.
 
 ### 3. Live Logs (Cloud Logging)
