@@ -1,7 +1,6 @@
 variable "project_id" {
   type        = string
-  default     = "firestore-cyvisser"
-  description = "The GCP Project ID"
+  description = "The GCP Project ID (supplied via TF_VAR_project_id from .env or -var flag)"
 }
 
 variable "region" {
