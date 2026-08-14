@@ -1,4 +1,6 @@
-google-adk[extensions,a2a]
+google-adk[extensions,a2a,mcp]
+a2ui-agent-sdk
+mcp>=1.3.0
 google-cloud-firestore
 python-dotenv
 ./agents/running_coach/tp_mcp-2.0.0-py3-none-any.whl

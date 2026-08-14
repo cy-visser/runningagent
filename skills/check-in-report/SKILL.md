@@ -9,24 +9,33 @@ You are now equipped with the Check-In Report skill. Use this skill to perform a
 
 ## Check-In Protocol:
 When the runner initiates a check-in (e.g., saying "Checking in" or "How is my progress?"):
-1.  **Gather Data**: Immediately call the `fetch_runner_status` tool. This tool will return a clean, consolidated summary of workouts, metrics, and calendar notes. Review the workout titles/descriptions and **Calendar Notes**. You MUST fetch the weather for the workouts using `get_weather_for_dates`, passing the full ISO timestamps (including start times, e.g., '2026-06-23T07:35:13') as the dates list to get the hourly weather at the time of the run. If you detect travel (e.g., to Milan), make a separate weather call for those timestamps using the correct city, and fetch the weather for the remaining workouts using the runner's home location.
+
+1.  **Gather Data**:
+    *   Call `fetch_checkin_data`. This tool automatically pulls 14-day completed workouts (with attached run-time weather), 7-day upcoming workouts, 14-day recovery trends (HRV, Resting Heart Rate, sleep), 14-day PMC fitness trends (CTL/ATL/TSB, visual table, goal trajectory), and calendar notes in a single call.
 
 2.  **Perform Multi-Dimensional Coaching Analysis**:
-    *   **Holistic Contextualization**: Do not analyze numbers in a vacuum. Evaluate metrics *through the lens* of the runner's calendar notes and environment (e.g., a drop in HRV or a spike in RHR should be reasoned against travel stress, a sudden heatwave, or a massive spike in weekly ATL).
-    *   **Consistency & Compliance**: Review the completed vs. planned runs in the summary. Identify any missed sessions or significant deviations, cross-referencing them with **Calendar Notes** to determine the *why* behind the variance.
-    *   **Physiological & Training Load Trends**: Synthesize the relationship between training load trends (CTL/ATL/TSB) and physiological recovery metrics (HRV trend, sleep averages, and Resting Heart Rate trends). Look for alignment or divergence (e.g., if CTL is rising but HRV is stable, they are adapting well; if TSB is deeply negative and HRV is crashing, flag under-recovery).
-    *   **Long-Term Goal Alignment**: Compare their current fitness (CTL), weekly mileage, and consistency against their ultimate goal and target race date (from their profile). Critically assess if their current trajectory matches the timeline required for their race.
-    *   **Actionable Recommendations**: Formulate clear, specific advice based on the data trends rather than generic coaching axioms. 
+    *   **Pillar 1: Intensity Distribution & Execution**:
+        *   Differentiate **Easy/Recovery Runs** (low effort, Zone 1/2 HR discipline) from **Structured Workouts** (intervals, tempo, threshold, races, MP blocks).
+        *   Check workout balance (~80% easy / ~20% hard) to ensure adequate recovery between quality sessions.
+    *   **Pillar 2: Dynamic Volume Progression**:
+        *   Calculate dynamic **weekly mileage growth** (week-over-week volume progression) directly from `fetch_checkin_data`.
+        *   Verify volume growth follows safe guidelines (~10-15% weekly cap) to prevent overuse injury risks.
+    *   **Pillar 3: Physiological & Environmental Context**:
+        *   Synthesize fitness load trends (CTL/ATL/TSB) holistically alongside recovery metrics (HRV trends, Resting Heart Rate, sleep averages). **Do not rely on hardcoded single-metric rules for TSB**: evaluate whether low or negative TSB represents healthy productive overload or overreaching risk by checking autonomic markers (e.g. dropped HRV, spiked resting HR) and sleep trends.
+        *   Contextualize variances against environmental factors (heat, humidity, travel) and **Calendar Notes** (work stress, illness, fatigue).
+    *   **Pillar 4: Goal Alignment & Trajectory**:
+        *   Evaluate CTL build and weekly volume trajectory against the runner's target race goal and race date.
 
-3.  **Deliver Lightweight Check-In Summary (Chat Only)**:
-    *   **CRITICAL - NO ARTIFACT RULE**: Do NOT call `save_report_to_artifacts` and do NOT generate a full multi-section detailed report.
-    *   In your chat message to the runner, output ONLY a concise, encouraging summary formatted with these exact sections:
-        1. **Warm Greeting**: Acknowledging the check-in.
-        2. **🌟 Key Highlights & Celebration**: 3-4 bullet points explicitly covering: (a) whether they made progress toward their goals/milestones, (b) how they are handling the workouts based on physiological data (e.g., RHR, HRV, sleep, cardiac drift), and (c) factoring in environmental/weather conditions (e.g., early morning timing, heat, humidity).
-        3. **🚀 Top 3 Action Items for this Week**: Exactly 3 prioritized, highly actionable bullet points telling the runner what to focus on this week—especially focusing on **pacing** and relating all adjustments or targets directly to achieving their long-term goal (e.g., NYC Marathon), alongside climate/travel adjustments, hydration, or injury prevention.
-        4. **Next Step Offer**: Conclude by asking: *"Would you like me to create a detailed training report for this week (or any specific period), or save this check-in to your training history?"* Stop and wait for their response.
+3.  **Deliver Check-In Summary**:
+    *   **Visual Presentation**: Display the Markdown visual progress table provided by `fetch_checkin_data`.
+    *   Output a structured summary formatted with these exact sections:
+        1. **Warm Greeting / Note**: Warmly acknowledging the check-in and providing a personalized coaching opening note.
+        2. **📊 Metrics Progress**: Display the Markdown visual progress indicator table with CTL/ATL/TSB values and target completion percentages directly from `fetch_checkin_data`.
+        3. **🎯 Goal Trajectory Status**: Explicitly state whether the runner's CTL, ATL, and TSB are on expected level to achieve their target race/fitness goal by the timeline date (e.g. 🟢 On Track, 🟡 Slightly Behind, 🔴 Significantly Behind).
+        4. **🌟 Key Highlights & Celebration**: 3-4 bullet points covering goal progress, easy vs. structured execution, physiological adaptation (HRV, RHR, sleep), and weather/travel adaptation.
+        5. **🚀 Top 3 Action Items for the Upcoming Week**: Exactly 3 prioritized, actionable advice points looking 1 week forward at scheduled workouts, calendar notes, pacing, climate/travel adjustments, or recovery needs.
+        6. **Next Step Offer**: Conclude with: *"Would you like me to save this check-in to your training history?"*
 
 4.  **Handle Runner Response**:
-    *   If they ask to create a detailed report for this week or any period, load the `detailed-report` skill using `load_skill` and follow its instructions.
-    *   If they say **yes** to saving to training history (or a yes-like response), call the `save_checkin_report` tool, passing the markdown text of the summary you just delivered. Acknowledge and confirm when the tool returns success.
-    *   If they say **no** (or a no-like response), acknowledge and conclude the session without calling any tool.
+    *   If **yes** (or affirmative): Call `save_checkin_report`, passing the markdown text of the summary. Confirm success.
+    *   If **no** (or negative): Warmly conclude the session without calling any tool.

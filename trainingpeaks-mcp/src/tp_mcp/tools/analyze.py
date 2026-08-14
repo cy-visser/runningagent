@@ -1,5 +1,6 @@
 """Tool for workout analysis via the Peaksware analysis API."""
 
+import asyncio
 import json
 import logging
 import tempfile
@@ -90,12 +91,15 @@ async def tp_analyze_workout(workout_id: str) -> dict[str, Any]:
             "Referer": "https://app.trainingpeaks.com/",
         }
 
+        base_url = f"{ANALYSIS_API_BASE}/workout-analysis/v2/analyze"
+        payload = {"workoutId": wid, "viewingPersonId": athlete_id}
+
         try:
             async with httpx.AsyncClient(timeout=ANALYSIS_TIMEOUT) as http_client:
-                response = await http_client.post(
-                    f"{ANALYSIS_API_BASE}/workout-analysis/v1/analyze",
-                    headers=headers,
-                    json={"workoutId": wid, "viewingPersonId": athlete_id},
+                summary_resp, charts_resp, laps_resp = await asyncio.gather(
+                    http_client.post(f"{base_url}/summary", headers=headers, json=payload),
+                    http_client.post(f"{base_url}/charts", headers=headers, json=payload),
+                    http_client.post(f"{base_url}/laps", headers=headers, json=payload),
                 )
         except httpx.TimeoutException:
             return {
@@ -111,33 +115,116 @@ async def tp_analyze_workout(workout_id: str) -> dict[str, Any]:
                 "message": "A network error occurred.",
             }
 
-        if response.status_code == 401:
+        status_codes = [r.status_code for r in (summary_resp, charts_resp, laps_resp)]
+
+        if any(sc == 401 for sc in status_codes):
             return {
                 "isError": True,
                 "error_code": "AUTH_EXPIRED",
                 "message": "Session expired. Run 'tp-mcp auth' to re-authenticate.",
             }
-        if response.status_code == 404:
+        if all(sc in (400, 404) for sc in status_codes):
             return {
                 "isError": True,
                 "error_code": "NOT_FOUND",
                 "message": f"Workout {workout_id} not found for analysis.",
             }
-        if response.status_code != 200:
+        if not any(sc == 200 for sc in status_codes):
             return {
                 "isError": True,
                 "error_code": "API_ERROR",
-                "message": f"Analysis API error: {response.status_code}",
+                "message": f"Analysis API error: {status_codes[0]}",
             }
 
-        try:
-            raw_data = response.json()
-        except Exception:
-            return {
-                "isError": True,
-                "error_code": "API_ERROR",
-                "message": "Failed to parse analysis response.",
-            }
+        start_timestamp = None
+        stop_timestamp = None
+        totals_list = []
+        data_elements = []
+        time_series_data = []
+        lap_data = []
+        lap_columns = []
+
+        if summary_resp.status_code == 200:
+            try:
+                s_json = summary_resp.json()
+                start_timestamp = s_json.get("startTimestamp")
+                stop_timestamp = s_json.get("stopTimestamp")
+                s_totals = s_json.get("totals")
+                s_data = s_json.get("data")
+                if isinstance(s_totals, list):
+                    for t in s_totals:
+                        if isinstance(t, dict):
+                            totals_list.append({
+                                "name": t.get("name") or t.get("friendlyName") or "",
+                                "value": t.get("value"),
+                                "unit": t.get("unit"),
+                            })
+                elif isinstance(s_data, dict):
+                    for k, v in s_data.items():
+                        if isinstance(v, dict):
+                            totals_list.append({
+                                "name": v.get("friendlyName") or k,
+                                "value": v.get("value"),
+                                "unit": v.get("unit"),
+                            })
+            except Exception as e:
+                logger.warning("Failed to parse analysis summary: %s", e)
+
+        if charts_resp.status_code == 200:
+            try:
+                c_json = charts_resp.json()
+                c_meta = c_json.get("metadata")
+                c_elems = c_json.get("dataElements")
+                if isinstance(c_elems, list):
+                    for el in c_elems:
+                        if isinstance(el, dict):
+                            data_elements.append(el)
+                elif isinstance(c_meta, dict):
+                    for k, v in c_meta.items():
+                        if isinstance(v, dict):
+                            data_elements.append({
+                                "identifier": k,
+                                "name": v.get("friendlyName") or k,
+                                "unit": v.get("unit"),
+                                "min": v.get("minimum"),
+                                "max": v.get("maximum"),
+                                "average": v.get("average"),
+                                "zones": v.get("zones"),
+                            })
+                time_series_data = c_json.get("data", [])
+            except Exception as e:
+                logger.warning("Failed to parse analysis charts: %s", e)
+
+        if laps_resp.status_code == 200:
+            try:
+                l_json = laps_resp.json()
+                if "lapData" in l_json:
+                    lap_data = l_json.get("lapData", [])
+                else:
+                    lap_data = l_json.get("data", [])
+
+                col_meta = l_json.get("lapColumns") or l_json.get("columnMetadata", {})
+                if isinstance(col_meta, list):
+                    lap_columns = col_meta
+                elif isinstance(col_meta, dict):
+                    for k, v in col_meta.items():
+                        if isinstance(v, dict):
+                            col_dict = {"key": k}
+                            col_dict.update(v)
+                            lap_columns.append(col_dict)
+            except Exception as e:
+                logger.warning("Failed to parse analysis laps: %s", e)
+
+        raw_data = {
+            "workoutId": wid,
+            "startTimestamp": start_timestamp,
+            "stopTimestamp": stop_timestamp,
+            "totals": totals_list,
+            "dataElements": data_elements,
+            "data": time_series_data,
+            "lapData": lap_data,
+            "lapColumns": lap_columns,
+        }
 
     try:
         analysis = parse_workout_analysis(raw_data)

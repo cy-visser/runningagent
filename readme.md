@@ -2,7 +2,7 @@
 
 An AI Running Coach and Exercise Physiologist built using the Google ADK framework. The coach integrates directly with **TrainingPeaks** (to fetch workouts, physiological metrics, and calendar notes), **Open-Meteo** (for hourly weather correlation), and **Google Cloud Firestore** (for session state persistence and historical check-in reports).
 
-When deployed, the agent integrates seamlessly with **Gemini Enterprise**, rendering rich, interactive progress reports in the **Canvas UI** and falling back gracefully to chat in local environments.
+When deployed, the agent integrates seamlessly with **Gemini Enterprise** to deliver interactive coaching guidance in chat.
 
 ---
 

@@ -1,10 +1,11 @@
 import os
+import sys
 import logging
 from typing import Any, Optional
 from dotenv import load_dotenv
 
-# Load .env file from the same directory as this services.py file
-current_dir = os.path.dirname(os.path.abspath(__file__))
+# Load .env file
+current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 dotenv_path = os.path.join(current_dir, ".env")
 if os.path.exists(dotenv_path):
     load_dotenv(dotenv_path)
@@ -17,7 +18,6 @@ from google.adk.events.event import Event
 from google.cloud import firestore
 import google.adk.cli.utils.service_factory as service_factory
 
-# Configure logging
 logger = logging.getLogger("google_adk.running_coach.services")
 
 # Sanitization utilities for Firestore compatibility (escapes keys starting with __)
@@ -44,17 +44,22 @@ def desanitize_state(state: Any) -> Any:
     return state
 
 class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, client: Optional[firestore.AsyncClient] = None, root_collection: Optional[str] = None, **kwargs):
         project = os.environ.get("FIRESTORE_PROJECT_ID")
         database = os.environ.get("FIRESTORE_DATABASE", "running-coach")
         
-        client = kwargs.get("client")
+        uri = kwargs.pop("uri", None)
+        if uri and not root_collection:
+            from urllib.parse import urlparse
+            parsed = urlparse(uri)
+            root_collection = parsed.netloc or None
+            
         if (client is None 
             or not hasattr(client, "_database") 
             or client._database != database):
             logger.info(f"Initializing custom Firestore AsyncClient for database '{database}' (project: '{project}')")
-            kwargs["client"] = firestore.AsyncClient(project=project, database=database)
-        super().__init__(*args, **kwargs)
+            client = firestore.AsyncClient(project=project, database=database)
+        super().__init__(client=client, root_collection=root_collection)
 
     async def create_session(
         self,
@@ -64,7 +69,6 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
         state: Optional[dict[str, Any]] = None,
         session_id: Optional[str] = None,
     ) -> Session:
-        # If session_id is not explicitly provided, try to load the previous session
         if not session_id:
             logger.info(f"Checking for previous session for app '{app_name}', user '{user_id}'...")
             try:
@@ -88,7 +92,6 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
             except Exception as e:
                 logger.error(f"Error loading previous session: {e}", exc_info=True)
 
-        # Fallback to creating a new session
         logger.info("Creating a new session in Firestore...")
         sanitized_state = sanitize_state(state) if state else None
         session = await super().create_session(
@@ -98,10 +101,8 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
             session_id=session_id
         )
         
-        # Desanitize in-memory state
         session.state = desanitize_state(session.state)
 
-        # Add a welcoming message from the coach if it's a brand new session
         try:
             greeting_text = "Hello! I'm your AI running coach, ready to help you achieve your running goals. To start, please tell me your first and last name."
             greeting_event = Event(
@@ -139,7 +140,6 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
         return response
 
     async def append_event(self, session: Session, event: Event) -> Event:
-        # Temporarily sanitize state and state_delta in-place for Firestore write
         orig_session_state = session.state
         session.state = sanitize_state(orig_session_state)
         
@@ -151,7 +151,6 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
         try:
             await super().append_event(session, event)
         finally:
-            # Restore original desanitized states in-place
             session.state = orig_session_state
             if orig_state_delta is not None:
                 event.actions.state_delta = orig_state_delta
@@ -180,7 +179,6 @@ def my_create_session_service(*args, **kwargs):
 
 service_factory.create_session_service_from_options = my_create_session_service
 
-import sys
 if "google.adk.cli.cli" in sys.modules:
     sys.modules["google.adk.cli.cli"].create_session_service_from_options = my_create_session_service
     logger.info("Applied monkeypatch to google.adk.cli.cli")

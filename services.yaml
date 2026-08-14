@@ -1,0 +1,4 @@
+services:
+  - scheme: firestore
+    type: session
+    class: running_coach.services.session_service.AutoLoadPreviousSessionFirestoreService

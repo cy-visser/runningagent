@@ -37,7 +37,6 @@ class TestTpGetFitness:
         assert result["current"]["ctl"] == 45.5
         assert result["current"]["atl"] == 52.1
         assert result["current"]["tsb"] == -6.6
-        assert "fitness_status" in result["current"]
 
     @pytest.mark.asyncio
     async def test_get_fitness_empty_data(self):
@@ -79,15 +78,3 @@ class TestTpGetFitness:
 
         assert result["isError"] is True
         assert result["error_code"] == "AUTH_INVALID"
-
-    @pytest.mark.asyncio
-    async def test_fitness_status_levels(self):
-        """Test that fitness status is correctly assigned based on TSB."""
-        from tp_mcp.tools.fitness import _get_fitness_status
-
-        assert "Very Fresh" in _get_fitness_status(30)
-        assert "Fresh" in _get_fitness_status(15)
-        assert "Neutral" in _get_fitness_status(5)
-        assert "Tired" in _get_fitness_status(-5)
-        assert "Very Tired" in _get_fitness_status(-20)
-        assert "Exhausted" in _get_fitness_status(-30)

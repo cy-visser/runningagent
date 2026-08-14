@@ -31,3 +31,6 @@ build/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Temporary scratch & test files
+scratch/

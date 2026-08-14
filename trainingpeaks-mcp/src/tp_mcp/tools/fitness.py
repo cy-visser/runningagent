@@ -111,7 +111,6 @@ async def tp_get_fitness(
                     "ctl": latest["ctl"],
                     "atl": latest["atl"],
                     "tsb": latest["tsb"],
-                    "fitness_status": _get_fitness_status(latest["tsb"]),
                 }
 
             return {
@@ -129,19 +128,3 @@ async def tp_get_fitness(
                 "error_code": "API_ERROR",
                 "message": "Failed to parse fitness data.",
             }
-
-
-def _get_fitness_status(tsb: float) -> str:
-    """Get human-readable fitness status from TSB."""
-    if tsb > 25:
-        return "Very Fresh (detraining risk)"
-    elif tsb > 10:
-        return "Fresh (race ready)"
-    elif tsb > 0:
-        return "Neutral (normal training)"
-    elif tsb > -10:
-        return "Tired (absorbing training)"
-    elif tsb > -25:
-        return "Very Tired (high fatigue)"
-    else:
-        return "Exhausted (overreaching risk)"
