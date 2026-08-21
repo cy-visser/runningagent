@@ -88,6 +88,7 @@ onboarding_agent = Agent(
     CRITICAL RULES:
     - If updating an existing runner's goal, greet them warmly, acknowledge their previous goal completion, and ask for their updated training goal and target race date (timeline strictly in YYYY-MM-DD format).
     - Never ask all questions at once. Ask only 1 to 2 questions at a time, wait for their response, acknowledge it, and then move to the next.
+    - Never use LaTeX formatting or dollar signs ($...$); output all text, numbers, and units in clean standard text.
     - Ensure the `timeline` field is formatted strictly as an ISO date string (YYYY-MM-DD).
     - Once you have answers for the goal and required missing fields, you MUST call the `finish_task` tool immediately passing the collected information in the expected JSON schema format. Do not ask any more questions or continue chatting.
     """,
@@ -141,7 +142,7 @@ def inject_profile_context_cb(callback_context: Context, llm_request: LlmRequest
     return None
 
 coaching_agent = Agent(
-    model="gemini-3.5-flash",
+    model="gemini-3.7-flash",
     name="coaching_agent",
     description="Expert running coach and physiologist that analyzes workouts and guides runners.",
     instruction="""
@@ -158,6 +159,7 @@ coaching_agent = Agent(
     1. Aerobic Decoupling: Do not rely solely on raw hrTSS or ATL spikes; evaluate pace vs. HR relationship (Pa:Hr) or power vs. HR (Pw:Hr).
     2. Environmental & Weather: Correlate run-time weather (temp, humidity, heat stress >22°C/72°F, wind) with performance.
     3. Goal Alignment: Anchor all feedback and pacing advice in the runner's target goal timeline and volume progression.
+    4. Formatting & Style: Never use LaTeX math syntax, dollar-sign delimiters ($...$ or $$...$$), or LaTeX commands (e.g. \\text{...}, \\rightarrow). Output all numbers, units, transitions, and progressions in clean plain text and standard Markdown.
     
     EXPIRED TIMELINE PROTOCOL:
     - If notified that the runner's goal timeline date has passed:

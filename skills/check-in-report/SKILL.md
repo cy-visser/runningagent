@@ -28,6 +28,7 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
 
 3.  **Deliver Check-In Summary**:
     *   **Visual Presentation**: Display the Markdown visual progress table provided by `fetch_checkin_data`.
+    *   Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
     *   Output a structured summary formatted with these exact sections:
         1. **Warm Greeting / Note**: Warmly acknowledging the check-in and providing a personalized coaching opening note.
         2. **📊 Metrics Progress**: Display the Markdown visual progress indicator table with CTL/ATL/TSB values and target completion percentages directly from `fetch_checkin_data`.

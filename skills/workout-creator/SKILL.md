@@ -41,6 +41,7 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
      - `description`: Optional detailed notes or advice.
 
 4. **Deliver Workout / Note Confirmation**:
+   - Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
    - Present a clean, motivational summary formatted in Markdown:
      1. **🎯 Confirmation Header**: Clear confirmation of the scheduled workout or note.
      2. **📋 Workout / Note Overview Table**: Date, Sport, Title, Planned Duration / Distance, and Estimated TSS.

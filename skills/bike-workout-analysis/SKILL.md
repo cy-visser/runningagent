@@ -30,6 +30,7 @@ You are now equipped with the **Bike Workout Analysis** skill. Use this skill wh
      - Analyze structured work intervals versus recovery laps for average/max power stability, heart rate response, recovery lap HR drop, and pedal cadence consistency.
 
 3. **Deliver Bike Workout Summary**:
+   - Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
    - Structure your response using these concise sections:
      1. **Warm Greeting & Ride Overview**: Identifying the analyzed cycling session (title, date/time, duration, distance, total work in kJ).
      2. **⚡ Power & Effort Profile**: Concise table or bullets with NP, Avg Power, IF, TSS, EF, and `Pw:Hr` aerobic drift status.

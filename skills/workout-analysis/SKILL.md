@@ -26,6 +26,7 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
    - **Goal Alignment**: Connect the run execution to long-term goal pacing.
 
 3. **Deliver Workout Summary**:
+   - Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
    - Format response with standard sections:
      1. **Warm Note**: Identifying analyzed workout.
      2. **🌟 Workout Highlights**: 1-2 bullet points celebrating execution.
