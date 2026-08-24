@@ -171,14 +171,19 @@ coaching_agent = Agent(
 )
 
 # ==============================================================================
-# 3. Workflow
+# 3. Workflow Nodes & Router
 # ==============================================================================
-@node(name="running_coach_app", rerun_on_resume=True)
-async def running_coach_app(ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
+ROUTE_ONBOARDING = "ONBOARDING"
+ROUTE_COACHING = "COACHING"
+
+
+@node(name="profile_router", rerun_on_resume=True)
+async def profile_router(ctx: Context, node_input: Any = None) -> None:
+    """Evaluates runner state and routes to onboarding or coaching."""
     # Set dynamic date in state so it is resolved correctly in the coaching instructions
     ctx.state["current_date_str"] = datetime.now().strftime("%Y-%m-%d (%A)")
 
-    # Step 1: Check if profile exists (if new user, or re-onboarding requested, run onboarding_agent)
+    # Step 1: Check if profile exists (if new user, or re-onboarding requested, route to onboarding)
     profile = ctx.state.get("user_profile")
     if not profile:
         try:
@@ -187,38 +192,66 @@ async def running_coach_app(ctx: Context, node_input: Any) -> AsyncGenerator[Any
         except Exception as e:
             print(f"Error fetching TP profile: {e}")
             tp_profile = None
-            
+
         await check_profile_step(ctx, tp_profile)
         profile = ctx.state.get("user_profile")
 
     if not profile or ctx.state.get("reonboard_requested"):
-        onboarding_answers = await run_node_with_retry(ctx, onboarding_agent, node_input=node_input, raise_on_wait=True)
-        if onboarding_answers:
-            ctx.state["onboarding_answers"] = onboarding_answers
-            await create_profile_step(ctx)
-            ctx.state["reonboard_requested"] = None
-            ctx.state["expired_timeline_date"] = None
-            firstname = ctx.state["user_profile"].get("firstname", "Runner")
-            yield Event(
-                author="model", 
-                message=f"Awesome, {firstname}! Your runner profile and goal are updated in Firestore. We are ready for active coaching!"
-            )
+        ctx.route = ROUTE_ONBOARDING
         return
 
-    # Step 2: Check timeline vs current date 
+    # Step 2: Check timeline vs current date
     is_expired, expired_date = check_timeline_expiration(profile)
     if is_expired:
         ctx.state["expired_timeline_date"] = expired_date
     else:
         ctx.state["expired_timeline_date"] = None
 
-    # Step 3 Run coaching agent 
-    await run_node_with_retry(ctx, coaching_agent, node_input=node_input, raise_on_wait=True)
+    ctx.route = ROUTE_COACHING
 
-# Set the root agent of the application
+
+@node(name="onboarding_node", rerun_on_resume=True)
+async def onboarding_node(ctx: Context, node_input: Any = None) -> AsyncGenerator[Any, None]:
+    """Runs the onboarding agent, persists the runner profile to Firestore, and emits confirmation."""
+    onboarding_answers = await run_node_with_retry(
+        ctx, onboarding_agent, node_input=node_input, raise_on_wait=True
+    )
+    if onboarding_answers:
+        ctx.state["onboarding_answers"] = onboarding_answers
+        await create_profile_step(ctx)
+        ctx.state["reonboard_requested"] = None
+        ctx.state["expired_timeline_date"] = None
+        profile = ctx.state.get("user_profile") or {}
+        firstname = profile.get("firstname", "Runner")
+        yield Event(
+            author="model",
+            message=f"Awesome, {firstname}! Your runner profile and goal are updated in Firestore. We are ready for active coaching!",
+        )
+
+
+@node(name="coaching_node", rerun_on_resume=True)
+async def coaching_node(ctx: Context, node_input: Any = None) -> None:
+    """Runs the coaching agent for active interactive running guidance."""
+    await run_node_with_retry(
+        ctx, coaching_agent, node_input=node_input, raise_on_wait=True
+    )
+
+
+# ==============================================================================
+# 4. Root Workflow & Application
+# ==============================================================================
 root_agent = Workflow(
     name="running_coach_workflow",
-    edges=[("START", running_coach_app)],
+    edges=[
+        ("START", profile_router),
+        (
+            profile_router,
+            {
+                ROUTE_ONBOARDING: onboarding_node,
+                ROUTE_COACHING: coaching_node,
+            },
+        ),
+    ],
 )
 
 app = App(
@@ -226,3 +259,4 @@ app = App(
     root_agent=root_agent,
     plugins=[AutoTracingPlugin()],
 )
+

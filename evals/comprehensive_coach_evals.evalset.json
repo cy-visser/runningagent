@@ -1,0 +1,160 @@
+[
+  {
+    "name": "analyze_yesterday_run",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon",
+          "location": "Amsterdam"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Can you analyze my run from yesterday? It felt harder than usual towards the end.",
+        "expected_tool_use": [
+          {
+            "tool_name": "analyze_workout",
+            "tool_input": {}
+          }
+        ],
+        "reference": "I've analyzed your run from yesterday. Looking at your telemetry, your pace remained steady but your heart rate drifted upward in the final third of the run, indicating aerobic decoupling (Pa:Hr drift). When accounting for elevation and Normalized Graded Pace (NGP), your physiological effort was consistent on the uphill segments. Given the heat stress and elevated humidity, this cardiovascular drift is expected. Be sure to prioritize hydration and take an easy recovery day today."
+      }
+    ]
+  },
+  {
+    "name": "weekly_progress_checkin",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Give me my weekly check-in report and save it to my profile history. How are my CTL and ATL trending?",
+        "expected_tool_use": [
+          {
+            "tool_name": "fetch_checkin_data",
+            "tool_input": {}
+          },
+          {
+            "tool_name": "save_checkin_report",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Here is your weekly progress check-in: Over the past 14 days, your Chronic Training Load (CTL / Fitness) has steadily increased while your Acute Training Load (ATL / Fatigue) remained manageable, keeping your Training Stress Balance (TSB) in an optimal productive training zone. Your 14-day average sleep and recovery metrics support this training progression. I have saved this structured check-in report to your history."
+      }
+    ]
+  },
+  {
+    "name": "four_week_schedule_audit",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Can you audit my training schedule for the next 4 weeks? I want to make sure I don't overtrain before my taper.",
+        "expected_tool_use": [
+          {
+            "tool_name": "fetch_schedule_audit_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "I have audited your 4-week training schedule. Your weekly TSS and volume ramp rate remains under 10% per week with adequate recovery days spaced between quality sessions. Hard and easy days are properly alternated, and the planned cutback week aligns well with your upcoming schedule."
+      }
+    ]
+  },
+  {
+    "name": "long_run_fueling_strategy",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon",
+          "weight": "70kg",
+          "height": "178cm"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "What should my fueling and hydration plan be for my 32km long run this Sunday?",
+        "expected_tool_use": [
+          {
+            "tool_name": "fetch_nutrition_context",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Based on your biometrics, target pacing, and the forecast temperature, here is your fueling and hydration strategy: Aim for 50 to 60 grams of carbohydrates per hour using energy gels or chews taken every 25 to 30 minutes with water. Maintain fluid intake of 500 to 700 ml per hour with electrolytes (approximately 300 to 500 mg sodium per hour) to preserve plasma volume and avoid cramping."
+      }
+    ]
+  },
+  {
+    "name": "create_workout_on_calendar",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Please schedule a 5x1000m VO2max workout on my calendar for this Thursday with 2km warmup and cooldown.",
+        "expected_tool_use": [
+          {
+            "tool_name": "create_workout",
+            "tool_input": {}
+          }
+        ],
+        "reference": "I've scheduled your 5x1000m VO2max workout for this Thursday on your TrainingPeaks calendar. It includes a 2km warmup, 5x1000m at 5K target pace with 400m recovery jogs, and a 2km cooldown."
+      }
+    ]
+  },
+  {
+    "name": "goal_transition_trigger",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-08-01",
+          "training_goal": "Berlin Marathon"
+        },
+        "expired_timeline_date": "2026-08-01"
+      }
+    },
+    "data": [
+      {
+        "query": "I finished the Berlin Marathon last week! I want to start training for a 10K race in November.",
+        "expected_tool_use": [
+          {
+            "tool_name": "request_new_goal",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Congratulations on finishing the Berlin Marathon! That is a huge accomplishment. Let's transition into setting up your new 10K goal and target race date."
+      }
+    ]
+  }
+]

@@ -1,0 +1,53 @@
+[
+  {
+    "name": "analyze_yesterday_run",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon",
+          "location": "Amsterdam"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Can you analyze my run from yesterday? It felt harder than usual towards the end.",
+        "expected_tool_use": [
+          {
+            "tool_name": "analyze_workout",
+            "tool_input": {}
+          }
+        ],
+        "reference": "I've analyzed your run from yesterday. Looking at your telemetry, your pace remained steady but your heart rate drifted upward in the final third of the run, indicating aerobic decoupling (Pa:Hr drift). When accounting for elevation and Normalized Graded Pace (NGP), your physiological effort was consistent on the uphill segments. Given the heat stress and elevated humidity, this cardiovascular drift is expected. Be sure to prioritize hydration and take an easy recovery day today."
+      }
+    ]
+  },
+  {
+    "name": "analyze_interval_workout",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "How did my 1000m intervals go yesterday? Did I hit the target power and pace?",
+        "expected_tool_use": [
+          {
+            "tool_name": "analyze_workout",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Analyzing your interval session from yesterday: your lap splits were consistent across all repetitions with strong power-to-heart rate efficiency (Pw:Hr). Your recovery between sets was prompt, bringing your heart rate back down into Zone 2 before the start of each interval."
+      }
+    ]
+  }
+]

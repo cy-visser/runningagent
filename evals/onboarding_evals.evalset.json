@@ -1,0 +1,48 @@
+[
+  {
+    "name": "goal_transition_trigger",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-08-01",
+          "training_goal": "Berlin Marathon"
+        },
+        "expired_timeline_date": "2026-08-01"
+      }
+    },
+    "data": [
+      {
+        "query": "I finished the Berlin Marathon last week! I want to start training for a 10K race in November.",
+        "expected_tool_use": [
+          {
+            "tool_name": "request_new_goal",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Congratulations on finishing the Berlin Marathon! That is a huge accomplishment. Let's transition into setting up your new 10K goal and target race date."
+      }
+    ]
+  },
+  {
+    "name": "onboarding_profile_intake",
+    "initial_session": {
+      "state": {
+        "temp_onboarding_data": {
+          "firstname": "Taylor",
+          "lastname": "Smith",
+          "age": 28,
+          "location": "Boulder, CO"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Hi! I want to train for a half marathon this autumn.",
+        "expected_tool_use": [],
+        "reference": "Welcome, Taylor! That sounds like an exciting challenge. What is your specific half marathon target time or goal, and what is your target race date (YYYY-MM-DD)?"
+      }
+    ]
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "name": "long_run_fueling_strategy",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon",
+          "weight": "70kg",
+          "height": "178cm"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "What should my fueling and hydration plan be for my 32km long run this Sunday?",
+        "expected_tool_use": [
+          {
+            "tool_name": "fetch_nutrition_context",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Based on your biometrics, target pacing, and the forecast temperature, here is your fueling and hydration strategy: Aim for 50 to 60 grams of carbohydrates per hour using energy gels or chews taken every 25 to 30 minutes with water. Maintain fluid intake of 500 to 700 ml per hour with electrolytes (approximately 300 to 500 mg sodium per hour) to preserve plasma volume and avoid cramping."
+      }
+    ]
+  }
+]
