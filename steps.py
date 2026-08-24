@@ -1,5 +1,4 @@
 import asyncio
-from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from google.adk import Context
@@ -21,7 +20,6 @@ from .utils.date_helpers import (
 )
 from .utils.profile_helpers import (
     parse_runner_name,
-    format_profile_summary,
     sync_profile_to_state,
     merge_profile_data,
 )

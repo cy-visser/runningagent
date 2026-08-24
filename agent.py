@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime
-import os
 from typing import Any, AsyncGenerator, Optional
 from google.adk import Agent, Context, Event, Workflow
 from google.adk.workflow import node
@@ -25,9 +24,6 @@ from .tools import (
     get_tp_tool,
 )
 from .steps import check_profile_step, create_profile_step, check_timeline_expiration
-from . import services
-
-current_date_str = datetime.now().strftime("%Y-%m-%d (%A)")
 
 async def run_node_with_retry(
     ctx: Context,
@@ -153,13 +149,14 @@ coaching_agent = Agent(
     - For weekly check-ins or progress reports: use `fetch_checkin_data` (bundles 14-day history, PMC trends, recovery, and weather).
     - To audit or review the training schedule: use `fetch_schedule_audit_data` (bundles 4-week volume, planned TSS, easy/hard split, and travel notes).
     - For nutrition and fueling strategy: use `fetch_nutrition_context` (bundles runner biometrics, upcoming 3-day demands, and climate).
-    - To schedule runs or calendar notes: use `create_workout` or `create_note`.
+    - To schedule, plan, create, or modify/update workouts: use `create_workout` (automatically updates existing workouts on that date or creates new ones). For calendar notes (travel, rest days, illness notes): use `create_note`.
     
     COACHING DIRECTIVES:
     1. Aerobic Decoupling: Do not rely solely on raw hrTSS or ATL spikes; evaluate pace vs. HR relationship (Pa:Hr) or power vs. HR (Pw:Hr).
-    2. Environmental & Weather: Correlate run-time weather (temp, humidity, heat stress >22°C/72°F, wind) with performance.
-    3. Goal Alignment: Anchor all feedback and pacing advice in the runner's target goal timeline and volume progression.
-    4. Formatting & Style: Never use LaTeX math syntax, dollar-sign delimiters ($...$ or $$...$$), or LaTeX commands (e.g. \\text{...}, \\rightarrow). Output all numbers, units, transitions, and progressions in clean plain text and standard Markdown.
+    2. Elevation & Terrain: Account for elevation gain/loss (+Xm/-Ym), route gradient, and climbing rate (VAM). Compare Normalized Graded Pace (NGP) vs. raw pace to evaluate true physiological effort on hills before attributing pace drops to fatigue or decoupling.
+    3. Environmental & Weather: Correlate run-time weather (temp, humidity, heat stress >22°C/72°F, wind) with performance.
+    4. Goal Alignment: Anchor all feedback and pacing advice in the runner's target goal timeline and volume progression.
+    5. Formatting & Style: Never use LaTeX math syntax, dollar-sign delimiters ($...$ or $$...$$), or LaTeX commands (e.g. \\text{...}, \\rightarrow). Output all numbers, units, transitions, and progressions in clean plain text and standard Markdown.
     
     EXPIRED TIMELINE PROTOCOL:
     - If notified that the runner's goal timeline date has passed:

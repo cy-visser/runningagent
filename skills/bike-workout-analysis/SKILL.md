@@ -20,6 +20,9 @@ You are now equipped with the **Bike Workout Analysis** skill. Use this skill wh
    - **Aerobic Decoupling (`Pw:Hr`) & Efficiency Factor (`EF`)**:
      - Examine `Pw:Hr` (the ratio of power output stability against heart rate drift over the ride). An aerobic drift > 5% indicates glycogen depletion, thermal accumulation/dehydration, or indoor heat buildup.
      - Evaluate `EF` (`NP / Average HR`) to track cardiovascular cycling efficiency trends over time.
+   - **Elevation & Climbing Profile**:
+     - Evaluate total elevation gain/loss (+Xm / -Ym), climbing VAM (Vertical Ascent Meters/hour), and climbing power vs flat power.
+     - Correlate power surges and cadence/torque shifts with road gradient and climbing sections.
    - **Cadence & Mechanics**:
      - Analyze average and peak cadence (rpm). Identify torque vs. cadence imbalances (e.g. low-cadence heavy grinding vs. high-cadence neuromuscular spin).
    - **Physiological Recovery & Readiness Context**:

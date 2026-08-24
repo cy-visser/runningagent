@@ -20,6 +20,10 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
    - **For Structured Workouts (Intervals, Tempo, Threshold, Race, Progressive, Push, MP Blocks, Reps)**:
      - REQUIRES lap data analysis (`lapData`).
      - Analyze individual work intervals vs. recovery laps for pace consistency, average/max HR, HR drop during recovery laps, and pace stability during MP blocks.
+   - **Elevation & Terrain Impact**:
+     - Evaluate total elevation gain/loss (+Xm / -Ym), route gradient, and climbing rate (VAM).
+     - Compare **Normalized Graded Pace (NGP)** against raw pace: understand that slower raw pace on uphill segments with steady NGP/HR indicates consistent effort and good pacing discipline rather than fatigue or aerobic decoupling.
+     - Assess biomechanical adaptations to grade (e.g. cadence increases, stride length adjustments, and ground contact time changes on climbs vs. descents).
    - **Aerobic Decoupling & Weather**: Evaluate Pa:Hr across environmental conditions (temp, humidity, wind).
    - **Physiological Recovery & Readiness Context**: Cross-reference run execution against morning recovery metrics from `analyze_workout` (Sleep duration, HRV baseline stability, and Resting Heart Rate trends) to assess readiness and strain.
    - **Biometrics & Injury Alignment**: Correlate biomechanics and HR drift with profile injuries to detect compensation patterns.

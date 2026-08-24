@@ -150,7 +150,11 @@ async def analyze_workout(
         if not data or not isinstance(data, dict):
             return f"No analysis data returned for workout {workout_id}."
 
-        analysis_str = format_workout_analysis(data)
+        analysis_str = format_workout_analysis(
+            data,
+            title=workout_title or None,
+            sport=workout_sport or None
+        )
 
         if not workout_start_time:
             workout_start_time = data.get("startTime") or data.get("workoutDay") or target_iso
@@ -481,20 +485,119 @@ fetch_nutrition_context_tool = FunctionTool(fetch_nutrition_context)
 
 
 # Workout & Calendar Note Creation (for workout-creator skill) ---
-async def create_workout(
+async def _find_existing_workout(
     tool_context: ToolContext,
+    target_iso: str,
+    sport: str
+) -> Optional[str]:
+    """Finds the ID of an existing planned workout on target date matching sport."""
+    try:
+        tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
+        raw_workouts = await tool_context.run_node(
+            tp_get_workouts_tool,
+            node_input={"start_date": target_iso, "end_date": target_iso}
+        )
+        parsed_wp = parse_mcp_response(raw_workouts)
+        if parsed_wp is None:
+            if isinstance(raw_workouts, dict):
+                parsed_wp = raw_workouts
+            elif isinstance(raw_workouts, str):
+                try:
+                    parsed_wp = json.loads(raw_workouts)
+                except Exception:
+                    parsed_wp = {}
+            else:
+                parsed_wp = {}
+
+        workouts_list = parsed_wp.get("workouts", [])
+        planned_workouts = [w for w in workouts_list if not is_workout_completed(w)]
+        
+        matching_sport = [w for w in planned_workouts if sport.lower() in (w.get("sport") or "").lower()]
+        if matching_sport:
+            return str(matching_sport[0].get("id") or matching_sport[0].get("workoutId") or "")
+        elif planned_workouts:
+            return str(planned_workouts[0].get("id") or planned_workouts[0].get("workoutId") or "")
+    except Exception as e:
+        print(f"Warning: Failed checking existing workouts for {target_iso}: {e}")
+    return None
+
+
+async def _execute_update_workout(
+    tool_context: ToolContext,
+    workout_id: str,
     date_str: str,
-    sport: str = "Run",
-    title: str = "Planned Run",
-    duration_minutes: Optional[int] = None,
+    sport: str,
+    title: str,
+    duration_minutes: Optional[int | float] = None,
     distance_km: Optional[float] = None,
     tss_planned: Optional[float] = None,
     description: Optional[str] = None,
     structure: Optional[Any] = None,
 ) -> str:
-    """Creates a planned workout in TrainingPeaks."""
+    """Updates an existing workout in TrainingPeaks via tp_update_workout."""
     try:
-        tp_tool = await get_tp_tool("tp_create_workout")
+        tp_update_tool = await get_tp_tool("tp_update_workout")
+        node_input: dict[str, Any] = {
+            "workout_id": workout_id,
+            "sport": sport,
+            "title": title,
+            "date": date_str,
+        }
+        if duration_minutes is not None:
+            node_input["duration_minutes"] = float(duration_minutes)
+        if distance_km is not None:
+            node_input["distance_km"] = float(distance_km)
+        if tss_planned is not None:
+            node_input["tss_planned"] = float(tss_planned)
+        if description is not None:
+            node_input["description"] = description
+        if structure is not None:
+            node_input["structure"] = structure
+
+        result = await tool_context.run_node(tp_update_tool, node_input=node_input)
+        data = parse_mcp_response(result)
+        if data is None:
+            if isinstance(result, dict):
+                data = result
+            elif isinstance(result, str):
+                try:
+                    data = json.loads(result)
+                except Exception:
+                    data = {"message": result}
+
+        if isinstance(data, dict) and data.get("isError"):
+            return f"Error updating workout: {data.get('message', 'Unknown error')}"
+
+        return json.dumps({
+            "success": True,
+            "action": "updated",
+            "workout_id": workout_id,
+            "title": title,
+            "date": date_str,
+            "sport": sport,
+            "duration_minutes": duration_minutes,
+            "distance_km": distance_km,
+            "tss_planned": tss_planned,
+        })
+    except Exception as e:
+        print(f"Error updating workout {workout_id}: {e}")
+        return f"Error: Failed to update workout {workout_id}: {e}"
+
+
+async def _execute_create_workout(
+    tool_context: ToolContext,
+    date_str: str,
+    sport: str,
+    title: str,
+    duration_minutes: Optional[int | float] = None,
+    distance_km: Optional[float] = None,
+    tss_planned: Optional[float] = None,
+    description: Optional[str] = None,
+    structure: Optional[Any] = None,
+) -> str:
+    """Creates a new workout in TrainingPeaks via tp_create_workout."""
+    try:
+        tp_create_tool = await get_tp_tool("tp_create_workout")
         node_input: dict[str, Any] = {
             "date_str": date_str,
             "sport": sport,
@@ -511,7 +614,7 @@ async def create_workout(
         if structure is not None:
             node_input["structure"] = structure
 
-        result = await tool_context.run_node(tp_tool, node_input=node_input)
+        result = await tool_context.run_node(tp_create_tool, node_input=node_input)
         data = parse_mcp_response(result)
         if data is None:
             if isinstance(result, dict):
@@ -525,11 +628,81 @@ async def create_workout(
         if isinstance(data, dict):
             if data.get("isError"):
                 return f"Error creating workout: {data.get('message', 'Unknown error')}"
+            data["action"] = "created"
             return json.dumps(data)
-        return "Success: Workout created."
+        return json.dumps({"success": True, "action": "created", "title": title, "date": date_str, "sport": sport})
     except Exception as e:
-        print(f"Error in create_workout tool: {e}")
+        print(f"Error creating workout: {e}")
         return f"Error: Failed to create workout: {e}"
+
+
+async def create_workout(
+    tool_context: ToolContext,
+    date_str: str,
+    sport: str = "Run",
+    title: str = "Planned Run",
+    duration_minutes: Optional[int | float] = None,
+    distance_km: Optional[float] = None,
+    tss_planned: Optional[float] = None,
+    description: Optional[str] = None,
+    structure: Optional[Any] = None,
+    workout_id: Optional[str] = None,
+    create: bool = False,
+) -> str:
+    """Creates a new planned workout or updates an existing workout in TrainingPeaks.
+
+    Acts as the intelligent workout management facade:
+    - If `workout_id` is provided, updates that specific workout.
+    - If `workout_id` is not provided and `create` is False, checks if an existing planned workout exists on `date_str`.
+      - If an existing planned workout is found on that date, updates it via update_workout.
+      - If no existing planned workout is found on that date, creates a new workout via create_workout.
+    - If `create` is True, creates a new workout unconditionally.
+
+    Args:
+        tool_context: ADK tool context.
+        date_str: Workout date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS).
+        sport: Sport type (default 'Run', e.g. 'Run', 'Bike', 'Swim', 'Strength', 'Walk', 'Crosstrain', 'Race').
+        title: Workout title (e.g. 'Easy Aerobic Recovery Run', 'Threshold Intervals: 5x1km').
+        duration_minutes: Planned duration in minutes.
+        distance_km: Optional planned distance in kilometres.
+        tss_planned: Optional planned Training Stress Score.
+        description: Structured coaching instructions (warm-up, main set, cool-down, pacing cues).
+        structure: Optional interval structure dictionary or JSON string.
+        workout_id: Optional workout ID to update directly.
+        create: If True, forces creating a new workout instead of updating an existing one on that date.
+    """
+    target_date = parse_date(date_str)
+    target_iso = target_date.strftime("%Y-%m-%d") if target_date else date_str[:10]
+
+    target_workout_id = workout_id
+    if not target_workout_id and not create:
+        target_workout_id = await _find_existing_workout(tool_context, target_iso, sport)
+
+    if target_workout_id:
+        return await _execute_update_workout(
+            tool_context=tool_context,
+            workout_id=target_workout_id,
+            date_str=date_str,
+            sport=sport,
+            title=title,
+            duration_minutes=duration_minutes,
+            distance_km=distance_km,
+            tss_planned=tss_planned,
+            description=description,
+            structure=structure,
+        )
+
+    return await _execute_create_workout(
+        tool_context=tool_context,
+        date_str=date_str,
+        sport=sport,
+        title=title,
+        duration_minutes=duration_minutes,
+        distance_km=distance_km,
+        tss_planned=tss_planned,
+        description=description,
+        structure=structure,
+    )
 
 create_workout_tool = FunctionTool(create_workout)
 

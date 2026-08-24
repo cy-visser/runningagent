@@ -1,12 +1,16 @@
 from typing import Optional
-from ..utils.date_helpers import format_display_date, parse_date
+from ..utils.date_helpers import format_display_date
 from ..analytics.visualization import generate_visual_progress_table
 
-def format_completed_workouts(workouts_past: Optional[list[dict]]) -> str:
-    """Formats past completed workouts across all sports compactly."""
+def format_completed_workouts(
+    workouts_past: Optional[list[dict]], 
+    weather_map: Optional[dict[str, str]] = None
+) -> str:
+    """Formats past completed workouts across all sports with optional embedded run-time weather."""
     if workouts_past is None:
         return ""
     completed_items = []
+    weather_map = weather_map or {}
     for w in workouts_past:
         sport = w.get("sport", "Workout")
         w_id = w.get("id", "")
@@ -18,8 +22,14 @@ def format_completed_workouts(workouts_past: Optional[list[dict]]) -> str:
         dur_str = f" | Dur: {round(dur_hrs, 2)}h" if dur_hrs and isinstance(dur_hrs, (int, float)) else ""
         dist_str = f": {dist_km}km" if dist_km > 0 else ""
         actual_tss = w.get("tss_actual") or w.get("tss") or 0
+        
+        # Check for weather match
+        date_key = str(time_identifier)[:10]
+        wx_snippet = weather_map.get(str(time_identifier)) or weather_map.get(date_key)
+        wx_str = f" [Weather: {wx_snippet}]" if wx_snippet else ""
+        
         completed_items.append(
-            f"- [{sport}] '{w_title}' [{w_id}] on {time_display}{dist_str}{dur_str} | TSS: {actual_tss}"
+            f"- [{sport}] '{w_title}' [{w_id}] on {time_display}{dist_str}{dur_str} | TSS: {actual_tss}{wx_str}"
         )
     return "\n".join(completed_items) if completed_items else "No completed sessions found."
 
@@ -91,56 +101,6 @@ def format_fitness_pmc(fitness_data: Optional[dict]) -> str:
     
     return f"{progress_table}\n\n{status_header}"
 
-def format_completed_workouts_with_weather(
-    workouts_past: Optional[list[dict]], 
-    weather_map: Optional[dict[str, str]] = None
-) -> str:
-    """Formats past completed workouts across all sports with embedded run-time weather."""
-    if workouts_past is None:
-        return ""
-    completed_items = []
-    weather_map = weather_map or {}
-    for w in workouts_past:
-        sport = w.get("sport", "Workout")
-        w_id = w.get("id", "")
-        w_title = w.get("title") or sport
-        time_identifier = w.get("start_time") or w.get("date", "")
-        time_display = format_display_date(time_identifier)
-        dist_km = round(w.get("distance_actual_km") or 0.0, 1)
-        dur_hrs = w.get("duration_actual") or w.get("duration_actual_min")
-        dur_str = f" | Dur: {round(dur_hrs, 2)}h" if dur_hrs and isinstance(dur_hrs, (int, float)) else ""
-        dist_str = f": {dist_km}km" if dist_km > 0 else ""
-        actual_tss = w.get("tss_actual") or w.get("tss") or 0
-        
-        # Check for weather match
-        date_key = str(time_identifier)[:10]
-        wx_snippet = weather_map.get(str(time_identifier)) or weather_map.get(date_key)
-        wx_str = f" [Weather: {wx_snippet}]" if wx_snippet else ""
-        
-        completed_items.append(
-            f"- [{sport}] '{w_title}' [{w_id}] on {time_display}{dist_str}{dur_str} | TSS: {actual_tss}{wx_str}"
-        )
-    return "\n".join(completed_items) if completed_items else "No completed sessions found."
-
-def compile_data_summary(
-    n_days: int,
-    workouts_past: Optional[list[dict]],
-    workouts_future: Optional[list[dict]],
-    metrics_data: Optional[dict],
-    fitness_data: Optional[dict],
-    notes_list: Optional[list[dict]]
-) -> str:
-    """Compiles a summary of the runner's data (backward compatible wrapper)."""
-    return compile_checkin_summary(
-        lookback_days=n_days,
-        lookahead_days=7,
-        workouts_past=workouts_past,
-        workouts_future=workouts_future,
-        metrics_data=metrics_data,
-        fitness_data=fitness_data,
-        notes_list=notes_list
-    )
-
 def compile_checkin_summary(
     lookback_days: int,
     lookahead_days: int,
@@ -161,7 +121,7 @@ def compile_checkin_summary(
         parts.append(f"**2. Autonomic & Physiological Recovery Trends (Past {lookback_days} days):**\n{format_recovery_metrics(metrics_data)}\n")
 
     if workouts_past is not None:
-        parts.append(f"**3. Completed Workouts & Environmental Context (Past {lookback_days} days):**\n{format_completed_workouts_with_weather(workouts_past, weather_map)}\n")
+        parts.append(f"**3. Completed Workouts & Environmental Context (Past {lookback_days} days):**\n{format_completed_workouts(workouts_past, weather_map)}\n")
 
     if notes_list is not None:
         parts.append(f"**4. Calendar & Travel Notes:**\n{format_calendar_notes(notes_list)}\n")
