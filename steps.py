@@ -4,8 +4,12 @@ from typing import Any, Optional
 from google.adk import Context
 
 # Import clients and tools
+from .services.firestore import (
+    get_user_profile,
+    update_user_profile,
+    save_user_profile,
+)
 from .tools import (
-    db_client,
     get_tp_tool,
     geocode_location,
     parse_mcp_response,
@@ -61,13 +65,10 @@ async def check_profile_step(ctx: Context, tp_profile: Any) -> bool:
     firstname, lastname, user_id = parse_runner_name(name)
     
     try:
-        doc_ref = db_client.collection("users").document(user_id)
-        doc = await asyncio.to_thread(doc_ref.get)
-        print(f"DEBUG: Firestore doc_id={user_id}, exists={doc.exists}")
+        profile = await get_user_profile(user_id)
+        print(f"DEBUG: Firestore doc_id={user_id}, exists={profile is not None}")
         
-        if doc.exists:
-            profile = doc.to_dict()
-            
+        if profile:
             # Geocode and cache coordinates in Firestore if missing
             if "latitude" not in profile or "longitude" not in profile:
                 loc = profile.get("location", "")
@@ -75,7 +76,7 @@ async def check_profile_step(ctx: Context, tp_profile: Any) -> bool:
                     coords = await asyncio.to_thread(geocode_location, loc)
                     if coords:
                         profile["latitude"], profile["longitude"] = coords
-                        await asyncio.to_thread(doc_ref.update, {"latitude": coords[0], "longitude": coords[1]})
+                        await update_user_profile(user_id, {"latitude": coords[0], "longitude": coords[1]})
                         print(f"Cached coordinates in Firestore: {coords}")
 
             sync_profile_to_state(ctx, profile)
@@ -151,8 +152,7 @@ async def create_profile_step(ctx: Context) -> None:
         location=location
     )
     
-    doc_ref = db_client.collection("users").document(user_id)
-    await asyncio.to_thread(doc_ref.set, profile)
+    await save_user_profile(user_id, profile)
     sync_profile_to_state(ctx, profile)
     
     # Clean up temporary onboarding state

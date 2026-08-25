@@ -4,8 +4,10 @@ import json
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
-from typing import Optional
-from ..utils import parse_iso_timestamp
+try:
+    from ..utils import parse_iso_timestamp
+except (ImportError, ValueError):
+    from utils import parse_iso_timestamp
 
 @functools.lru_cache(maxsize=128)
 def geocode_location(location: str) -> Optional[tuple[float, float]]:

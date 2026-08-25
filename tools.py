@@ -10,7 +10,7 @@ from google.adk.skills import load_skill_from_dir
 from google.adk.code_executors import UnsafeLocalCodeExecutor
 
 # Import modular services and utilities
-from .services.firestore import db_client, get_user_id
+from .services.firestore import get_user_id, save_checkin_report as save_checkin_report_data
 from .services.weather import geocode_location, get_weather_for_dates
 from .services.tp_mcp import get_tp_tool
 from .utils import (
@@ -771,13 +771,13 @@ async def save_checkin_report(tool_context: ToolContext, report_content: str) ->
     doc_id = f"{iso_week}-{iso_year}"
     
     try:
-        doc_ref = db_client.collection("users").document(user_id).collection("checkins").document(doc_id)
-        doc_ref.set({
+        report_data = {
             "week": iso_week,
             "year": iso_year,
             "created_at": today.isoformat(),
-            "report_markdown": report_content
-        })
+            "report_markdown": report_content,
+        }
+        await save_checkin_report_data(user_id, doc_id, report_data)
         print(f"DEBUG: Saved check-in report '{doc_id}' to Firestore for {user_id}")
         return f"Success: Your check-in report for Week {iso_week}, {iso_year} has been saved to your history."
     except Exception as e:
@@ -812,7 +812,6 @@ __all__ = [
     "request_new_goal_tool",
     "get_weather_tool",
     # Internal service exports for backward-compatible imports in steps.py / tests
-    "db_client",
     "get_user_id",
     "get_tp_tool",
     "geocode_location",
