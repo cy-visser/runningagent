@@ -9,19 +9,20 @@ from google.adk.tools.skill_toolset import SkillToolset
 from google.adk.skills import load_skill_from_dir
 from google.adk.code_executors import UnsafeLocalCodeExecutor
 
-# Import modular services, analytics, utilities, and formatters
-from .utils.date_helpers import get_today_date, parse_date, format_display_date
+# Import modular services and utilities
 from .services.firestore import db_client, get_user_id
 from .services.weather import geocode_location, get_weather_for_dates
 from .services.tp_mcp import get_tp_tool
-from .analytics.metrics import parse_mcp_response, extract_health_metrics
-from .analytics.workouts import (
+from .utils import (
+    get_today_date,
+    parse_date,
+    format_display_date,
+    parse_mcp_response,
+    extract_health_metrics,
     is_workout_completed,
     partition_workouts_by_date,
     format_workout_analysis,
-)
-from .analytics.trajectory import evaluate_goal_trajectory
-from .formatters.status_summary import (
+    evaluate_goal_trajectory,
     format_recovery_metrics,
     compile_checkin_summary,
     format_schedule_audit_summary,
@@ -368,6 +369,9 @@ async def fetch_schedule_audit_data(
                 "total_tss": 0.0,
                 "easy_count": 0,
                 "quality_count": 0,
+                "bike_count": 0,
+                "strength_count": 0,
+                "other_sport_count": 0,
                 "sessions": [],
                 "travel_note": None,
             }
@@ -382,22 +386,37 @@ async def fetch_schedule_audit_data(
         week_key = f"{iso_year}-W{iso_week:02d}"
         if week_key in weeks_dict:
             bucket = weeks_dict[week_key]
-            dist = w.get("distance_planned_km") or w.get("distance_km") or w.get("distance_actual_km") or 0.0
-            tss = w.get("tss_planned") or w.get("tss") or w.get("tss_actual") or 0.0
-            bucket["total_distance_km"] += float(dist)
-            bucket["total_tss"] += float(tss)
+            sport = (w.get("sport") or "Run").strip()
+            sport_lower = sport.lower()
 
-            sport = w.get("sport", "Run")
+            # Skip calendar rest placeholders and educational/tip cards
+            if sport in ["DayOff", "Other"]:
+                continue
+
+            dist = float(w.get("distance_planned_km") or w.get("distance_km") or w.get("distance_actual_km") or 0.0)
+            tss = float(w.get("tss_planned") or w.get("tss") or w.get("tss_actual") or 0.0)
+            bucket["total_tss"] += tss
+
             title = w.get("title") or sport
             title_lower = title.lower()
 
-            is_quality = any(kw in title_lower for kw in ["interval", "tempo", "threshold", "race", "speed", "reps", "mp", "push"])
-            if is_quality:
-                bucket["quality_count"] += 1
+            # Classify sport & intensity
+            if sport_lower in ["run", "running", "trail run", "treadmill"]:
+                bucket["total_distance_km"] += dist
+                is_quality = any(kw in title_lower for kw in ["interval", "tempo", "threshold", "race", "speed", "reps", "mp", "push", "hills", "progression"])
+                if is_quality:
+                    bucket["quality_count"] += 1
+                else:
+                    bucket["easy_count"] += 1
+            elif sport_lower in ["bike", "cycling", "mtnbike", "gravel", "virtualride"]:
+                bucket["bike_count"] += 1
+            elif sport_lower in ["strength", "gym", "weighttraining", "s&c"]:
+                bucket["strength_count"] += 1
             else:
-                bucket["easy_count"] += 1
+                bucket["other_sport_count"] += 1
 
-            bucket["sessions"].append(f"[{sport}] '{title}' on {format_display_date(w_date)} ({round(dist, 1)}km, TSS: {round(tss, 0)})")
+            dist_str = f"{round(dist, 1)}km, " if dist > 0 else ""
+            bucket["sessions"].append(f"[{sport}] '{title}' on {format_display_date(w_date)} ({dist_str}TSS: {round(tss, 0)})")
 
     # Match travel / calendar notes to weeks
     for n in notes_list:
@@ -412,23 +431,11 @@ async def fetch_schedule_audit_data(
             full_note = f"{n_title}: {n_desc}" if n_desc else n_title
             weeks_dict[week_key]["travel_note"] = full_note
 
-    # Risk evaluation
-    risk_flags = []
     weeks_list = list(weeks_dict.values())
-    for idx, w in enumerate(weeks_list):
-        if w["quality_count"] >= 3:
-            risk_flags.append(f"High Intensity Risk in {w['date_range']}: {w['quality_count']} quality sessions scheduled (recommended: max 1-2).")
-        if idx > 0:
-            prev_vol = weeks_list[idx - 1]["total_distance_km"]
-            cur_vol = w["total_distance_km"]
-            if prev_vol > 10 and cur_vol > prev_vol * 1.25:
-                growth_pct = round(((cur_vol - prev_vol) / prev_vol) * 100)
-                risk_flags.append(f"Volume Spike Warning in {w['date_range']}: +{growth_pct}% mileage increase vs previous week.")
 
     return format_schedule_audit_summary(
         weeks_data=weeks_list,
         overall_notes=notes_list,
-        risk_flags=risk_flags
     )
 
 fetch_schedule_audit_data_tool = FunctionTool(fetch_schedule_audit_data)

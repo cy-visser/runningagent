@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Any, Optional
-from ..utils.date_helpers import parse_date
+from .date_helpers import parse_date
 
 def is_workout_completed(workout: dict) -> bool:
     """Canonical check for whether a workout has been executed/completed."""

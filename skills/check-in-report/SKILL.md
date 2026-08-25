@@ -23,8 +23,14 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
     *   **Pillar 3: Physiological & Environmental Context**:
         *   Synthesize fitness load trends (CTL/ATL/TSB) holistically alongside recovery metrics (HRV trends, Resting Heart Rate, sleep averages). **Do not rely on hardcoded single-metric rules for TSB**: evaluate whether low or negative TSB represents healthy productive overload or overreaching risk by checking autonomic markers (e.g. dropped HRV, spiked resting HR) and sleep trends.
         *   Contextualize variances against environmental factors (heat, humidity, travel) and **Calendar Notes** (work stress, illness, fatigue).
-    *   **Pillar 4: Goal Alignment & Trajectory**:
-        *   Evaluate CTL build and weekly volume trajectory against the runner's target race goal and race date.
+    *   **Pillar 4: Goal Alignment & Trajectory (LLM Sports Science Reasoning)**:
+        *   **Target Peak CTL & Goal Context**: Evaluate the runner's target peak CTL and benchmark range dynamically resolved from their event distance and goal finish time (from `training_goal`).
+        *   **Required Ramp Rate Analysis**: Check `required_ramp_rate` from `fetch_checkin_data`:
+            - **<= 3.5 pts/week**: Safe, sustainable build rate leading into the 2-week pre-race taper (🟢 On Track).
+            - **3.5 - 5.0 pts/week**: Moderate to aggressive build. Achievable if autonomic recovery metrics (HRV/sleep/RHR) are stable and positive (🟡 Build Focus Needed).
+            - **> 5.0 pts/week**: High musculoskeletal and overtraining risk for running. Recommend adjusting timeline, restructuring weekly mileage, or revising race pace expectations (🔴 Adjustment Recommended).
+        *   **Periodization Awareness**: Distinguish a planned recovery or cutback week from "falling behind".
+        *   **Formulate Trajectory Verdict**: Synthesize these factors to provide your own authoritative status badge (e.g. `🟢 On Track`, `🟡 Build Focus Needed`, `🔴 Adjustment Recommended`) with tailored coaching rationale.
 
 3.  **Deliver Check-In Summary**:
     *   **Visual Presentation**: Display the Markdown visual progress table provided by `fetch_checkin_data`.
@@ -32,7 +38,7 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
     *   Output a structured summary formatted with these exact sections:
         1. **Warm Greeting / Note**: Warmly acknowledging the check-in and providing a personalized coaching opening note.
         2. **📊 Metrics Progress**: Display the Markdown visual progress indicator table with CTL/ATL/TSB values and target completion percentages directly from `fetch_checkin_data`.
-        3. **🎯 Goal Trajectory Status**: Explicitly state whether the runner's CTL, ATL, and TSB are on expected level to achieve their target race/fitness goal by the timeline date (e.g. 🟢 On Track, 🟡 Slightly Behind, 🔴 Significantly Behind).
+        3. **🎯 Goal Trajectory Status**: Explicitly state your reasoned coaching trajectory status (e.g. `🟢 On Track`, `🟡 Build Focus Needed`, `🔴 Adjustment Recommended`) and explain whether the current CTL and required ramp rate (+X.X pts/wk) are sustainable given their timeline, recovery metrics, and training execution.
         4. **🌟 Key Highlights & Celebration**: 3-4 bullet points covering goal progress, easy vs. structured execution, physiological adaptation (HRV, RHR, sleep), and weather/travel adaptation.
         5. **🚀 Top 3 Action Items for the Upcoming Week**: Exactly 3 prioritized, actionable advice points looking 1 week forward at scheduled workouts, calendar notes, pacing, climate/travel adjustments, or recovery needs.
         6. **Next Step Offer**: Conclude with: *"Would you like me to save this check-in to your training history?"*

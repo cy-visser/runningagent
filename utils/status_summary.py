@@ -1,6 +1,6 @@
 from typing import Optional
-from ..utils.date_helpers import format_display_date
-from ..analytics.visualization import generate_visual_progress_table
+from .date_helpers import format_display_date
+from .visualization import generate_visual_progress_table
 
 def format_completed_workouts(
     workouts_past: Optional[list[dict]], 
@@ -87,19 +87,12 @@ def format_calendar_notes(notes_list: Optional[list[dict]]) -> str:
     return "\n".join(notes_summary_list) if notes_summary_list else "No calendar notes."
 
 def format_fitness_pmc(fitness_data: Optional[dict]) -> str:
-    """Formats the PMC metrics progress table and goal trajectory status."""
+    """Formats the PMC metrics progress table for LLM trajectory reasoning."""
     if fitness_data is None:
         return ""
         
-    ctl_end = round(fitness_data.get("ctl_end", 0.0), 1)
     trajectory_info = fitness_data.get("trajectory_info", {})
-    
-    progress_table = generate_visual_progress_table(fitness_data, trajectory_info)
-    
-    weeks_rem = f", {trajectory_info.get('weeks_remaining')}w out" if trajectory_info.get("weeks_remaining") is not None else ""
-    status_header = f"**Fitness Status:** {trajectory_info.get('status_label', 'On Track')} (CTL: {ctl_end}, Target: {trajectory_info.get('target_peak_ctl')}{weeks_rem})"
-    
-    return f"{progress_table}\n\n{status_header}"
+    return generate_visual_progress_table(fitness_data, trajectory_info)
 
 def compile_checkin_summary(
     lookback_days: int,
@@ -133,8 +126,7 @@ def compile_checkin_summary(
 
 def format_schedule_audit_summary(
     weeks_data: list[dict],
-    overall_notes: Optional[list[dict]] = None,
-    risk_flags: Optional[list[str]] = None
+    overall_notes: Optional[list[dict]] = None
 ) -> str:
     """Formats a multi-week schedule audit breakdown."""
     lines = ["### Training Schedule Audit & Workload Assessment\n"]
@@ -146,11 +138,25 @@ def format_schedule_audit_summary(
         easy_runs = w.get("easy_count", 0)
         quality_runs = w.get("quality_count", 0)
         total_runs = easy_runs + quality_runs
+        
+        # Cross-training and strength breakdown
+        cross_parts = []
+        bike_count = w.get("bike_count", 0)
+        if bike_count > 0:
+            cross_parts.append(f"{bike_count} bike" if bike_count == 1 else f"{bike_count} bikes")
+        strength_count = w.get("strength_count", 0)
+        if strength_count > 0:
+            cross_parts.append(f"{strength_count} strength")
+        other_count = w.get("other_sport_count", 0)
+        if other_count > 0:
+            cross_parts.append(f"{other_count} other")
+        cross_str = f" | {', '.join(cross_parts)}" if cross_parts else ""
+
         travel_info = w.get("travel_note")
         travel_str = f" | ✈️ Travel: {travel_info}" if travel_info else ""
 
         lines.append(
-            f"* **{w_range}:** {total_vol} km ({total_runs} runs: {easy_runs} easy, {quality_runs} quality) | Planned TSS: {total_tss}{travel_str}"
+            f"* **{w_range}:** {total_vol} km ({total_runs} runs: {easy_runs} easy, {quality_runs} quality{cross_str}) | Planned TSS: {total_tss}{travel_str}"
         )
         
         # List individual sessions in that week
@@ -161,11 +167,6 @@ def format_schedule_audit_summary(
 
     if overall_notes:
         lines.append(f"**Calendar & Life Context:**\n{format_calendar_notes(overall_notes)}\n")
-
-    if risk_flags:
-        lines.append("**⚠️ Training Risk & Compliance Flags:**")
-        for flag in risk_flags:
-            lines.append(f"- {flag}")
 
     return "\n".join(lines)
 
@@ -206,4 +207,3 @@ def format_nutrition_context_summary(
         lines.append(f"**3. Local Climate & Weather Forecast:**\n{weather_forecast}\n")
 
     return "\n".join(lines)
-

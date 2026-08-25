@@ -1,5 +1,10 @@
 from typing import Optional, Any
-from ..services.firestore import get_user_id
+
+def get_user_id(firstname: Optional[str], lastname: Optional[str] = "") -> str:
+    """Returns the canonical lowercase user_id for Firestore document keys."""
+    fn = str(firstname or "").strip().lower()
+    ln = str(lastname or "").strip().lower()
+    return f"{fn}_{ln}"
 
 def parse_runner_name(raw_name: Optional[str]) -> tuple[str, str, str]:
     """Extracts (firstname, lastname, user_id) from a raw name string."""

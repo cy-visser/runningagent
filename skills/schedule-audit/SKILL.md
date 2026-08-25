@@ -10,7 +10,7 @@ You are now equipped with the Schedule Audit & Assessment skill. Use this skill 
 ## Audit Protocol:
 
 1. **Retrieve Data**:
-   - Call `fetch_schedule_audit_data`. This tool retrieves the upcoming training schedule, pre-calculates weekly volume & planned TSS, computes easy vs. hard intensity distributions, maps calendar travel notes, and flags risk factors in one call.
+   - Call `fetch_schedule_audit_data`. This tool retrieves the upcoming training schedule, pre-calculates weekly running volume & planned TSS, computes easy vs. quality distributions, maps cross-training/strength sessions, and bundles calendar travel notes in one call.
 
 2. **Calculate Weekly Aggregates**:
    - Sum total weekly volume (km) and total planned TSS.
@@ -20,13 +20,13 @@ You are now equipped with the Schedule Audit & Assessment skill. Use this skill 
    - Check retrieved calendar notes for travel plans (trips, vacations, cruises) and work stress.
    - Note travel details (destination and dates) alongside corresponding weekly volume, providing climate and treadmill adjustment advice.
 
-4. **Evaluate Training Risk Compliance**:
-   - **Intensity Balance**: Max 1-2 hard workouts per week. Flag 3+ hard runs as high overtraining/injury risks.
-   - **Taper Compliance**: Ensure week leading to race reduces volume by 40-60% vs. peak weekly mileage.
-   - **Post-Race Recovery**: Flag high intensity or long runs (>15km) in 7 days post-race as severe injury risks.
+4. **Evaluate Training Risk & Compliance (Reasoning)**:
+   - **Volume & TSS Progression**: Verify that weekly volume ramp rate remains under 10% per week (and planned TSS ramp under 15% per week). Recognize absorption/down weeks and do not mistake a normal return to baseline as an overtraining spike.
+   - **Intensity Balance & Spacing**: Max 1-2 hard/quality workouts per week, spaced with recovery days. Flag 3+ quality sessions or back-to-back hard days as high injury/overtraining risks.
+   - **Taper Compliance**: Ensure the week(s) leading to the goal race reduce volume by 40-60% vs. peak weekly mileage.
 
 5. **Deliver Audit Summary**:
    - Present the audit week-by-week using clear headers:
-     `* **[Date Range]:** [Volume] km ([Total Runs] runs: [X] easy, [Y] quality) | TSS: [Total TSS] [Optional: (Travel to [Location])]`
+     `* **[Date Range]:** [Volume] km ([Total Runs] runs: [X] easy, [Y] quality [Optional: | [A] bike, [B] strength]) | Planned TSS: [Total TSS] [Optional: (Travel to [Location])]`
    - Outline plan strengths first, followed by critical warnings and specific recommended adjustments.
    - Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).

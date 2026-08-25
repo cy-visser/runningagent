@@ -11,14 +11,12 @@ from .tools import (
     parse_mcp_response,
     extract_health_metrics,
 )
-from .utils.date_helpers import (
+from .utils import (
     parse_date,
     get_today_date,
     get_today_str,
     get_past_date_str,
     calculate_age,
-)
-from .utils.profile_helpers import (
     parse_runner_name,
     sync_profile_to_state,
     merge_profile_data,
@@ -111,8 +109,8 @@ async def check_profile_step(ctx: Context, tp_profile: Any) -> bool:
 
 async def create_profile_step(ctx: Context) -> None:
     """Fetch metrics, calculate averages, and save the final profile to Firestore."""
-    onboarding_answers = ctx.state.get("onboarding_answers", {})
-    temp_data = ctx.state.get("temp_onboarding_data", {})
+    onboarding_answers = ctx.state.get("onboarding_answers") or {}
+    temp_data = ctx.state.get("temp_onboarding_data") or {}
     
     firstname = temp_data.get("firstname") or onboarding_answers.get("firstname") or ""
     lastname = temp_data.get("lastname") or onboarding_answers.get("lastname") or ""
@@ -158,5 +156,5 @@ async def create_profile_step(ctx: Context) -> None:
     sync_profile_to_state(ctx, profile)
     
     # Clean up temporary onboarding state
-    ctx.state.pop("temp_onboarding_data", None)
-    ctx.state.pop("onboarding_answers", None)
+    ctx.state["temp_onboarding_data"] = None
+    ctx.state["onboarding_answers"] = None
