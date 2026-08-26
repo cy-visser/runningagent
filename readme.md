@@ -35,7 +35,7 @@ GOOGLE_GENAI_USE_VERTEXAI=1
 # Google Cloud Deployment project details
 GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 FIRESTORE_PROJECT_ID=YOUR_PROJECT_ID
-GOOGLE_CLOUD_LOCATION=YOUR_LOCATION
+GOOGLE_CLOUD_LOCATION=eu
 
 # Firestore database name for the agent (defaults to running-coach)
 FIRESTORE_DATABASE=running-coach

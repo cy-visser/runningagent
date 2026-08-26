@@ -17,7 +17,7 @@ if [ -z "$GOOGLE_CLOUD_LOCATION" ]; then
 fi
 
 PROJECT_ID="$GOOGLE_CLOUD_PROJECT"
-REGION="europe-west4"
+REGION="${DEPLOY_REGION:-europe-west4}"
 IDENTITY="running-coach-agent@${PROJECT_ID}.iam.gserviceaccount.com"
 SESSION_URI="firestore://${PROJECT_ID}"
 

@@ -45,7 +45,7 @@ def desanitize_state(state: Any) -> Any:
 
 class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
     def __init__(self, *args, client: Optional[firestore.AsyncClient] = None, root_collection: Optional[str] = None, **kwargs):
-        project = os.environ.get("FIRESTORE_PROJECT_ID")
+        project = os.environ.get("FIRESTORE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
         database = os.environ.get("FIRESTORE_DATABASE", "running-coach")
         
         uri = kwargs.pop("uri", None)
@@ -54,6 +54,9 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
             parsed = urlparse(uri)
             root_collection = parsed.netloc or None
             
+        if not project and root_collection:
+            project = root_collection
+
         if (client is None 
             or not hasattr(client, "_database") 
             or client._database != database):

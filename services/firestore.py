@@ -10,7 +10,7 @@ def _get_client() -> firestore.AsyncClient:
     """Returns or initializes the internal Firestore async client singleton."""
     global _client
     if _client is None:
-        project_id = os.environ.get("FIRESTORE_PROJECT_ID")
+        project_id = os.environ.get("FIRESTORE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
         database_name = os.environ.get("FIRESTORE_DATABASE", "running-coach")
         _client = firestore.AsyncClient(project=project_id, database=database_name)
     return _client

@@ -34,9 +34,13 @@ def format_profile_summary(profile: dict) -> str:
     )
 
 def sync_profile_to_state(ctx: Any, profile: dict) -> None:
-    """Atomically sets user_profile and its slim summary in the ADK session state."""
+    """Atomically sets user_profile, user_id, and its slim summary in the ADK session state."""
     ctx.state["user_profile"] = profile
     ctx.state["user_profile_summary"] = format_profile_summary(profile)
+    fn = profile.get("firstname")
+    ln = profile.get("lastname")
+    if fn or ln:
+        ctx.state["user_id"] = get_user_id(fn, ln)
 
 def merge_profile_data(
     answers: dict,

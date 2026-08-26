@@ -24,6 +24,8 @@ from .tools import (
     get_tp_tool,
 )
 from .steps import check_profile_step, create_profile_step, check_timeline_expiration
+from .services.firestore import get_user_profile
+from .utils import sync_profile_to_state
 
 async def run_node_with_retry(
     ctx: Context,
@@ -167,6 +169,13 @@ coaching_agent = Agent(
     """,
     tools=coaching_agent_tools,
     before_model_callback=inject_profile_context_cb,
+    generate_content_config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(
+            thinking_budget=1024
+        ),
+        temperature=0.7,
+        max_output_tokens=1500,
+    ),
     mode="chat"
 )
 
@@ -179,12 +188,24 @@ ROUTE_COACHING = "COACHING"
 
 @node(name="profile_router", rerun_on_resume=True)
 async def profile_router(ctx: Context, node_input: Any = None) -> None:
-    """Evaluates runner state and routes to onboarding or coaching."""
+    """Dynamic runner state evaluation routing to onboarding or coaching."""
     # Set dynamic date in state so it is resolved correctly in the coaching instructions
     ctx.state["current_date_str"] = datetime.now().strftime("%Y-%m-%d (%A)")
 
-    # Step 1: Check if profile exists (if new user, or re-onboarding requested, route to onboarding)
     profile = ctx.state.get("user_profile")
+
+    #  Firestore lookup if user_id is in state
+    if not profile:
+        user_id = ctx.state.get("user_id")
+        if user_id:
+            try:
+                profile = await get_user_profile(user_id)
+                if profile:
+                    sync_profile_to_state(ctx, profile)
+            except Exception as e:
+                print(f"Error loading profile from Firestore for {user_id}: {e}")
+
+    # Only call tp_get_profile if state is completely empty (first run)
     if not profile:
         try:
             tp_get_profile_tool = await get_tp_tool("tp_get_profile")
