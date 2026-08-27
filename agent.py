@@ -169,13 +169,6 @@ coaching_agent = Agent(
     """,
     tools=coaching_agent_tools,
     before_model_callback=inject_profile_context_cb,
-    generate_content_config=types.GenerateContentConfig(
-        thinking_config=types.ThinkingConfig(
-            thinking_budget=1024
-        ),
-        temperature=0.7,
-        max_output_tokens=1500,
-    ),
     mode="chat"
 )
 
