@@ -20,9 +20,8 @@ You are now equipped with the Nutrition & Fueling Planner skill. Use this skill 
    * **Recovery Window**: Emphasize the critical recovery window (within 30–60 minutes post-run), targeting a 3:1 to 4:1 carbohydrate-to-protein ratio to accelerate muscle repair and glycogen resynthesis.
 
 3. **Deliver Nutrition Summary (Chat Only)**:
-   * Do NOT generate rigid daily meal plans unless explicitly requested. Instead, provide targeted food groups, practical timing windows, and flexible options.
-   * Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
+   * Focus on practical timing windows, food groups, and targeted intake rates rather than rigid meal plans.
    * Format your response cleanly in chat using structured markdown:
-     1. **Core Nutrition Strategy**: 1-2 bullet points summarizing the overarching fueling objective.
-     2. **Key Fueling Targets**: Markdown table outlining Daily Carb Target (g/kg), Intra-Run Gel Rate (g/hr), and Post-Run Recovery Ratio (3:1).
-     3. **Critical Fueling Action Items**: 2-3 specific, high-priority bullet points formatted with standard blockquotes (`> **TIP:**`, `> **NOTE:**`) focusing on pre-workout loading, intra-run carbs, or post-run 3:1 recovery.
+     1. **Core Nutrition Strategy**: Clear summary of the overarching fueling objective for the upcoming training demands.
+     2. **Key Fueling Targets**: Clear targets for daily carb intake (g/kg), intra-run carb rates (g/hr), and hydration/electrolyte replenishment.
+     3. **Actionable Fueling Directives**: Specific guidance covering pre-run fueling, intra-workout fueling, and post-run recovery windows.

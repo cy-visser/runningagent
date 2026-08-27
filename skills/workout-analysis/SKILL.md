@@ -14,25 +14,26 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
    - **Classify Workout**: Determine from the telemetry if the run is an **Easy Run** vs. a **Structured Workout** (intervals, tempo, threshold, race, progressive, push, MP block, reps).
 
 2. **Perform Differential Physiological Synthesis**:
-   - **For Easy Runs**:
-     - Do NOT analyze lap data.
-     - Evaluate low-intensity compliance (keeping HR strictly in Zone 1/2), overall pace/HR stability, aerobic decoupling (Pa:Hr), biometrics (cadence/stance time stability), and recovery/goal alignment.
-   - **For Structured Workouts (Intervals, Tempo, Threshold, Race, Progressive, Push, MP Blocks, Reps)**:
-     - REQUIRES lap data analysis (`lapData`).
-     - Analyze individual work intervals vs. recovery laps for pace consistency, average/max HR, HR drop during recovery laps, and pace stability during MP blocks.
+   - **For Easy & Recovery Runs**:
+     - Evaluate low-intensity compliance (holding heart rate in Zone 1/2), overall pace/HR stability, and cardiac drift across the duration.
+     - Look for 'gray zone' (Zone 3/4) creep where recovery runs are executed too fast, compromising metabolic recovery.
+     - Reference lap data if pacing surges or significant cardiac drift are present across splits.
+   - **For Structured Workouts (Intervals, Tempo, Threshold, Race, Progressive, MP Blocks, Reps)**:
+     - Analyze lap data (`lapData`): evaluate individual work intervals vs. recovery laps for pacing consistency (even/negative splits vs. fading), heart rate response, recovery lap HR drop, and cadence stability.
    - **Elevation & Terrain Impact**:
      - Evaluate total elevation gain/loss (+Xm / -Ym), route gradient, and climbing rate (VAM).
      - Compare **Normalized Graded Pace (NGP)** against raw pace: understand that slower raw pace on uphill segments with steady NGP/HR indicates consistent effort and good pacing discipline rather than fatigue or aerobic decoupling.
-     - Assess biomechanical adaptations to grade (e.g. cadence increases, stride length adjustments, and ground contact time changes on climbs vs. descents).
-   - **Aerobic Decoupling & Weather**: Evaluate Pa:Hr across environmental conditions (temp, humidity, wind).
-   - **Physiological Recovery & Readiness Context**: Cross-reference run execution against morning recovery metrics from `analyze_workout` (Sleep duration, HRV baseline stability, and Resting Heart Rate trends) to assess readiness and strain.
-   - **Biometrics & Injury Alignment**: Correlate biomechanics and HR drift with profile injuries to detect compensation patterns.
-   - **Goal Alignment**: Connect the run execution to long-term goal pacing.
+     - Assess biomechanical adaptations to grade (cadence adjustments, stride length changes on climbs vs. descents).
+   - **Aerobic Decoupling & Weather Context**:
+     - Synthesize `Pa:Hr` (pace vs. heart rate drift) contextually with run-time environmental conditions (temperature, humidity, solar radiation, wind). Distinguish expected thermoregulatory cardiac drift in high heat/humidity from poor pacing or cardiovascular fatigue in moderate conditions.
+   - **Physiological Recovery & Readiness Context**:
+     - Cross-reference run execution against morning recovery metrics from `analyze_workout` (Sleep duration, HRV baseline stability, and Resting Heart Rate trends) to assess readiness and strain.
+   - **Goal Alignment**: Connect the run execution to long-term goal pacing and phase progression.
 
 3. **Deliver Workout Summary**:
-   - Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
-   - Format response with standard sections:
-     1. **Warm Note**: Identifying analyzed workout.
-     2. **🌟 Workout Highlights**: 1-2 bullet points celebrating execution.
-     3. **⏱️ Lap & Interval Breakdown (ONLY for Structured Workouts)**: Detailed interval vs. recovery lap analysis. (Omitted for Easy Runs).
-     4. **🚀 Key Takeaways & Recommendations**: 1-2 actionable coaching insights relating execution to long-term goals.
+   - Deliver an objective, data-backed assessment in clean standard Markdown:
+     - Plain-Text Metrics & Progressions: Write metrics as plain text (e.g. `Pa:Hr`, `Pw:Hr`, `NGP`, `HR 155 bpm`, `4:30/km`) and use standard text arrows (`->` or `→`) for lap progressions. Never wrap metrics or symbols in LaTeX math formatting (e.g. do not write `$\rightarrow$` or `$P_a:HR$`).
+     1. **Session Overview**: Date, sport, title, distance, duration, and environmental conditions.
+     2. **🎯 Execution & Physiological Assessment**: Honest, data-backed critique of what was executed well vs. breakdowns (e.g. pacing control, Zone 1/2 discipline, Pa:Hr drift context, terrain management, and recovery state).
+     3. **⏱️ Lap & Interval Breakdown**: Lap-by-lap breakdown of work vs. recovery splits and heart rate dynamics for structured sessions (or when pacing/drift warrants split inspection).
+     4. **🚀 Key Takeaways & Adjustments**: Specific, actionable coaching directives for upcoming workouts and recovery.

@@ -18,7 +18,7 @@ You are now equipped with the **Bike Workout Analysis** skill. Use this skill wh
      - Evaluate **Normalized Power (NP)** vs. **Average Power**, **Intensity Factor (IF)**, total work executed in **Kilojoules (kJ)**, and **Training Stress Score (TSS)**.
      - Classify ride type: Active Recovery / Easy Aerobic (Zone 1/2 Power), Sweet Spot / Tempo Block, Functional Threshold Power (FTP) / Threshold Intervals, or High-Intensity VO2max / Sprint reps.
    - **Aerobic Decoupling (`Pw:Hr`) & Efficiency Factor (`EF`)**:
-     - Examine `Pw:Hr` (the ratio of power output stability against heart rate drift over the ride). An aerobic drift > 5% indicates glycogen depletion, thermal accumulation/dehydration, or indoor heat buildup.
+     - Examine `Pw:Hr` (the ratio of power output stability against heart rate drift over the ride) contextually alongside temperature, duration, and fueling. Decoupling indicates cardiovascular drift from glycogen depletion, dehydration, or indoor thermal strain.
      - Evaluate `EF` (`NP / Average HR`) to track cardiovascular cycling efficiency trends over time.
    - **Elevation & Climbing Profile**:
      - Evaluate total elevation gain/loss (+Xm / -Ym), climbing VAM (Vertical Ascent Meters/hour), and climbing power vs flat power.
@@ -33,10 +33,9 @@ You are now equipped with the **Bike Workout Analysis** skill. Use this skill wh
      - Analyze structured work intervals versus recovery laps for average/max power stability, heart rate response, recovery lap HR drop, and pedal cadence consistency.
 
 3. **Deliver Bike Workout Summary**:
-   - Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
-   - Structure your response using these concise sections:
-     1. **Warm Greeting & Ride Overview**: Identifying the analyzed cycling session (title, date/time, duration, distance, total work in kJ).
-     2. **⚡ Power & Effort Profile**: Concise table or bullets with NP, Avg Power, IF, TSS, EF, and `Pw:Hr` aerobic drift status.
-     3. **🧠 Physiological & Recovery Synthesis**: Connecting morning recovery indicators (Sleep, HRV, RHR) with ride effort and aerobic drift.
-     4. **⏱️ Interval & Lap Breakdown** *(include only for structured interval/sweet spot/tempo workouts)*: Lap-by-lap comparison of target power vs actual power and heart rate recovery.
-     5. **🚀 Actionable Coaching Recommendations**: 2-3 specific takeaways covering fueling/hydration, cadence work, or upcoming training adjustments.
+   - Deliver in clean standard Markdown (use plain text for `Pw:Hr`, `NP`, `EF`, and standard text arrows `->` or `→`; no LaTeX math wrappers `$...$` or `$\rightarrow$`):
+     1. **Ride Overview**: Identifying the analyzed cycling session (title, date/time, duration, distance, total work in kJ, indoor/outdoor conditions).
+     2. **⚡ Power & Physiological Profile**: Objective evaluation of NP, Avg Power, IF, TSS, EF, and `Pw:Hr` aerobic drift status.
+     3. **🧠 Recovery & Readiness Synthesis**: Connecting morning recovery indicators (Sleep, HRV, RHR) with ride execution, effort, and fatigue.
+     4. **⏱️ Interval & Lap Breakdown** *(for structured interval/sweet spot/tempo workouts)*: Lap-by-lap comparison of target power vs actual power and heart rate recovery.
+     5. **🚀 Actionable Coaching Recommendations**: Specific takeaways covering fueling/hydration, cadence work, or upcoming training adjustments.

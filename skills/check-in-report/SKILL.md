@@ -34,13 +34,13 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
 
 3.  **Deliver Check-In Summary**:
     *   **Visual Presentation**: Display the Markdown visual progress table provided by `fetch_checkin_data`.
-    *   Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
-    *   Output a structured summary formatted with these exact sections:
-        1. **Warm Greeting / Note**: Warmly acknowledging the check-in and providing a personalized coaching opening note.
+    *   Deliver in clean standard Markdown using plain text metrics and text arrows (`->` or `→`); never use LaTeX math wrappers (`$...$`).
+    *   Output a structured summary formatted with these sections:
+        1. **Check-In Overview**: Concise opening framing the current training cycle and check-in window.
         2. **📊 Metrics Progress**: Display the Markdown visual progress indicator table with CTL/ATL/TSB values and target completion percentages directly from `fetch_checkin_data`.
         3. **🎯 Goal Trajectory Status**: Explicitly state your reasoned coaching trajectory status (e.g. `🟢 On Track`, `🟡 Build Focus Needed`, `🔴 Adjustment Recommended`) and explain whether the current CTL and required ramp rate (+X.X pts/wk) are sustainable given their timeline, recovery metrics, and training execution.
-        4. **🌟 Key Highlights & Celebration**: 3-4 bullet points covering goal progress, easy vs. structured execution, physiological adaptation (HRV, RHR, sleep), and weather/travel adaptation.
-        5. **🚀 Top 3 Action Items for the Upcoming Week**: Exactly 3 prioritized, actionable advice points looking 1 week forward at scheduled workouts, calendar notes, pacing, climate/travel adjustments, or recovery needs.
+        4. **🔍 Training Load & Adaptation Analysis**: Objective evaluation of training balance, easy vs. quality execution, physiological recovery markers (HRV, RHR, sleep), and environmental/travel adaptation.
+        5. **🚀 Prioritized Action Items for Upcoming Week**: Actionable, high-impact guidance looking 1 week forward at scheduled workouts, calendar notes, pacing, climate/travel adjustments, or recovery needs.
         6. **Next Step Offer**: Conclude with: *"Would you like me to save this check-in to your training history?"*
 
 4.  **Handle Runner Response**:

@@ -28,5 +28,4 @@ You are now equipped with the Schedule Audit & Assessment skill. Use this skill 
 5. **Deliver Audit Summary**:
    - Present the audit week-by-week using clear headers:
      `* **[Date Range]:** [Volume] km ([Total Runs] runs: [X] easy, [Y] quality [Optional: | [A] bike, [B] strength]) | Planned TSS: [Total TSS] [Optional: (Travel to [Location])]`
-   - Outline plan strengths first, followed by critical warnings and specific recommended adjustments.
-   - Always use clean plain text and standard Markdown for numbers, units, transitions, and metrics. Never use LaTeX syntax or dollar-sign delimiters (`$...$`).
+   - Provide an objective evaluation highlighting plan strengths, potential risks/flaws (e.g. back-to-back hard sessions, aggressive ramp rates), and recommended adjustments.
