@@ -75,12 +75,17 @@ terraform apply
 *   **Secret**: A secure container named `tp-auth-cookie`.
 
 ### Phase 2: Deploy the Agent & Upload the Secret
-Return to the project root and run the deployment script, passing your TrainingPeaks cookie. The script will upload the cookie to Secret Manager as a new version and deploy the agent to the Vertex AI Agent Platform (Reasoning Engine):
+Return to the project root and run the deployment script. If this is your first deployment or if you need to update your credentials, pass your TrainingPeaks cookie with `--tp-cookie`. If `tp-auth-cookie` already exists in Secret Manager, the parameter can be omitted:
 
 ```bash
 cd ..
 chmod +x deploy.sh
+
+# First deployment (or updating cookie):
 ./deploy.sh --tp-cookie 'YOUR_ACTUAL_TP_COOKIE_HERE'
+
+# Subsequent deployments (reuses secret in Secret Manager):
+./deploy.sh
 ```
 
 ---

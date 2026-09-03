@@ -140,7 +140,7 @@ def inject_profile_context_cb(callback_context: Context, llm_request: LlmRequest
     return None
 
 coaching_agent = Agent(
-    model="gemini-3.7-flash",
+    model="gemini-3.8-flash",
     name="coaching_agent",
     description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
     instruction="""
