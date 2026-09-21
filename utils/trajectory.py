@@ -1,6 +1,9 @@
+import logging
 import re
 from typing import Any, Optional
 from .date_helpers import parse_date, get_today_date
+
+logger = logging.getLogger(__name__)
 
 # Target peak CTL recommendations based on Dr. Andrew Coggan and Joe Friel's
 # Training Stress Score (TSS) / Performance Management Chart (PMC) methodology.
@@ -116,12 +119,6 @@ def resolve_target_peak_ctl(goal_name: Optional[str]) -> tuple[float, tuple[floa
     return (DEFAULT_PEAK_CTL, DEFAULT_PEAK_RANGE)
 
 
-def get_target_peak_ctl(goal_name: str) -> float:
-    """Backward compatible helper resolving target peak CTL benchmark."""
-    target, _ = resolve_target_peak_ctl(goal_name)
-    return target
-
-
 def evaluate_goal_trajectory(
     profile: dict,
     current_ctl: float,
@@ -157,7 +154,7 @@ def evaluate_goal_trajectory(
                 else:
                     required_ramp_rate = 0.0 if ctl_deficit == 0 else round(ctl_deficit, 2)
         except Exception as e:
-            print(f"Error evaluating timeline date in evaluate_goal_trajectory: {e}")
+            logger.warning("Failed to evaluate timeline date '%s': %s", timeline_str, e)
 
     return {
         "goal_name": goal_name,

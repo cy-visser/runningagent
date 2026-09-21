@@ -34,3 +34,7 @@ Thumbs.db
 
 # Temporary scratch & test files
 scratch/
+
+# ADK local runtime state & generated artifacts
+.adk/
+

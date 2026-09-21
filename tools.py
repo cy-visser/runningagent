@@ -1,67 +1,139 @@
-from datetime import datetime, timedelta
 import asyncio
-import os
 import json
-from typing import Optional, Any
+import logging
+import os
+from datetime import datetime, timedelta
+from typing import Any, Optional
 
+from google.adk.code_executors import UnsafeLocalCodeExecutor
+from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool, ToolContext
 from google.adk.tools.skill_toolset import SkillToolset
-from google.adk.skills import load_skill_from_dir
-from google.adk.code_executors import UnsafeLocalCodeExecutor
 
-# Import modular services and utilities
 from .services.firestore import get_user_id, save_checkin_report as save_checkin_report_data
-from .services.weather import geocode_location, get_weather_for_dates
 from .services.tp_mcp import get_tp_tool
+from .services.weather import get_weather_conditions, get_weather_for_dates
 from .utils import (
-    get_today_date,
-    parse_date,
-    format_display_date,
-    parse_mcp_response,
-    extract_health_metrics,
-    is_workout_completed,
-    partition_workouts_by_date,
-    format_workout_analysis,
-    evaluate_goal_trajectory,
-    format_recovery_metrics,
+    coerce_mcp_payload,
     compile_checkin_summary,
-    format_schedule_audit_summary,
+    evaluate_goal_trajectory,
+    extract_health_metrics,
+    format_display_date,
     format_nutrition_context_summary,
+    format_recovery_metrics,
+    format_schedule_audit_summary,
+    format_workout_analysis,
+    get_today_date,
+    is_workout_completed,
+    iso_week_key,
+    parse_date,
+    parse_mcp_response,
+    partition_workouts_by_date,
+)
+from .utils.paths import SKILLS_DIR
+
+logger = logging.getLogger(__name__)
+
+ISO_FMT = "%Y-%m-%d"
+
+# Sport classification used by the schedule audit.
+RUN_SPORTS = {"run", "running", "trail run", "treadmill"}
+BIKE_SPORTS = {"bike", "cycling", "mtnbike", "gravel", "virtualride"}
+STRENGTH_SPORTS = {"strength", "gym", "weighttraining", "s&c"}
+# Calendar placeholders that carry no training load.
+NON_TRAINING_SPORTS = {"DayOff", "Other"}
+QUALITY_KEYWORDS = (
+    "interval", "tempo", "threshold", "race", "speed",
+    "reps", "mp", "push", "hills", "progression",
 )
 
 # ==============================================================================
 # 1. Skills Toolset Configuration
 # ==============================================================================
-current_dir = os.path.dirname(os.path.abspath(__file__))
-nutrition_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "nutrition-planner"))
-checkin_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "check-in-report"))
-workout_analysis_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "workout-analysis"))
-bike_workout_analysis_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "bike-workout-analysis"))
-schedule_audit_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "schedule-audit"))
-workout_creator_skill = load_skill_from_dir(os.path.join(current_dir, "skills", "workout-creator"))
+SKILL_NAMES = (
+    "nutrition-planner",
+    "check-in-report",
+    "workout-analysis",
+    "bike-workout-analysis",
+    "schedule-audit",
+    "workout-creator",
+)
+
 
 class CompactSkillToolset(SkillToolset):
-    """Custom SkillToolset that suppresses ListSkillsTool so that the skills XML
-    catalog is directly pre-injected into the system prompt, enabling single-turn skill loading.
+    """SkillToolset that suppresses ListSkillsTool so the skills XML catalog is
+    pre-injected into the system prompt, enabling single-turn skill loading.
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._tools = [t for t in self._tools if t.name != "list_skills"]
 
+
 skill_toolset = CompactSkillToolset(
-    skills=[
-        nutrition_skill,
-        checkin_skill,
-        workout_analysis_skill,
-        bike_workout_analysis_skill,
-        schedule_audit_skill,
-        workout_creator_skill,
-    ],
+    skills=[load_skill_from_dir(os.path.join(SKILLS_DIR, name)) for name in SKILL_NAMES],
     code_executor=UnsafeLocalCodeExecutor(),
 )
 
+
 # ==============================================================================
-# 2. Skill Facades (1 Facade per Skill)
+# 2. Shared Helpers
+# ==============================================================================
+def _location_args(profile: dict) -> Optional[dict[str, Any]]:
+    """Returns the geo kwargs for a weather lookup, or None if the runner has no location."""
+    loc = profile.get("location", "")
+    lat = profile.get("latitude")
+    lon = profile.get("longitude")
+    if not loc and (lat is None or lon is None):
+        return None
+    return {"location": loc or "", "lat": lat, "lon": lon}
+
+
+async def _fetch_weather_text(profile: dict, dates: list[str]) -> str:
+    """Returns a formatted weather narrative for the given dates, or '' when unavailable."""
+    geo = _location_args(profile)
+    if not geo or not dates:
+        return ""
+    result = await asyncio.to_thread(get_weather_for_dates, dates=dates, **geo)
+    # The service reports failures as human-readable strings; never pass those to the model.
+    if not result or result.startswith(("Error", "Could not geocode", "No weather", "Weather forecast is only")):
+        logger.info("Weather text unavailable: %s", result)
+        return ""
+    return result
+
+
+async def _fetch_weather_map(profile: dict, timestamps: list[str]) -> dict[str, str]:
+    """Returns {timestamp: conditions} for the given run timestamps, or {} when unavailable."""
+    geo = _location_args(profile)
+    if not geo or not timestamps:
+        return {}
+    return await asyncio.to_thread(get_weather_conditions, dates=timestamps, **geo)
+
+
+async def _run_tp_tool(tool_context: ToolContext, tool_name: str, **node_input: Any) -> Any:
+    """Resolves a TrainingPeaks MCP tool by name and invokes it."""
+    tool = await get_tp_tool(tool_name)
+    return await tool_context.run_node(tool, node_input=node_input or None)
+
+
+async def _fetch_workouts(tool_context: ToolContext, start: str, end: str) -> list[dict]:
+    """Fetches the workout list for a date range, returning [] when nothing is available."""
+    raw = await _run_tp_tool(tool_context, "tp_get_workouts", start_date=start, end_date=end)
+    parsed = parse_mcp_response(raw) or {}
+    workouts = parsed.get("workouts", [])
+    return workouts if isinstance(workouts, list) else []
+
+
+def _result_or_none(result: Any, label: str) -> Any:
+    """Unwraps a gather() result, logging and discarding exceptions."""
+    if isinstance(result, Exception):
+        logger.warning("Failed to fetch %s: %s", label, result)
+        return None
+    return result
+
+
+# ==============================================================================
+# 3. Skill Facades (1 Facade per Skill)
 # ==============================================================================
 
 # Workout & Bike Analysis (for workout-analysis & bike-workout-analysis skills) ---
@@ -82,14 +154,12 @@ async def analyze_workout(
     """
     profile = tool_context.state.get("user_profile") or {}
     today_date = get_today_date()
-    
+
     target_date = today_date
     if date_str and date_str.strip().lower() != "today":
-        parsed = parse_date(date_str)
-        if parsed:
-            target_date = parsed
+        target_date = parse_date(date_str) or today_date
 
-    target_iso = target_date.strftime("%Y-%m-%d")
+    target_iso = target_date.strftime(ISO_FMT)
     workout_start_time = None
     workout_sport = "Workout"
     workout_title = ""
@@ -97,116 +167,117 @@ async def analyze_workout(
     # 1. Resolve workout_id if not provided
     if not workout_id:
         try:
-            tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
-            raw_workouts = await tool_context.run_node(
-                tp_get_workouts_tool,
-                node_input={"start_date": target_iso, "end_date": target_iso}
-            )
-            parsed_wp = parse_mcp_response(raw_workouts) or {}
-            workouts_list = parsed_wp.get("workouts", [])
-            completed_runs = [w for w in workouts_list if is_workout_completed(w)]
-            if not completed_runs:
-                if workouts_list:
-                    titles = ", ".join(f"'{w.get('title') or w.get('sport', 'Workout')}'" for w in workouts_list)
-                    return f"No completed workout found for {target_iso}. Planned sessions found on calendar: {titles}."
-                return f"No completed workouts found on {target_iso}."
-
-            target_workout = completed_runs[-1]
-            workout_id = str(target_workout.get("id") or target_workout.get("workoutId") or "")
-            workout_sport = target_workout.get("sport", "Workout")
-            workout_title = target_workout.get("title") or workout_sport
-            workout_start_time = target_workout.get("start_time") or target_workout.get("startTime") or target_workout.get("date")
+            workouts_list = await _fetch_workouts(tool_context, target_iso, target_iso)
         except Exception as e:
-            print(f"Error looking up workout for {target_iso}: {e}")
+            logger.error("Failed to look up workout for %s: %s", target_iso, e)
             return f"Error: Failed to find workout for {target_iso}: {e}"
+
+        completed_runs = [w for w in workouts_list if is_workout_completed(w)]
+        if not completed_runs:
+            if workouts_list:
+                titles = ", ".join(
+                    f"'{w.get('title') or w.get('sport', 'Workout')}'" for w in workouts_list
+                )
+                return f"No completed workout found for {target_iso}. Planned sessions found on calendar: {titles}."
+            return f"No completed workouts found on {target_iso}."
+
+        target_workout = completed_runs[-1]
+        workout_id = str(target_workout.get("id") or target_workout.get("workoutId") or "")
+        workout_sport = target_workout.get("sport", "Workout")
+        workout_title = target_workout.get("title") or workout_sport
+        workout_start_time = (
+            target_workout.get("start_time")
+            or target_workout.get("startTime")
+            or target_workout.get("date")
+        )
 
     if not workout_id:
         return "Error: No workout ID could be determined."
 
     # 2. Fetch workout analysis and recovery metrics concurrently
     try:
-        tp_analyze_tool = await get_tp_tool("tp_analyze_workout")
-        tasks = [
-            tool_context.run_node(tp_analyze_tool, node_input={"workout_id": workout_id})
-        ]
-
-        fetch_metrics_task_idx = None
+        tasks = [_run_tp_tool(tool_context, "tp_analyze_workout", workout_id=workout_id)]
         if include_recovery:
-            tp_get_metrics_tool = await get_tp_tool("tp_get_metrics")
-            metrics_start = (target_date - timedelta(days=7)).strftime("%Y-%m-%d")
-            fetch_metrics_task_idx = len(tasks)
+            metrics_start = (target_date - timedelta(days=7)).strftime(ISO_FMT)
             tasks.append(
-                tool_context.run_node(
-                    tp_get_metrics_tool,
-                    node_input={"start_date": metrics_start, "end_date": target_iso}
+                _run_tp_tool(
+                    tool_context, "tp_get_metrics",
+                    start_date=metrics_start, end_date=target_iso,
                 )
             )
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
+
         analyze_res = results[0]
         if isinstance(analyze_res, Exception):
             return f"Error analyzing workout {workout_id}: {analyze_res}"
 
         data = parse_mcp_response(analyze_res)
-        if not data or not isinstance(data, dict):
+        if not isinstance(data, dict) or not data:
             return f"No analysis data returned for workout {workout_id}."
 
         analysis_str = format_workout_analysis(
-            data,
-            title=workout_title or None,
-            sport=workout_sport or None
+            data, title=workout_title or None, sport=workout_sport or None
         )
-
-        if not workout_start_time:
-            workout_start_time = data.get("startTime") or data.get("workoutDay") or target_iso
 
         # 3. Attach Environmental Weather
         weather_section = ""
         if include_weather:
-            loc = profile.get("location", "")
-            lat = profile.get("latitude")
-            lon = profile.get("longitude")
-            if workout_start_time and (loc or (lat is not None and lon is not None)):
-                try:
-                    weather_res = await asyncio.to_thread(
-                        get_weather_for_dates,
-                        location=loc or "",
-                        dates=[str(workout_start_time)],
-                        lat=lat,
-                        lon=lon
-                    )
-                    if weather_res and not weather_res.startswith("Error") and not weather_res.startswith("Could not geocode"):
-                        weather_section = f"\n\n**Environmental & Weather Context:**\n{weather_res}"
-                except Exception as e:
-                    print(f"Error fetching weather in analyze_workout: {e}")
+            start_time = workout_start_time or data.get("startTime") or data.get("workoutDay") or target_iso
+            weather_text = await _fetch_weather_text(profile, [str(start_time)])
+            if weather_text:
+                weather_section = f"\n\n**Environmental & Weather Context:**\n{weather_text}"
 
         # 4. Attach Recovery Context
         recovery_section = ""
-        if fetch_metrics_task_idx is not None:
-            metrics_res = results[fetch_metrics_task_idx]
-            if not isinstance(metrics_res, Exception) and metrics_res:
-                metrics_data = extract_health_metrics(metrics_res)
-                if metrics_data:
-                    rec_formatted = format_recovery_metrics(metrics_data)
-                    if rec_formatted:
-                        recovery_section = f"\n\n**Morning Physiological Recovery Context:**\n{rec_formatted}"
+        if include_recovery:
+            metrics_res = _result_or_none(results[1], "recovery metrics")
+            if metrics_res:
+                rec_formatted = format_recovery_metrics(extract_health_metrics(metrics_res))
+                if rec_formatted:
+                    recovery_section = f"\n\n**Morning Physiological Recovery Context:**\n{rec_formatted}"
 
         return f"{analysis_str}{recovery_section}{weather_section}"
     except Exception as e:
-        print(f"Error in analyze_workout tool: {e}")
+        logger.error("analyze_workout failed for %s: %s", workout_id, e)
         return f"Error: Failed to analyze workout {workout_id}: {e}"
+
 
 analyze_workout_tool = FunctionTool(analyze_workout)
 
 
 # Check-In Report (for check-in-report skill) ---
+def _summarize_fitness(fitness_raw: Any, profile: dict, today_date: Any) -> Optional[dict]:
+    """Extracts PMC start/end values and the resulting goal trajectory."""
+    if not fitness_raw:
+        return None
+
+    fit_parsed = parse_mcp_response(fitness_raw) or {}
+    fitness_list = fit_parsed.get("daily_data", [])
+    if not isinstance(fitness_list, list):
+        fitness_list = []
+
+    bounds = {f"{m}_{edge}": 0.0 for m in ("ctl", "atl", "tsb") for edge in ("start", "end")}
+    if fitness_list:
+        ordered = sorted(fitness_list, key=lambda x: str(x.get("date", "")))
+        for metric in ("ctl", "atl", "tsb"):
+            bounds[f"{metric}_start"] = ordered[0].get(metric, 0.0)
+            bounds[f"{metric}_end"] = ordered[-1].get(metric, 0.0)
+
+    return {
+        **bounds,
+        "daily_list": fitness_list,
+        "trajectory_info": evaluate_goal_trajectory(profile, bounds["ctl_end"], today_date),
+    }
+
+
 async def fetch_checkin_data(
     tool_context: ToolContext,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
 ) -> str:
     """Fetches all data needed for a comprehensive weekly check-in report.
-    
+
     Includes:
     - 14-day past completed workouts with run-time weather
     - 7-day future scheduled workouts
@@ -222,105 +293,112 @@ async def fetch_checkin_data(
     q_start = parse_date(start_date) or (today_date - timedelta(days=14))
     q_end = parse_date(end_date) or (today_date + timedelta(days=7))
 
-    start_str = q_start.strftime("%Y-%m-%d")
-    end_str = q_end.strftime("%Y-%m-%d")
-    recovery_end_str = min(q_end, today_date).strftime("%Y-%m-%d")
+    start_str = q_start.strftime(ISO_FMT)
+    end_str = q_end.strftime(ISO_FMT)
+    recovery_end_str = min(q_end, today_date).strftime(ISO_FMT)
 
-    tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
-    tp_list_notes_tool = await get_tp_tool("tp_list_notes")
-    tp_get_metrics_tool = await get_tp_tool("tp_get_metrics")
-    tp_get_fitness_tool = await get_tp_tool("tp_get_fitness")
+    workouts_raw, notes_raw, metrics_raw, fitness_raw = [
+        _result_or_none(r, label)
+        for r, label in zip(
+            await asyncio.gather(
+                _run_tp_tool(tool_context, "tp_get_workouts", start_date=start_str, end_date=end_str),
+                _run_tp_tool(tool_context, "tp_list_notes", start_date=start_str, end_date=end_str),
+                _run_tp_tool(tool_context, "tp_get_metrics", start_date=start_str, end_date=recovery_end_str),
+                _run_tp_tool(tool_context, "tp_get_fitness", start_date=start_str, end_date=recovery_end_str),
+                return_exceptions=True,
+            ),
+            ("workouts", "calendar notes", "recovery metrics", "fitness PMC"),
+        )
+    ]
 
-    results = await asyncio.gather(
-        tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": end_str}),
-        tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str}),
-        tool_context.run_node(tp_get_metrics_tool, node_input={"start_date": start_str, "end_date": recovery_end_str}),
-        tool_context.run_node(tp_get_fitness_tool, node_input={"start_date": start_str, "end_date": recovery_end_str}),
-        return_exceptions=True
+    workouts_data = parse_mcp_response(workouts_raw) or {} if workouts_raw else {}
+    workouts_past, workouts_future = partition_workouts_by_date(
+        workouts_data.get("workouts", []), today_date
     )
 
-    workouts_raw = results[0] if not isinstance(results[0], Exception) else None
-    notes_raw = results[1] if not isinstance(results[1], Exception) else None
-    metrics_raw = results[2] if not isinstance(results[2], Exception) else None
-    fitness_raw = results[3] if not isinstance(results[3], Exception) else None
-
-    # Partition workouts
-    workouts_data = parse_mcp_response(workouts_raw) or {} if workouts_raw else {}
-    workouts_list = workouts_data.get("workouts", [])
-    workouts_past, workouts_future = partition_workouts_by_date(workouts_list, today_date, has_past=True)
-
-    # Parse recovery & notes
     metrics_data = extract_health_metrics(metrics_raw) if metrics_raw else None
     notes_parsed = parse_mcp_response(notes_raw) or {} if notes_raw else {}
     notes_list = notes_parsed.get("notes", []) if notes_raw else None
+    fitness_data = _summarize_fitness(fitness_raw, profile, today_date)
 
-    # Parse fitness PMC
-    fitness_data = None
-    if fitness_raw:
-        fit_parsed = parse_mcp_response(fitness_raw) or {}
-        fitness_list = fit_parsed.get("daily_data", [])
-        ctl_start, ctl_end = 0.0, 0.0
-        atl_start, atl_end = 0.0, 0.0
-        tsb_start, tsb_end = 0.0, 0.0
-        if isinstance(fitness_list, list) and fitness_list:
-            fitness_sorted = sorted(fitness_list, key=lambda x: str(x.get("date", "")))
-            ctl_start = fitness_sorted[0].get("ctl", 0.0)
-            ctl_end = fitness_sorted[-1].get("ctl", 0.0)
-            atl_start = fitness_sorted[0].get("atl", 0.0)
-            atl_end = fitness_sorted[-1].get("atl", 0.0)
-            tsb_start = fitness_sorted[0].get("tsb", 0.0)
-            tsb_end = fitness_sorted[-1].get("tsb", 0.0)
-
-        trajectory_info = evaluate_goal_trajectory(profile, ctl_end, today_date)
-        fitness_data = {
-            "ctl_start": ctl_start, "ctl_end": ctl_end,
-            "atl_start": atl_start, "atl_end": atl_end,
-            "tsb_start": tsb_start, "tsb_end": tsb_end,
-            "daily_list": fitness_list if isinstance(fitness_list, list) else [],
-            "trajectory_info": trajectory_info,
-        }
-
-    # Fetch weather for completed runs
-    weather_map = {}
-    loc = profile.get("location", "")
-    lat = profile.get("latitude")
-    lon = profile.get("longitude")
-    if workouts_past and (loc or (lat is not None and lon is not None)):
-        run_timestamps = [str(w.get("start_time") or w.get("date")) for w in workouts_past if (w.get("start_time") or w.get("date"))]
-        if run_timestamps:
-            try:
-                wx_res = await asyncio.to_thread(
-                    get_weather_for_dates,
-                    location=loc or "",
-                    dates=run_timestamps,
-                    lat=lat,
-                    lon=lon
-                )
-                if wx_res and not wx_res.startswith("Error"):
-                    for ts in run_timestamps:
-                        d_key = ts[:10]
-                        weather_map[ts] = f"Recorded conditions on {d_key}"
-            except Exception as e:
-                print(f"Error fetching checkin weather: {e}")
-
-    lookback_days = (today_date - q_start).days
-    lookahead_days = (q_end - today_date).days
+    # Attach the real recorded conditions for each completed run.
+    run_timestamps = [
+        str(w.get("start_time") or w.get("date"))
+        for w in workouts_past
+        if (w.get("start_time") or w.get("date"))
+    ]
+    weather_map = await _fetch_weather_map(profile, run_timestamps)
 
     return compile_checkin_summary(
-        lookback_days=lookback_days,
-        lookahead_days=lookahead_days,
+        lookback_days=(today_date - q_start).days,
+        lookahead_days=(q_end - today_date).days,
         workouts_past=workouts_past,
         workouts_future=workouts_future,
         metrics_data=metrics_data,
         fitness_data=fitness_data,
         notes_list=notes_list,
-        weather_map=weather_map
+        weather_map=weather_map,
     )
+
 
 fetch_checkin_data_tool = FunctionTool(fetch_checkin_data)
 
 
 # Schedule Audit (for schedule-audit skill) ---
+def _new_week_bucket(day: Any) -> dict:
+    """Creates an empty weekly aggregation bucket for the ISO week containing `day`."""
+    w_start = day - timedelta(days=day.weekday())
+    w_end = w_start + timedelta(days=6)
+    return {
+        "date_range": f"{w_start.strftime('%b %d')} - {w_end.strftime('%b %d, %Y')}",
+        "start_date": w_start,
+        "end_date": w_end,
+        "total_distance_km": 0.0,
+        "total_tss": 0.0,
+        "easy_count": 0,
+        "quality_count": 0,
+        "bike_count": 0,
+        "strength_count": 0,
+        "other_sport_count": 0,
+        "sessions": [],
+        "travel_note": None,
+    }
+
+
+def _tally_workout(bucket: dict, workout: dict, w_date: Any) -> None:
+    """Adds a single workout's volume, load, and intensity classification to its week bucket."""
+    sport = (workout.get("sport") or "Run").strip()
+    sport_lower = sport.lower()
+
+    dist = float(
+        workout.get("distance_planned_km")
+        or workout.get("distance_km")
+        or workout.get("distance_actual_km")
+        or 0.0
+    )
+    tss = float(workout.get("tss_planned") or workout.get("tss") or workout.get("tss_actual") or 0.0)
+    bucket["total_tss"] += tss
+
+    title = workout.get("title") or sport
+    title_lower = title.lower()
+
+    if sport_lower in RUN_SPORTS:
+        bucket["total_distance_km"] += dist
+        is_quality = any(kw in title_lower for kw in QUALITY_KEYWORDS)
+        bucket["quality_count" if is_quality else "easy_count"] += 1
+    elif sport_lower in BIKE_SPORTS:
+        bucket["bike_count"] += 1
+    elif sport_lower in STRENGTH_SPORTS:
+        bucket["strength_count"] += 1
+    else:
+        bucket["other_sport_count"] += 1
+
+    dist_str = f"{round(dist, 1)}km, " if dist > 0 else ""
+    bucket["sessions"].append(
+        f"[{sport}] '{title}' on {format_display_date(w_date)} ({dist_str}TSS: {round(tss, 0)})"
+    )
+
+
 async def fetch_schedule_audit_data(
     tool_context: ToolContext,
     start_date: Optional[str] = None,
@@ -334,109 +412,57 @@ async def fetch_schedule_audit_data(
     q_start = parse_date(start_date) or today_date
     q_end = parse_date(end_date) or (today_date + timedelta(weeks=weeks_forward))
 
-    start_str = q_start.strftime("%Y-%m-%d")
-    end_str = q_end.strftime("%Y-%m-%d")
+    start_str = q_start.strftime(ISO_FMT)
+    end_str = q_end.strftime(ISO_FMT)
 
-    tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
-    tp_list_notes_tool = await get_tp_tool("tp_list_notes")
+    workouts_raw, notes_raw = [
+        _result_or_none(r, label)
+        for r, label in zip(
+            await asyncio.gather(
+                _run_tp_tool(tool_context, "tp_get_workouts", start_date=start_str, end_date=end_str),
+                _run_tp_tool(tool_context, "tp_list_notes", start_date=start_str, end_date=end_str),
+                return_exceptions=True,
+            ),
+            ("workouts", "calendar notes"),
+        )
+    ]
 
-    results = await asyncio.gather(
-        tool_context.run_node(tp_get_workouts_tool, node_input={"start_date": start_str, "end_date": end_str}),
-        tool_context.run_node(tp_list_notes_tool, node_input={"start_date": start_str, "end_date": end_str}),
-    )
-
-    workouts_raw, notes_raw = results
     workouts_data = parse_mcp_response(workouts_raw) or {} if workouts_raw else {}
     workouts_list = workouts_data.get("workouts", [])
-
     notes_parsed = parse_mcp_response(notes_raw) or {} if notes_raw else {}
     notes_list = notes_parsed.get("notes", []) if notes_raw else []
 
-    # Group workouts and notes into weekly buckets
-    weeks_dict = {}
+    # Seed one bucket per ISO week in the audit window.
+    weeks_dict: dict[str, dict] = {}
     cur = q_start
     while cur <= q_end:
-        iso_year, iso_week, _ = cur.isocalendar()
-        week_key = f"{iso_year}-W{iso_week:02d}"
-        if week_key not in weeks_dict:
-            w_start = cur - timedelta(days=cur.weekday())
-            w_end = w_start + timedelta(days=6)
-            weeks_dict[week_key] = {
-                "date_range": f"{w_start.strftime('%b %d')} - {w_end.strftime('%b %d, %Y')}",
-                "start_date": w_start,
-                "end_date": w_end,
-                "total_distance_km": 0.0,
-                "total_tss": 0.0,
-                "easy_count": 0,
-                "quality_count": 0,
-                "bike_count": 0,
-                "strength_count": 0,
-                "other_sport_count": 0,
-                "sessions": [],
-                "travel_note": None,
-            }
+        weeks_dict.setdefault(iso_week_key(cur), _new_week_bucket(cur))
         cur += timedelta(days=7)
 
-    # Populate workouts
     for w in workouts_list:
         w_date = parse_date(w.get("date") or w.get("start_time"))
         if not w_date:
             continue
-        iso_year, iso_week, _ = w_date.isocalendar()
-        week_key = f"{iso_year}-W{iso_week:02d}"
-        if week_key in weeks_dict:
-            bucket = weeks_dict[week_key]
-            sport = (w.get("sport") or "Run").strip()
-            sport_lower = sport.lower()
+        # Skip calendar rest placeholders and educational/tip cards.
+        if (w.get("sport") or "Run").strip() in NON_TRAINING_SPORTS:
+            continue
+        bucket = weeks_dict.get(iso_week_key(w_date))
+        if bucket:
+            _tally_workout(bucket, w, w_date)
 
-            # Skip calendar rest placeholders and educational/tip cards
-            if sport in ["DayOff", "Other"]:
-                continue
-
-            dist = float(w.get("distance_planned_km") or w.get("distance_km") or w.get("distance_actual_km") or 0.0)
-            tss = float(w.get("tss_planned") or w.get("tss") or w.get("tss_actual") or 0.0)
-            bucket["total_tss"] += tss
-
-            title = w.get("title") or sport
-            title_lower = title.lower()
-
-            # Classify sport & intensity
-            if sport_lower in ["run", "running", "trail run", "treadmill"]:
-                bucket["total_distance_km"] += dist
-                is_quality = any(kw in title_lower for kw in ["interval", "tempo", "threshold", "race", "speed", "reps", "mp", "push", "hills", "progression"])
-                if is_quality:
-                    bucket["quality_count"] += 1
-                else:
-                    bucket["easy_count"] += 1
-            elif sport_lower in ["bike", "cycling", "mtnbike", "gravel", "virtualride"]:
-                bucket["bike_count"] += 1
-            elif sport_lower in ["strength", "gym", "weighttraining", "s&c"]:
-                bucket["strength_count"] += 1
-            else:
-                bucket["other_sport_count"] += 1
-
-            dist_str = f"{round(dist, 1)}km, " if dist > 0 else ""
-            bucket["sessions"].append(f"[{sport}] '{title}' on {format_display_date(w_date)} ({dist_str}TSS: {round(tss, 0)})")
-
-    # Match travel / calendar notes to weeks
     for n in notes_list:
         n_date = parse_date(n.get("date"))
-        if not n_date:
-            continue
-        iso_year, iso_week, _ = n_date.isocalendar()
-        week_key = f"{iso_year}-W{iso_week:02d}"
-        if week_key in weeks_dict:
+        bucket = weeks_dict.get(iso_week_key(n_date)) if n_date else None
+        if bucket:
             n_title = n.get("title", "")
             n_desc = n.get("description", "")
-            full_note = f"{n_title}: {n_desc}" if n_desc else n_title
-            weeks_dict[week_key]["travel_note"] = full_note
-
-    weeks_list = list(weeks_dict.values())
+            bucket["travel_note"] = f"{n_title}: {n_desc}" if n_desc else n_title
 
     return format_schedule_audit_summary(
-        weeks_data=weeks_list,
+        weeks_data=list(weeks_dict.values()),
         overall_notes=notes_list,
     )
+
 
 fetch_schedule_audit_data_tool = FunctionTool(fetch_schedule_audit_data)
 
@@ -453,40 +479,21 @@ async def fetch_nutrition_context(
     today_date = get_today_date()
     end_date = today_date + timedelta(days=days_forward)
 
-    start_str = today_date.strftime("%Y-%m-%d")
-    end_str = end_date.strftime("%Y-%m-%d")
-
-    tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
-    raw_workouts = await tool_context.run_node(
-        tp_get_workouts_tool,
-        node_input={"start_date": start_str, "end_date": end_str}
+    upcoming = await _fetch_workouts(
+        tool_context, today_date.strftime(ISO_FMT), end_date.strftime(ISO_FMT)
     )
-    parsed = parse_mcp_response(raw_workouts) or {}
-    upcoming = parsed.get("workouts", [])
 
-    # Fetch weather forecast for upcoming window
-    loc = profile.get("location", "")
-    lat = profile.get("latitude")
-    lon = profile.get("longitude")
-    forecast_dates = [(today_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days_forward + 1)]
-    weather_str = ""
-    if loc or (lat is not None and lon is not None):
-        try:
-            weather_str = await asyncio.to_thread(
-                get_weather_for_dates,
-                location=loc or "",
-                dates=forecast_dates,
-                lat=lat,
-                lon=lon
-            )
-        except Exception as e:
-            print(f"Error fetching weather forecast for nutrition: {e}")
+    forecast_dates = [
+        (today_date + timedelta(days=i)).strftime(ISO_FMT) for i in range(days_forward + 1)
+    ]
+    weather_str = await _fetch_weather_text(profile, forecast_dates)
 
     return format_nutrition_context_summary(
         profile=profile,
         upcoming_workouts=upcoming,
-        weather_forecast=weather_str
+        weather_forecast=weather_str,
     )
+
 
 fetch_nutrition_context_tool = FunctionTool(fetch_nutrition_context)
 
@@ -495,152 +502,88 @@ fetch_nutrition_context_tool = FunctionTool(fetch_nutrition_context)
 async def _find_existing_workout(
     tool_context: ToolContext,
     target_iso: str,
-    sport: str
+    sport: str,
 ) -> Optional[str]:
-    """Finds the ID of an existing planned workout on target date matching sport."""
+    """Finds the ID of an existing planned workout on the target date, preferring a sport match."""
     try:
-        tp_get_workouts_tool = await get_tp_tool("tp_get_workouts")
-        raw_workouts = await tool_context.run_node(
-            tp_get_workouts_tool,
-            node_input={"start_date": target_iso, "end_date": target_iso}
+        raw_workouts = await _run_tp_tool(
+            tool_context, "tp_get_workouts", start_date=target_iso, end_date=target_iso
         )
-        parsed_wp = parse_mcp_response(raw_workouts)
-        if parsed_wp is None:
-            if isinstance(raw_workouts, dict):
-                parsed_wp = raw_workouts
-            elif isinstance(raw_workouts, str):
-                try:
-                    parsed_wp = json.loads(raw_workouts)
-                except Exception:
-                    parsed_wp = {}
-            else:
-                parsed_wp = {}
-
-        workouts_list = parsed_wp.get("workouts", [])
-        planned_workouts = [w for w in workouts_list if not is_workout_completed(w)]
-        
-        matching_sport = [w for w in planned_workouts if sport.lower() in (w.get("sport") or "").lower()]
-        if matching_sport:
-            return str(matching_sport[0].get("id") or matching_sport[0].get("workoutId") or "")
-        elif planned_workouts:
-            return str(planned_workouts[0].get("id") or planned_workouts[0].get("workoutId") or "")
     except Exception as e:
-        print(f"Warning: Failed checking existing workouts for {target_iso}: {e}")
-    return None
+        logger.warning("Failed checking existing workouts for %s: %s", target_iso, e)
+        return None
+
+    workouts_list = coerce_mcp_payload(raw_workouts).get("workouts", [])
+    planned = [w for w in workouts_list if not is_workout_completed(w)]
+    if not planned:
+        return None
+
+    matching = [w for w in planned if sport.lower() in (w.get("sport") or "").lower()]
+    chosen = (matching or planned)[0]
+    return str(chosen.get("id") or chosen.get("workoutId") or "") or None
 
 
-async def _execute_update_workout(
+# Per-action differences between the create and update MCP tools.
+_CREATE_SPEC = {"tool": "tp_create_workout", "date_key": "date_str", "duration_cast": int}
+_UPDATE_SPEC = {"tool": "tp_update_workout", "date_key": "date", "duration_cast": float}
+
+
+async def _write_workout(
     tool_context: ToolContext,
-    workout_id: str,
     date_str: str,
     sport: str,
     title: str,
+    workout_id: Optional[str] = None,
     duration_minutes: Optional[int | float] = None,
     distance_km: Optional[float] = None,
     tss_planned: Optional[float] = None,
     description: Optional[str] = None,
     structure: Optional[Any] = None,
 ) -> str:
-    """Updates an existing workout in TrainingPeaks via tp_update_workout."""
+    """Creates or updates a TrainingPeaks workout, depending on whether workout_id is set."""
+    spec = _UPDATE_SPEC if workout_id else _CREATE_SPEC
+    action = "updated" if workout_id else "created"
+
+    node_input: dict[str, Any] = {
+        spec["date_key"]: date_str,
+        "sport": sport,
+        "title": title,
+    }
+    if workout_id:
+        node_input["workout_id"] = workout_id
+    if duration_minutes is not None:
+        node_input["duration_minutes"] = spec["duration_cast"](duration_minutes)
+    if distance_km is not None:
+        node_input["distance_km"] = float(distance_km)
+    if tss_planned is not None:
+        node_input["tss_planned"] = float(tss_planned)
+    if description is not None:
+        node_input["description"] = description
+    if structure is not None:
+        node_input["structure"] = structure
+
     try:
-        tp_update_tool = await get_tp_tool("tp_update_workout")
-        node_input: dict[str, Any] = {
-            "workout_id": workout_id,
-            "sport": sport,
-            "title": title,
-            "date": date_str,
-        }
-        if duration_minutes is not None:
-            node_input["duration_minutes"] = float(duration_minutes)
-        if distance_km is not None:
-            node_input["distance_km"] = float(distance_km)
-        if tss_planned is not None:
-            node_input["tss_planned"] = float(tss_planned)
-        if description is not None:
-            node_input["description"] = description
-        if structure is not None:
-            node_input["structure"] = structure
-
-        result = await tool_context.run_node(tp_update_tool, node_input=node_input)
-        data = parse_mcp_response(result)
-        if data is None:
-            if isinstance(result, dict):
-                data = result
-            elif isinstance(result, str):
-                try:
-                    data = json.loads(result)
-                except Exception:
-                    data = {"message": result}
-
-        if isinstance(data, dict) and data.get("isError"):
-            return f"Error updating workout: {data.get('message', 'Unknown error')}"
-
-        return json.dumps({
-            "success": True,
-            "action": "updated",
-            "workout_id": workout_id,
-            "title": title,
-            "date": date_str,
-            "sport": sport,
-            "duration_minutes": duration_minutes,
-            "distance_km": distance_km,
-            "tss_planned": tss_planned,
-        })
+        result = await _run_tp_tool(tool_context, spec["tool"], **node_input)
     except Exception as e:
-        print(f"Error updating workout {workout_id}: {e}")
-        return f"Error: Failed to update workout {workout_id}: {e}"
+        logger.error("Failed to %s workout (%s): %s", action[:-1], date_str, e)
+        return f"Error: Failed to {action[:-1]} workout: {e}"
 
+    data = coerce_mcp_payload(result)
+    if data.get("isError"):
+        return f"Error {action[:-1]}ing workout: {data.get('message', 'Unknown error')}"
 
-async def _execute_create_workout(
-    tool_context: ToolContext,
-    date_str: str,
-    sport: str,
-    title: str,
-    duration_minutes: Optional[int | float] = None,
-    distance_km: Optional[float] = None,
-    tss_planned: Optional[float] = None,
-    description: Optional[str] = None,
-    structure: Optional[Any] = None,
-) -> str:
-    """Creates a new workout in TrainingPeaks via tp_create_workout."""
-    try:
-        tp_create_tool = await get_tp_tool("tp_create_workout")
-        node_input: dict[str, Any] = {
-            "date_str": date_str,
-            "sport": sport,
-            "title": title,
-        }
-        if duration_minutes is not None:
-            node_input["duration_minutes"] = int(duration_minutes)
-        if distance_km is not None:
-            node_input["distance_km"] = float(distance_km)
-        if tss_planned is not None:
-            node_input["tss_planned"] = float(tss_planned)
-        if description is not None:
-            node_input["description"] = description
-        if structure is not None:
-            node_input["structure"] = structure
-
-        result = await tool_context.run_node(tp_create_tool, node_input=node_input)
-        data = parse_mcp_response(result)
-        if data is None:
-            if isinstance(result, dict):
-                data = result
-            elif isinstance(result, str):
-                try:
-                    data = json.loads(result)
-                except Exception:
-                    data = {"message": result}
-
-        if isinstance(data, dict):
-            if data.get("isError"):
-                return f"Error creating workout: {data.get('message', 'Unknown error')}"
-            data["action"] = "created"
-            return json.dumps(data)
-        return json.dumps({"success": True, "action": "created", "title": title, "date": date_str, "sport": sport})
-    except Exception as e:
-        print(f"Error creating workout: {e}")
-        return f"Error: Failed to create workout: {e}"
+    resolved_id = workout_id or data.get("id") or data.get("workoutId") or data.get("workout_id")
+    return json.dumps({
+        "success": True,
+        "action": action,
+        "workout_id": resolved_id,
+        "title": title,
+        "date": date_str,
+        "sport": sport,
+        "duration_minutes": duration_minutes,
+        "distance_km": distance_km,
+        "tss_planned": tss_planned,
+    })
 
 
 async def create_workout(
@@ -661,8 +604,8 @@ async def create_workout(
     Acts as the intelligent workout management facade:
     - If `workout_id` is provided, updates that specific workout.
     - If `workout_id` is not provided and `create` is False, checks if an existing planned workout exists on `date_str`.
-      - If an existing planned workout is found on that date, updates it via update_workout.
-      - If no existing planned workout is found on that date, creates a new workout via create_workout.
+      - If an existing planned workout is found on that date, updates it.
+      - If no existing planned workout is found on that date, creates a new workout.
     - If `create` is True, creates a new workout unconditionally.
 
     Args:
@@ -679,37 +622,25 @@ async def create_workout(
         create: If True, forces creating a new workout instead of updating an existing one on that date.
     """
     target_date = parse_date(date_str)
-    target_iso = target_date.strftime("%Y-%m-%d") if target_date else date_str[:10]
+    target_iso = target_date.strftime(ISO_FMT) if target_date else date_str[:10]
 
     target_workout_id = workout_id
     if not target_workout_id and not create:
         target_workout_id = await _find_existing_workout(tool_context, target_iso, sport)
 
-    if target_workout_id:
-        return await _execute_update_workout(
-            tool_context=tool_context,
-            workout_id=target_workout_id,
-            date_str=date_str,
-            sport=sport,
-            title=title,
-            duration_minutes=duration_minutes,
-            distance_km=distance_km,
-            tss_planned=tss_planned,
-            description=description,
-            structure=structure,
-        )
-
-    return await _execute_create_workout(
+    return await _write_workout(
         tool_context=tool_context,
         date_str=date_str,
         sport=sport,
         title=title,
+        workout_id=target_workout_id,
         duration_minutes=duration_minutes,
         distance_km=distance_km,
         tss_planned=tss_planned,
         description=description,
         structure=structure,
     )
+
 
 create_workout_tool = FunctionTool(create_workout)
 
@@ -721,68 +652,56 @@ async def create_note(
     description: Optional[str] = None,
 ) -> str:
     """Creates a calendar note in TrainingPeaks."""
+    node_input: dict[str, Any] = {"date": date, "title": title}
+    if description is not None:
+        node_input["description"] = description
+
     try:
-        tp_tool = await get_tp_tool("tp_create_note")
-        node_input: dict[str, Any] = {
-            "date": date,
-            "title": title,
-        }
-        if description is not None:
-            node_input["description"] = description
-
-        result = await tool_context.run_node(tp_tool, node_input=node_input)
-        data = parse_mcp_response(result)
-        if data is None:
-            if isinstance(result, dict):
-                data = result
-            elif isinstance(result, str):
-                try:
-                    data = json.loads(result)
-                except Exception:
-                    data = {"message": result}
-
-        if isinstance(data, dict):
-            if data.get("isError"):
-                return f"Error creating note: {data.get('message', 'Unknown error')}"
-            return json.dumps(data)
-        return "Success: Calendar note created."
+        result = await _run_tp_tool(tool_context, "tp_create_note", **node_input)
     except Exception as e:
-        print(f"Error in create_note tool: {e}")
+        logger.error("Failed to create calendar note on %s: %s", date, e)
         return f"Error: Failed to create calendar note: {e}"
+
+    data = coerce_mcp_payload(result)
+    if data.get("isError"):
+        return f"Error creating note: {data.get('message', 'Unknown error')}"
+    return json.dumps(data) if data else "Success: Calendar note created."
+
 
 create_note_tool = FunctionTool(create_note)
 
 
 # ==============================================================================
-# 3. Action Tools (History Persistence, Goal Re-onboarding, General Weather)
+# 4. Action Tools (History Persistence, Goal Re-onboarding, General Weather)
 # ==============================================================================
 async def save_checkin_report(tool_context: ToolContext, report_content: str) -> str:
     """Saves the generated check-in report to Firestore for historical tracking."""
     profile = tool_context.state.get("user_profile")
     if not profile:
         return "Error: User profile not found in state."
-        
+
     user_id = get_user_id(profile.get("firstname"), profile.get("lastname"))
     if not user_id or user_id == "_":
         return "Error: Name not found in profile."
-        
+
     today = datetime.now()
     iso_year, iso_week, _ = today.isocalendar()
     doc_id = f"{iso_week}-{iso_year}"
-    
+
     try:
-        report_data = {
+        await save_checkin_report_data(user_id, doc_id, {
             "week": iso_week,
             "year": iso_year,
             "created_at": today.isoformat(),
             "report_markdown": report_content,
-        }
-        await save_checkin_report_data(user_id, doc_id, report_data)
-        print(f"DEBUG: Saved check-in report '{doc_id}' to Firestore for {user_id}")
-        return f"Success: Your check-in report for Week {iso_week}, {iso_year} has been saved to your history."
+        })
     except Exception as e:
-        print(f"Error saving check-in report: {e}")
+        logger.error("Failed to save check-in report '%s' for %s: %s", doc_id, user_id, e)
         return f"Error: Failed to save the report to Firestore: {e}"
+
+    logger.info("Saved check-in report '%s' to Firestore for %s", doc_id, user_id)
+    return f"Success: Your check-in report for Week {iso_week}, {iso_year} has been saved to your history."
+
 
 save_checkin_report_tool = FunctionTool(save_checkin_report)
 
@@ -792,16 +711,17 @@ async def request_new_goal(tool_context: ToolContext) -> str:
     tool_context.state["reonboard_requested"] = True
     return "Re-onboarding initiated. Transitioning to onboarding agent to set up your new goal."
 
+
 request_new_goal_tool = FunctionTool(request_new_goal)
 
 get_weather_tool = FunctionTool(get_weather_for_dates)
 
+
 # ==============================================================================
-# 4. Public Tool & Module Exports
+# 5. Public Tool Exports
 # ==============================================================================
 __all__ = [
     "skill_toolset",
-    "CompactSkillToolset",
     "analyze_workout_tool",
     "fetch_checkin_data_tool",
     "fetch_schedule_audit_data_tool",
@@ -811,11 +731,4 @@ __all__ = [
     "save_checkin_report_tool",
     "request_new_goal_tool",
     "get_weather_tool",
-    # Internal service exports for backward-compatible imports in steps.py / tests
-    "get_user_id",
-    "get_tp_tool",
-    "geocode_location",
-    "parse_mcp_response",
-    "extract_health_metrics",
 ]
-

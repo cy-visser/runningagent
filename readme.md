@@ -22,7 +22,12 @@ When deployed, the agent integrates seamlessly with **Gemini Enterprise** to del
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+
+# The wheel path inside requirements.txt is relative to the deployment container
+# layout (/app/agents/running_coach), so install it explicitly first, then install
+# the remaining dependencies.
+pip install ./tp_mcp-2.0.0-py3-none-any.whl
+pip install $(grep -v 'tp_mcp.*\.whl' requirements.txt)
 ```
 
 ### 2. Configure Environment Variables
@@ -53,6 +58,24 @@ To open the interactive ADK Web UI and chat with the coach locally:
 adk web
 ```
 Open your browser and navigate to `http://127.0.0.1:8000`.
+
+---
+
+## Testing
+
+Unit tests cover the pure helper layer (`utils/` and the extracted `tools.py` helpers). They
+require no network access, GCP credentials, or TrainingPeaks cookie:
+
+```bash
+python -m pytest tests/ -q
+```
+
+The behavioural eval sets in `evals/` exercise the full agent and **do** require live
+credentials:
+
+```bash
+adk eval . evals/comprehensive_coach_evals.evalset.json --config_file_path evals/eval_config.json
+```
 
 ---
 

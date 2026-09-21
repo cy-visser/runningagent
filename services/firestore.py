@@ -3,6 +3,8 @@ import os
 from typing import Any, Optional
 from google.cloud import firestore
 
+from ..utils.profile_helpers import get_user_id
+
 _client: Optional[firestore.AsyncClient] = None
 
 
@@ -52,13 +54,6 @@ async def update_document(collection_path: str, doc_id: str, data: dict[str, Any
 # Domain-Specific Helper Functions (User Profile & Check-in Reports)
 # ==============================================================================
 
-def get_user_id(firstname: Optional[str], lastname: Optional[str] = "") -> str:
-    """Returns the canonical lowercase user_id for Firestore document keys."""
-    fn = str(firstname or "").strip().lower()
-    ln = str(lastname or "").strip().lower()
-    return f"{fn}_{ln}"
-
-
 async def get_user_profile(user_id: str) -> Optional[dict[str, Any]]:
     """Asynchronously reads the user profile document from the 'users' collection."""
     return await read_document("users", user_id)
@@ -79,11 +74,6 @@ async def save_checkin_report(user_id: str, doc_id: str, report_data: dict[str, 
     await write_document(f"users/{user_id}/checkins", doc_id, report_data)
 
 
-async def get_checkin_report(user_id: str, doc_id: str) -> Optional[dict[str, Any]]:
-    """Asynchronously reads a weekly check-in report from 'users/{user_id}/checkins/{doc_id}'."""
-    return await read_document(f"users/{user_id}/checkins", doc_id)
-
-
 __all__ = [
     "get_user_id",
     "read_document",
@@ -93,5 +83,5 @@ __all__ = [
     "save_user_profile",
     "update_user_profile",
     "save_checkin_report",
-    "get_checkin_report",
 ]
+

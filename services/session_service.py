@@ -4,11 +4,11 @@ import logging
 from typing import Any, Optional
 from dotenv import load_dotenv
 
+from ..utils.paths import DOTENV_PATH
+
 # Load .env file
-current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-dotenv_path = os.path.join(current_dir, ".env")
-if os.path.exists(dotenv_path):
-    load_dotenv(dotenv_path)
+if os.path.exists(DOTENV_PATH):
+    load_dotenv(DOTENV_PATH)
 
 from google.adk.cli.service_registry import get_service_registry
 from google.adk.integrations.firestore.firestore_session_service import FirestoreSessionService

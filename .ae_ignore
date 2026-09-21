@@ -17,3 +17,10 @@ __pycache__/*
 deploy_help.txt
 trainingpeaks-mcp
 trainingpeaks-mcp/*
+tests
+tests/*
+.pytest_cache
+.pytest_cache/*
+evals
+evals/*
+

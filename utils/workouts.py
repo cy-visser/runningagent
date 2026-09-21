@@ -2,46 +2,58 @@ from datetime import date
 from typing import Any, Optional
 from .date_helpers import parse_date
 
+
+def _is_positive(value: Any) -> bool:
+    """True when a raw MCP value represents a number greater than zero."""
+    if isinstance(value, bool) or value is None:
+        return False
+    try:
+        return float(value) > 0
+    except (ValueError, TypeError):
+        return False
+
+
+# Fields that, when positive, prove a session was actually executed.
+_ACTUALS_FIELDS = (
+    "distance_actual_km",
+    "tss_actual",
+    "duration_actual_min",
+    "duration_actual",
+)
+
+
 def is_workout_completed(workout: dict) -> bool:
     """Canonical check for whether a workout has been executed/completed."""
     if not workout:
         return False
-    return (
-        bool(workout.get("completed"))
-        or (workout.get("distance_actual_km") is not None and workout.get("distance_actual_km") > 0)
-        or (workout.get("tss_actual") is not None and workout.get("tss_actual") > 0)
-        or (workout.get("duration_actual_min") is not None and workout.get("duration_actual_min") > 0)
-        or (workout.get("duration_actual") is not None and workout.get("duration_actual") > 0)
-        or workout.get("type") == "completed"
-    )
+    if workout.get("completed") or workout.get("type") == "completed":
+        return True
+    return any(_is_positive(workout.get(field)) for field in _ACTUALS_FIELDS)
+
 
 def partition_workouts_by_date(
     workouts_list: list[dict],
     reference_date: date,
-    has_past: bool = True
-) -> tuple[Optional[list[dict]], Optional[list[dict]]]:
-    """Partitions a list of workouts into completed past workouts and upcoming future workouts."""
-    if not workouts_list:
-        return ([], None) if has_past else (None, None)
-        
-    past_list = []
-    future_list = []
-    
-    for w in workouts_list:
+) -> tuple[list[dict], Optional[list[dict]]]:
+    """Splits workouts into (completed/past, upcoming).
+
+    A session on the reference date counts as past only once it is completed.
+    The upcoming list is None when empty so callers can omit the section entirely.
+    """
+    past_list: list[dict] = []
+    future_list: list[dict] = []
+
+    for w in workouts_list or []:
         w_date = parse_date(w.get("date") or w.get("start_time"))
         if not w_date:
             continue
-            
-        completed = is_workout_completed(w)
-        if w_date < reference_date or (w_date == reference_date and completed):
+        if w_date < reference_date or (w_date == reference_date and is_workout_completed(w)):
             past_list.append(w)
         else:
             future_list.append(w)
-            
-    workouts_past = past_list if (past_list or has_past) else None
-    workouts_future = future_list if future_list else None
-    
-    return workouts_past, workouts_future
+
+    return past_list, (future_list or None)
+
 
 
 ALLOWED_DATA_CHANNELS = {

@@ -33,7 +33,7 @@ You are now equipped with the **Bike Workout Analysis** skill. Use this skill wh
      - Analyze structured work intervals versus recovery laps for average/max power stability, heart rate response, recovery lap HR drop, and pedal cadence consistency.
 
 3. **Deliver Bike Workout Summary**:
-   - Deliver in clean standard Markdown (use plain text for `Pw:Hr`, `NP`, `EF`, and standard text arrows `->` or `→`; no LaTeX math wrappers `$...$` or `$\rightarrow$`):
+   - Deliver in clean standard Markdown, following the coach's standard plain-text formatting rules (plain `Pw:Hr`, `NP`, `EF`; text arrows `->` or `→`; never LaTeX):
      1. **Ride Overview**: Identifying the analyzed cycling session (title, date/time, duration, distance, total work in kJ, indoor/outdoor conditions).
      2. **⚡ Power & Physiological Profile**: Objective evaluation of NP, Avg Power, IF, TSS, EF, and `Pw:Hr` aerobic drift status.
      3. **🧠 Recovery & Readiness Synthesis**: Connecting morning recovery indicators (Sleep, HRV, RHR) with ride execution, effort, and fatigue.
