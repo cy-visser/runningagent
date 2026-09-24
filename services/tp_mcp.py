@@ -4,6 +4,7 @@ import shutil
 from typing import Any
 
 from google.adk.tools import McpToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from mcp import StdioServerParameters
 
 from .secrets import inject_production_secrets
@@ -14,6 +15,8 @@ logger = logging.getLogger(__name__)
 tp_mcp_path = shutil.which("tp-mcp") or os.path.join(
     PACKAGE_DIR, "trainingpeaks-mcp", ".venv", "bin", "tp-mcp"
 )
+
+TP_MCP_CONNECT_TIMEOUT_S = float(os.environ.get("TP_MCP_CONNECT_TIMEOUT_S", "30"))
 
 _tp_toolset: Any = None
 
@@ -30,10 +33,13 @@ async def get_tp_tool(name: str) -> Any:
         tp_env = {"TP_AUTH_COOKIE": cookie_value} if cookie_value else None
 
         _tp_toolset = McpToolset(
-            connection_params=StdioServerParameters(
-                command=tp_mcp_path,
-                args=["serve"],
-                env=tp_env,
+            connection_params=StdioConnectionParams(
+                server_params=StdioServerParameters(
+                    command=tp_mcp_path,
+                    args=["serve"],
+                    env=tp_env,
+                ),
+                timeout=TP_MCP_CONNECT_TIMEOUT_S,
             )
         )
 

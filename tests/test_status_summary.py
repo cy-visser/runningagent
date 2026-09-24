@@ -93,10 +93,36 @@ class TestFormatFitnessPmc:
         assert "**50%**" in out
         assert "█████░░░░░" in out
 
-    def test_reports_the_fatigue_delta_consistently(self):
+    def test_drops_atl_and_tsb_rows_but_keeps_load_context(self):
         out = format_fitness_pmc(self._fitness())
-        # ATL 50 - CTL 40 = +10.0, and the TSB row must reuse the same figure.
-        assert out.count("+10.0") == 2
+        assert "ATL (Fatigue)" not in out
+        assert "TSB (Form)" not in out
+        assert "Load context (analysis only, not displayed): ATL `50.0` | TSB `-10.0`" in out
+
+    def test_projection_row_sits_directly_under_ctl(self):
+        projection = {
+            "goal_label": "Marathon",
+            "projection": {
+                "goal_label": "Marathon", "today_s": 13500, "race_day_s": 13230,
+                "goal_s": 12600, "gap_s": 630, "range_s": (13100, 13900),
+                "confidence": "Medium", "stale": False, "readiness": "🟢",
+                "drivers": [("Threshold anchor", "29' of threshold laps", "5:10/km (×0.91)")],
+            },
+        }
+        lines = format_fitness_pmc(self._fitness(), projection).splitlines()
+        ctl_idx = next(i for i, l in enumerate(lines) if "CTL (Fitness)" in l)
+        row = lines[ctl_idx + 1]
+        assert row.startswith("| **Projected Marathon** | Today `3:45:00` → Race day `3:40:30` | Goal: `3:30:00` (12.0w out)")
+        assert "Gap (race day): `+10:30`" in row
+        assert "Confidence: Medium" in row
+        # Drivers table follows the metrics table after a blank line.
+        assert lines[ctl_idx + 2] == ""
+        assert lines[ctl_idx + 3] == "**Projection drivers:**"
+        assert "| Threshold anchor | 29' of threshold laps | 5:10/km (×0.91) |" in lines
+
+    def test_projection_row_reports_missing_goal_distance(self):
+        out = format_fitness_pmc(self._fitness(), {"goal_label": None, "projection": None})
+        assert "No race distance in goal" in out
 
     def test_caps_progress_at_one_hundred_percent(self):
         out = format_fitness_pmc(self._fitness(ctl_end=120.0))

@@ -1,5 +1,6 @@
 from typing import Optional
 from .date_helpers import format_display_date
+from .race_readiness import format_drivers_table, format_projection_row
 
 PROGRESS_BAR_SEGMENTS = 10
 
@@ -87,8 +88,12 @@ def format_calendar_notes(notes_list: Optional[list[dict]]) -> str:
         notes_summary_list.append(f"- {date_display}: {n_title}{desc_str}")
     return "\n".join(notes_summary_list) if notes_summary_list else "No calendar notes."
 
-def format_fitness_pmc(fitness_data: Optional[dict]) -> str:
-    """Renders the PMC metrics progress table for LLM trajectory reasoning."""
+def format_fitness_pmc(fitness_data: Optional[dict], race_projection: Optional[dict] = None) -> str:
+    """Renders the CTL + goal-race projection table for LLM trajectory reasoning.
+
+    ATL/TSB are not displayed as table rows; they are kept as an analysis-only
+    line so recovery reasoning (TSB vs HRV/RHR) remains possible.
+    """
     if fitness_data is None:
         return ""
 
@@ -106,17 +111,24 @@ def format_fitness_pmc(fitness_data: Optional[dict]) -> str:
     filled = pct // PROGRESS_BAR_SEGMENTS
     bar = "█" * filled + "░" * (PROGRESS_BAR_SEGMENTS - filled)
 
-    fatigue_delta = round(atl_end - ctl_end, 1)
     ramp_str = f" | Req. Ramp: `+{req_ramp} pts/wk`" if req_ramp is not None else ""
     weeks_str = f" ({weeks_rem}w out)" if weeks_rem is not None else ""
     range_str = f" (Range: `{ref_range[0]}-{ref_range[1]}`)" if ref_range and len(ref_range) == 2 else ""
+
+    race_projection = race_projection or {}
+    projection_row = format_projection_row(
+        race_projection.get("projection"), race_projection.get("goal_label"), weeks_str
+    )
+    drivers = format_drivers_table(race_projection.get("projection"))
+    drivers_str = f"\n{drivers}\n" if drivers else ""
 
     return (
         "| Metric | Current Value | Target / Reference | Progress & Trajectory |\n"
         "|---|---|---|---|\n"
         f"| **CTL (Fitness)** | `{ctl_end}` | Target: `{target_peak}`{range_str}{weeks_str} | `[{bar}]` **{pct}%**{ramp_str} |\n"
-        f"| **ATL (Fatigue)** | `{atl_end}` | Baseline: `{ctl_end}` | Fatigue Delta: `{fatigue_delta:+.1f}` vs CTL |\n"
-        f"| **TSB (Form)** | `{tsb_end}` | Formula: `CTL - ATL` | Net Balance: `{tsb_end:+.1f}` (ATL Delta: `{fatigue_delta:+.1f}`) |\n"
+        f"{projection_row}"
+        f"{drivers_str}"
+        f"\nLoad context (analysis only, not displayed): ATL `{atl_end}` | TSB `{tsb_end:+.1f}`\n"
     )
 
 def compile_checkin_summary(
@@ -127,13 +139,20 @@ def compile_checkin_summary(
     metrics_data: Optional[dict],
     fitness_data: Optional[dict],
     notes_list: Optional[list[dict]],
-    weather_map: Optional[dict[str, str]] = None
+    weather_map: Optional[dict[str, str]] = None,
+    race_projection: Optional[dict] = None,
 ) -> str:
-    """Compiles a complete, unified Check-In Summary payload for the check-in-report skill."""
+    """Compiles a complete, unified Check-In Summary payload for the check-in-report skill.
+
+    race_projection: {"goal_label": str | None, "projection": dict | None} from race_readiness.project_race.
+    """
     parts = ["### Weekly Check-In Training & Physiological Report\n"]
 
     if fitness_data is not None:
-        parts.append(f"**1. Fitness PMC Trends & Goal Trajectory (Past {lookback_days} days):**\n{format_fitness_pmc(fitness_data)}\n")
+        parts.append(
+            f"**1. Fitness PMC Trends, Goal Race Projection & Trajectory (Past {lookback_days} days):**\n"
+            f"{format_fitness_pmc(fitness_data, race_projection)}\n"
+        )
 
     if metrics_data is not None:
         parts.append(f"**2. Autonomic & Physiological Recovery Trends (Past {lookback_days} days):**\n{format_recovery_metrics(metrics_data)}\n")

@@ -16,6 +16,41 @@ logger = logging.getLogger(__name__)
 DEFAULT_PEAK_RANGE = (55.0, 70.0)
 DEFAULT_PEAK_CTL = 65.0
 
+TEN_MILE_KEYWORDS = ("10 mile", "10-mile", "10mi", "10 mi ", "ten mile", "16k", "16.1k")
+
+# Goal race distances: (label, km, TrainingPeaks run PR type).
+GOAL_DISTANCES = {
+    "5k": ("5K", 5.0, "speed5K"),
+    "10k": ("10K", 10.0, "speed10K"),
+    "10mi": ("10 Mile", 16.0934, "speed10Mi"),
+    "half": ("Half Marathon", 21.0975, "speedHalfMarathon"),
+    "marathon": ("Marathon", 42.195, "speedMarathon"),
+}
+
+
+def _goal_distance_key(text: str) -> Optional[str]:
+    """Classifies a lowercase goal string into a distance key (order matters)."""
+    if any(k in text for k in ["ultra", "50k", "100k", "50m", "100m"]):
+        return "ultra"
+    # Half before marathon because 'half marathon' contains 'marathon'.
+    if any(k in text for k in ["half", "21k", "21.1k"]):
+        return "half"
+    if any(k in f"{text} " for k in TEN_MILE_KEYWORDS):
+        return "10mi"
+    if any(k in text for k in ["marathon", "42k", "42.2k"]):
+        return "marathon"
+    if "10k" in text:
+        return "10k"
+    if "5k" in text:
+        return "5k"
+    return None
+
+
+def resolve_goal_distance(goal_text: Optional[str]) -> Optional[tuple[str, float, str]]:
+    """Returns (label, distance_km, pr_type) for supported goal races, else None."""
+    key = _goal_distance_key(str(goal_text or "").lower().strip())
+    return GOAL_DISTANCES.get(key) if key else None
+
 
 def parse_target_time_minutes(goal_text: Optional[str]) -> Optional[int]:
     """Extracts target race finish time in total minutes from goal strings.
@@ -67,12 +102,13 @@ def resolve_target_peak_ctl(goal_name: Optional[str]) -> tuple[float, tuple[floa
     """
     text = str(goal_name or "").lower().strip()
     mins = parse_target_time_minutes(text)
+    key = _goal_distance_key(text)
     
-    if any(k in text for k in ["ultra", "50k", "100k", "50m", "100m"]):
+    if key == "ultra":
         return (90.0, (80.0, 110.0))
         
-    # Check half marathon BEFORE marathon because 'half marathon' contains 'marathon'
-    elif any(k in text for k in ["half", "21k", "21.1k"]):
+    # Half marathon is classified BEFORE marathon because 'half marathon' contains 'marathon'
+    elif key == "half":
         if mins is not None:
             if mins <= 90:       # <= 1:30 (Competitive)
                 return (75.0, (70.0, 85.0))
@@ -84,7 +120,17 @@ def resolve_target_peak_ctl(goal_name: Optional[str]) -> tuple[float, tuple[floa
                 return (48.0, (42.0, 55.0))
         return (65.0, (55.0, 75.0))
         
-    elif any(k in text for k in ["marathon", "42k", "42.2k"]):
+    elif key == "10mi":
+        if mins is not None:
+            if mins <= 65:       # <= 1:05 (Competitive)
+                return (70.0, (62.0, 78.0))
+            elif mins <= 80:     # 1:06 - 1:20 (Intermediate)
+                return (60.0, (54.0, 68.0))
+            else:                # > 1:20 (Novice / Finish)
+                return (50.0, (44.0, 56.0))
+        return (60.0, (50.0, 70.0))
+        
+    elif key == "marathon":
         if mins is not None:
             if mins <= 180:      # <= 3:00 / 2:45 (Elite / BQ)
                 return (95.0, (85.0, 105.0))
@@ -96,7 +142,7 @@ def resolve_target_peak_ctl(goal_name: Optional[str]) -> tuple[float, tuple[floa
                 return (55.0, (50.0, 65.0))
         return (75.0, (65.0, 85.0))
         
-    elif "10k" in text:
+    elif key == "10k":
         if mins is not None:
             if mins <= 40:
                 return (65.0, (60.0, 72.0))
@@ -106,7 +152,7 @@ def resolve_target_peak_ctl(goal_name: Optional[str]) -> tuple[float, tuple[floa
                 return (45.0, (40.0, 50.0))
         return (55.0, (45.0, 60.0))
         
-    elif "5k" in text:
+    elif key == "5k":
         if mins is not None:
             if mins <= 20:
                 return (60.0, (55.0, 65.0))

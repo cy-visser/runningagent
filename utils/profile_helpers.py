@@ -1,5 +1,7 @@
 from typing import Any, Optional
 
+from .date_helpers import get_today_str
+
 
 def get_user_id(firstname: Optional[str], lastname: Optional[str] = "") -> str:
     """Returns the canonical lowercase user_id for Firestore document keys."""
@@ -36,14 +38,22 @@ def format_profile_summary(profile: dict) -> str:
     )
 
 
+# ADK user-scoped state (shared across all sessions of the signed-in ADK user):
+# remembers which Firestore runner profile belongs to this user.
+RUNNER_ID_STATE_KEY = "user:runner_id"
+
+
 def sync_profile_to_state(ctx: Any, profile: dict) -> None:
-    """Atomically sets user_profile, user_id, and its slim summary in the ADK session state."""
+    """Sets user_profile, user_id, its slim summary and the user-scoped runner id in state."""
     ctx.state["user_profile"] = profile
     ctx.state["user_profile_summary"] = format_profile_summary(profile)
     fn = profile.get("firstname")
     ln = profile.get("lastname")
     if fn or ln:
-        ctx.state["user_id"] = get_user_id(fn, ln)
+        user_id = get_user_id(fn, ln)
+        ctx.state["user_id"] = user_id
+        if ctx.state.get(RUNNER_ID_STATE_KEY) != user_id:
+            ctx.state[RUNNER_ID_STATE_KEY] = user_id
 
 
 # Fields sourced from the runner's onboarding answers, falling back to data
@@ -80,6 +90,9 @@ def merge_profile_data(
         "longitude": lon,
         "training_goal": answers.get("training_goal"),
         "timeline": answers.get("timeline"),
+        # Onboarding only runs for new profiles or a new goal, so this marks the
+        # start of the current training block (used by the race projection).
+        "goal_set_date": get_today_str(),
         "sleep_hours_2w_avg": sleep_avg,
     }
     for field in _MERGED_FIELDS:

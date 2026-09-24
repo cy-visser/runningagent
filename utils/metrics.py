@@ -2,6 +2,8 @@ import json
 import logging
 from typing import Any, Optional
 
+from .date_helpers import parse_date
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,3 +81,30 @@ def extract_health_metrics(metrics_raw: Any) -> dict[str, list[float]]:
         "hrv": buckets[METRIC_TYPE_HRV],
         "rhr": buckets[METRIC_TYPE_RHR],
     }
+
+
+def extract_health_metrics_dated(metrics_raw: Any) -> dict[str, list[tuple[Any, float]]]:
+    """Like extract_health_metrics, but keeps the date: {'sleep'|'hrv'|'rhr': [(date, value)]}."""
+    metrics_data = coerce_mcp_payload(metrics_raw) if metrics_raw else {}
+    metrics_list = metrics_data.get("metrics", [])
+    keys = {METRIC_TYPE_SLEEP: "sleep", METRIC_TYPE_HRV: "hrv", METRIC_TYPE_RHR: "rhr"}
+    out: dict[str, list[tuple[Any, float]]] = {"sleep": [], "hrv": [], "rhr": []}
+    if not isinstance(metrics_list, list):
+        return out
+    for m in metrics_list:
+        if not isinstance(m, dict):
+            continue
+        day = parse_date(m.get("timeStamp"))
+        for detail in m.get("details", []) or []:
+            key = keys.get(detail.get("type"))
+            val = detail.get("value")
+            if key is None or val is None:
+                continue
+            try:
+                val = float(val)
+            except (TypeError, ValueError):
+                continue
+            d = day or parse_date(detail.get("time"))
+            if d is not None:
+                out[key].append((d, val))
+    return out

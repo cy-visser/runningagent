@@ -10,14 +10,23 @@ from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool, ToolContext
 from google.adk.tools.skill_toolset import SkillToolset
 
-from .services.firestore import get_user_id, save_checkin_report as save_checkin_report_data
+from .services.firestore import (
+    get_cached_workout_analysis,
+    get_user_id,
+    save_checkin_report as save_checkin_report_data,
+    save_workout_analysis,
+)
 from .services.tp_mcp import get_tp_tool
 from .services.weather import get_weather_conditions, get_weather_for_dates
 from .utils import (
+    ANALYSIS_SCHEMA_VERSION,
+    PROJECTION_WINDOW_DAYS,
     coerce_mcp_payload,
     compile_checkin_summary,
     evaluate_goal_trajectory,
     extract_health_metrics,
+    extract_health_metrics_dated,
+    extract_thresholds,
     format_display_date,
     format_nutrition_context_summary,
     format_recovery_metrics,
@@ -28,8 +37,15 @@ from .utils import (
     iso_week_key,
     parse_date,
     parse_mcp_response,
+    parse_target_time_minutes,
     partition_workouts_by_date,
+    project_race,
+    resolve_goal_distance,
+    select_for_analysis,
+    summarize_analysis,
 )
+from .utils import completed_runs as completed_goal_runs
+from .utils.race_readiness import is_complete_summary
 from .utils.paths import SKILLS_DIR
 
 logger = logging.getLogger(__name__)
@@ -247,15 +263,33 @@ analyze_workout_tool = FunctionTool(analyze_workout)
 
 
 # Check-In Report (for check-in-report skill) ---
-def _summarize_fitness(fitness_raw: Any, profile: dict, today_date: Any) -> Optional[dict]:
-    """Extracts PMC start/end values and the resulting goal trajectory."""
+# PMC history window (CTL-at-session lookup for the detraining adjustment).
+PROJECTION_LOOKBACK_DAYS = 90
+# Health baseline window for the readiness signal.
+HEALTH_LOOKBACK_DAYS = 28
+
+
+def _summarize_fitness(
+    fitness_raw: Any, profile: dict, today_date: Any, window_start: Any = None
+) -> Optional[dict]:
+    """Extracts PMC start/end values and the resulting goal trajectory.
+
+    When window_start is given, start/end bounds and daily_list cover only the
+    check-in window; the full PMC series is kept under 'history'.
+    """
     if not fitness_raw:
         return None
 
     fit_parsed = parse_mcp_response(fitness_raw) or {}
-    fitness_list = fit_parsed.get("daily_data", [])
-    if not isinstance(fitness_list, list):
-        fitness_list = []
+    history = fit_parsed.get("daily_data", [])
+    if not isinstance(history, list):
+        history = []
+
+    window_date = parse_date(window_start)
+    fitness_list = [
+        d for d in history
+        if window_date is None or (parse_date(d.get("date")) or window_date) >= window_date
+    ]
 
     bounds = {f"{m}_{edge}": 0.0 for m in ("ctl", "atl", "tsb") for edge in ("start", "end")}
     if fitness_list:
@@ -267,14 +301,117 @@ def _summarize_fitness(fitness_raw: Any, profile: dict, today_date: Any) -> Opti
     return {
         **bounds,
         "daily_list": fitness_list,
+        "history": history,
         "trajectory_info": evaluate_goal_trajectory(profile, bounds["ctl_end"], today_date),
     }
+
+
+async def _cache_read(user_id: Optional[str], workout_id: str) -> Optional[dict]:
+    """Returns a valid cached workout summary, or None (cache miss / unavailable)."""
+    if not user_id or not workout_id:
+        return None
+    try:
+        cached = await get_cached_workout_analysis(user_id, workout_id)
+    except Exception as e:  # Firestore unavailable (e.g. local runs) -> just analyse
+        logger.info("Workout analysis cache read failed for %s: %s", workout_id, e)
+        return None
+    if (isinstance(cached, dict) and cached.get("version") == ANALYSIS_SCHEMA_VERSION
+            and is_complete_summary(cached)):
+        return cached
+    return None
+
+
+async def _cache_write(user_id: Optional[str], workout_id: str, summary: dict) -> None:
+    if not user_id or not workout_id:
+        return
+    try:
+        await save_workout_analysis(user_id, workout_id, summary)
+    except Exception as e:
+        logger.info("Workout analysis cache write failed for %s: %s", workout_id, e)
+
+
+async def _load_workout_summaries(
+    tool_context: ToolContext,
+    workouts: list[dict],
+    user_id: Optional[str],
+    refresh: bool = False,
+) -> list[dict]:
+    """Cache-first workout summaries: reads Firestore, analyses only misses, saves new ones.
+
+    Completed workouts don't change, so each tp_analyze_workout call is made once
+    per workout; `refresh` bypasses the cache (e.g. after a schema/lap fix in TP).
+    """
+    ids = [str(w.get("id") or "") for w in workouts]
+    cached = (
+        [None] * len(workouts) if refresh
+        else await asyncio.gather(*(_cache_read(user_id, wid) for wid in ids))
+    )
+    misses = [i for i, c in enumerate(cached) if c is None and ids[i]]
+    raws = await asyncio.gather(
+        *(_run_tp_tool(tool_context, "tp_analyze_workout", workout_id=ids[i]) for i in misses),
+        return_exceptions=True,
+    )
+    summaries: list[Optional[dict]] = list(cached)
+    writes = []
+    for i, raw in zip(misses, raws):
+        raw = _result_or_none(raw, f"analysis {ids[i]}")
+        summary = summarize_analysis(raw, workouts[i]) if raw else None
+        summaries[i] = summary
+        if is_complete_summary(summary):
+            writes.append(_cache_write(user_id, ids[i], summary))
+    if writes:
+        await asyncio.gather(*writes)
+    logger.info(
+        "Workout summaries: %d cached, %d analysed", len(workouts) - len(misses), len(misses)
+    )
+    return [s for s in summaries if s]
+
+
+async def _build_goal_projection(
+    tool_context: ToolContext,
+    goal: Optional[tuple[str, float, str]],
+    profile: dict,
+    all_workouts: list[dict],
+    fitness_data: Optional[dict],
+    settings_raw: Any,
+    dated_metrics: Optional[dict],
+    today_date: Any,
+    refresh_cache: bool = False,
+) -> dict:
+    """Builds the evidence-based goal-race projection payload for compile_checkin_summary."""
+    if not goal:
+        return {"goal_label": None, "projection": None}
+    label = goal[0]
+    fitness_data = fitness_data or {}
+    runs = completed_goal_runs(
+        all_workouts, today_date - timedelta(days=PROJECTION_WINDOW_DAYS), today_date
+    )
+    user_id = get_user_id(profile.get("firstname"), profile.get("lastname"))
+    user_id = user_id if user_id and user_id != "_" else None
+    summaries = await _load_workout_summaries(
+        tool_context, select_for_analysis(runs, label), user_id, refresh=refresh_cache
+    )
+    projection = project_race(
+        goal_label=label,
+        goal_minutes=parse_target_time_minutes(profile.get("training_goal")),
+        runs=runs,
+        summaries=summaries,
+        thresholds=extract_thresholds(settings_raw),
+        daily_pmc=fitness_data.get("history"),
+        fitness=fitness_data,
+        trajectory_info=fitness_data.get("trajectory_info"),
+        dated_metrics=dated_metrics,
+        today=today_date,
+        block_start=profile.get("goal_set_date"),
+    )
+    return {"goal_label": label, "projection": projection}
 
 
 async def fetch_checkin_data(
     tool_context: ToolContext,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    refresh_analysis_cache: bool = False,
 ) -> str:
     """Fetches all data needed for a comprehensive weekly check-in report.
 
@@ -282,8 +419,14 @@ async def fetch_checkin_data(
     - 14-day past completed workouts with run-time weather
     - 7-day future scheduled workouts
     - 14-day recovery metrics (Sleep, HRV, RHR)
-    - 14-day PMC fitness trends (CTL, ATL, TSB, visual table, goal trajectory)
+    - 14-day PMC fitness trends (CTL table, ATL/TSB load context, goal trajectory)
+    - Projected goal-race time (today and race day) for the Firestore training_goal,
+      from threshold laps, goal-pace segments, HR efficiency, durability, load
+      and health readiness, with a 'Projection drivers' evidence table
     - Calendar notes (work stress, travel, illness)
+
+    Args:
+        refresh_analysis_cache: Re-analyse key workouts instead of using cached summaries.
     """
     profile = tool_context.state.get("user_profile")
     if not profile:
@@ -292,34 +435,60 @@ async def fetch_checkin_data(
     today_date = get_today_date()
     q_start = parse_date(start_date) or (today_date - timedelta(days=14))
     q_end = parse_date(end_date) or (today_date + timedelta(days=7))
+    goal = resolve_goal_distance(profile.get("training_goal"))
 
     start_str = q_start.strftime(ISO_FMT)
     end_str = q_end.strftime(ISO_FMT)
     recovery_end_str = min(q_end, today_date).strftime(ISO_FMT)
+    workouts_start = min(q_start, today_date - timedelta(days=PROJECTION_WINDOW_DAYS))
+    metrics_start = min(q_start, today_date - timedelta(days=HEALTH_LOOKBACK_DAYS))
+    history_start_str = min(
+        q_start, today_date - timedelta(days=PROJECTION_LOOKBACK_DAYS)
+    ).strftime(ISO_FMT)
 
-    workouts_raw, notes_raw, metrics_raw, fitness_raw = [
-        _result_or_none(r, label)
-        for r, label in zip(
-            await asyncio.gather(
-                _run_tp_tool(tool_context, "tp_get_workouts", start_date=start_str, end_date=end_str),
-                _run_tp_tool(tool_context, "tp_list_notes", start_date=start_str, end_date=end_str),
-                _run_tp_tool(tool_context, "tp_get_metrics", start_date=start_str, end_date=recovery_end_str),
-                _run_tp_tool(tool_context, "tp_get_fitness", start_date=start_str, end_date=recovery_end_str),
-                return_exceptions=True,
-            ),
-            ("workouts", "calendar notes", "recovery metrics", "fitness PMC"),
-        )
+    # Phase 1: gather calendar, notes, metrics, PMC and athlete thresholds.
+    fetches = {
+        "workouts": _run_tp_tool(
+            tool_context, "tp_get_workouts",
+            start_date=workouts_start.strftime(ISO_FMT), end_date=end_str,
+        ),
+        "calendar notes": _run_tp_tool(tool_context, "tp_list_notes", start_date=start_str, end_date=end_str),
+        "recovery metrics": _run_tp_tool(
+            tool_context, "tp_get_metrics",
+            start_date=metrics_start.strftime(ISO_FMT), end_date=recovery_end_str,
+        ),
+        "fitness PMC": _run_tp_tool(
+            tool_context, "tp_get_fitness", start_date=history_start_str, end_date=recovery_end_str
+        ),
+    }
+    if goal:
+        fetches["athlete settings"] = _run_tp_tool(tool_context, "tp_get_athlete_settings")
+    results = await asyncio.gather(*fetches.values(), return_exceptions=True)
+    raw = {label: _result_or_none(r, label) for label, r in zip(fetches, results)}
+
+    workouts_data = coerce_mcp_payload(raw["workouts"]) if raw["workouts"] else {}
+    all_workouts = workouts_data.get("workouts", []) or []
+    in_window = [
+        w for w in all_workouts
+        if (parse_date(w.get("date") or w.get("start_time")) or q_start) >= q_start
     ]
+    workouts_past, workouts_future = partition_workouts_by_date(in_window, today_date)
 
-    workouts_data = parse_mcp_response(workouts_raw) or {} if workouts_raw else {}
-    workouts_past, workouts_future = partition_workouts_by_date(
-        workouts_data.get("workouts", []), today_date
+    dated_metrics = extract_health_metrics_dated(raw["recovery metrics"]) if raw["recovery metrics"] else None
+    metrics_data = (
+        {k: [v for d, v in vals if d >= q_start] for k, vals in dated_metrics.items()}
+        if dated_metrics else None
     )
+    notes_raw = raw["calendar notes"]
+    notes_list = (coerce_mcp_payload(notes_raw).get("notes", []) or []) if notes_raw else None
+    fitness_data = _summarize_fitness(raw["fitness PMC"], profile, today_date, window_start=q_start)
 
-    metrics_data = extract_health_metrics(metrics_raw) if metrics_raw else None
-    notes_parsed = parse_mcp_response(notes_raw) or {} if notes_raw else {}
-    notes_list = notes_parsed.get("notes", []) if notes_raw else None
-    fitness_data = _summarize_fitness(fitness_raw, profile, today_date)
+    # Phase 2: analyse the key sessions (cache-first) and project the goal race.
+    race_projection = await _build_goal_projection(
+        tool_context, goal, profile, all_workouts, fitness_data,
+        raw.get("athlete settings"), dated_metrics, today_date,
+        refresh_cache=refresh_analysis_cache,
+    )
 
     # Attach the real recorded conditions for each completed run.
     run_timestamps = [
@@ -338,6 +507,7 @@ async def fetch_checkin_data(
         fitness_data=fitness_data,
         notes_list=notes_list,
         weather_map=weather_map,
+        race_projection=race_projection,
     )
 
 

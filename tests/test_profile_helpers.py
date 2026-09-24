@@ -89,6 +89,12 @@ class TestMergeProfileData:
         assert profile["training_goal"] == "Sub-3:30 Marathon"
         assert profile["timeline"] == "2026-11-01"
 
+    def test_stamps_goal_set_date_as_block_start(self):
+        from running_coach.utils.date_helpers import get_today_str
+
+        profile = merge_profile_data(answers={"training_goal": "Sub-20 5K"}, temp_data={})
+        assert profile["goal_set_date"] == get_today_str()
+
 
 class TestSyncProfileToState:
     def test_populates_profile_summary_and_user_id(self):

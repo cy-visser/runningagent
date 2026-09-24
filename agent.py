@@ -11,9 +11,14 @@ from google.adk.workflow import node
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from .services.firestore import get_user_profile
 from .services.tp_mcp import get_tp_tool
-from .steps import check_profile_step, check_timeline_expiration, create_profile_step
+from .steps import (
+    PROFILE_TP_UNAVAILABLE,
+    check_profile_step,
+    check_timeline_expiration,
+    create_profile_step,
+    load_profile_by_id,
+)
 from .tools import (
     analyze_workout_tool,
     create_note_tool,
@@ -26,7 +31,7 @@ from .tools import (
     save_checkin_report_tool,
     skill_toolset,
 )
-from .utils import sync_profile_to_state
+from .utils import RUNNER_ID_STATE_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +261,51 @@ coaching_agent = Agent(
 # ==============================================================================
 ROUTE_ONBOARDING = "ONBOARDING"
 ROUTE_COACHING = "COACHING"
+ROUTE_UNAVAILABLE = "TP_UNAVAILABLE"
+
+TP_UNAVAILABLE_MESSAGE = (
+    "I couldn't reach TrainingPeaks to identify you just now, so I've paused rather than "
+    "starting onboarding. Please send your message again in a moment."
+)
+
+
+async def _resolve_profile(ctx: Context) -> tuple[Optional[dict], bool]:
+    """Resolves the runner's profile. Returns (profile, unavailable).
+
+    Order: session state -> user-scoped `user:runner_id` (Firestore only, no
+    TrainingPeaks call) -> TrainingPeaks identity lookup (first-ever session).
+    `unavailable=True` means the runner couldn't be identified and must NOT be
+    sent to onboarding.
+    """
+    profile = ctx.state.get("user_profile")
+    if profile:
+        return profile, False
+
+    # Known runner: `user:` state is shared by all sessions of this ADK user_id.
+    runner_id = ctx.state.get(RUNNER_ID_STATE_KEY)
+    if runner_id:
+        try:
+            profile = await load_profile_by_id(ctx, runner_id)
+        except Exception:
+            logger.exception("Failed to load Firestore profile for %s", runner_id)
+            return None, True
+        if profile:
+            return profile, False
+        logger.warning("Stale %s=%r; falling back to TrainingPeaks.", RUNNER_ID_STATE_KEY, runner_id)
+        ctx.state[RUNNER_ID_STATE_KEY] = None
+
+    # First-ever session for this ADK user: identify via TrainingPeaks.
+    try:
+        tp_get_profile_tool = await get_tp_tool("tp_get_profile")
+        tp_profile = await run_node_with_retry(ctx, tp_get_profile_tool)
+    except Exception:
+        logger.exception("Failed to fetch the TrainingPeaks profile")
+        return None, True
+
+    status = await check_profile_step(ctx, tp_profile)
+    if status == PROFILE_TP_UNAVAILABLE:
+        return None, True
+    return ctx.state.get("user_profile"), False
 
 
 @node(name="profile_router", rerun_on_resume=True)
@@ -264,30 +314,10 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
     # Set dynamic date in state so it is resolved correctly in the coaching instructions
     ctx.state["current_date_str"] = datetime.now().strftime("%Y-%m-%d (%A)")
 
-    profile = ctx.state.get("user_profile")
-
-    # Firestore lookup if user_id is in state
-    if not profile:
-        user_id = ctx.state.get("user_id")
-        if user_id:
-            try:
-                profile = await get_user_profile(user_id)
-                if profile:
-                    sync_profile_to_state(ctx, profile)
-            except Exception as e:
-                logger.error("Failed to load profile from Firestore for %s: %s", user_id, e)
-
-    # Only call tp_get_profile if state is completely empty (first run)
-    if not profile:
-        try:
-            tp_get_profile_tool = await get_tp_tool("tp_get_profile")
-            tp_profile = await run_node_with_retry(ctx, tp_get_profile_tool)
-        except Exception as e:
-            logger.error("Failed to fetch the TrainingPeaks profile: %s", e)
-            tp_profile = None
-
-        await check_profile_step(ctx, tp_profile)
-        profile = ctx.state.get("user_profile")
+    profile, unavailable = await _resolve_profile(ctx)
+    if unavailable:
+        ctx.route = ROUTE_UNAVAILABLE
+        return
 
     if not profile or ctx.state.get("reonboard_requested"):
         ctx.route = ROUTE_ONBOARDING
@@ -300,6 +330,12 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
     ctx.route = ROUTE_COACHING
 
 
+@node(name="tp_unavailable_node", rerun_on_resume=True)
+async def tp_unavailable_node(ctx: Context, node_input: Any = None) -> AsyncGenerator[Any, None]:
+    """Tells the runner we couldn't identify them, instead of wrongly onboarding."""
+    yield Event(author="model", message=TP_UNAVAILABLE_MESSAGE)
+
+
 @node(name="onboarding_node", rerun_on_resume=True)
 async def onboarding_node(ctx: Context, node_input: Any = None) -> AsyncGenerator[Any, None]:
     """Runs the onboarding agent, persists the runner profile to Firestore, and emits confirmation."""
@@ -310,7 +346,12 @@ async def onboarding_node(ctx: Context, node_input: Any = None) -> AsyncGenerato
         return
 
     ctx.state["onboarding_answers"] = onboarding_answers
-    await create_profile_step(ctx)
+    if not await create_profile_step(ctx):
+        yield Event(
+            author="model",
+            message="I couldn't save your profile because I don't know your name yet. Please try again in a moment.",
+        )
+        return
     ctx.state["reonboard_requested"] = None
     ctx.state["expired_timeline_date"] = None
 
@@ -339,6 +380,7 @@ root_agent = Workflow(
             {
                 ROUTE_ONBOARDING: onboarding_node,
                 ROUTE_COACHING: coaching_node,
+                ROUTE_UNAVAILABLE: tp_unavailable_node,
             },
         ),
     ],

@@ -74,6 +74,16 @@ async def save_checkin_report(user_id: str, doc_id: str, report_data: dict[str, 
     await write_document(f"users/{user_id}/checkins", doc_id, report_data)
 
 
+async def get_cached_workout_analysis(user_id: str, workout_id: str) -> Optional[dict[str, Any]]:
+    """Reads a cached workout-analysis summary from 'users/{user_id}/workout_analyses/{workout_id}'."""
+    return await read_document(f"users/{user_id}/workout_analyses", str(workout_id))
+
+
+async def save_workout_analysis(user_id: str, workout_id: str, summary: dict[str, Any]) -> None:
+    """Persists a workout-analysis summary to 'users/{user_id}/workout_analyses/{workout_id}'."""
+    await write_document(f"users/{user_id}/workout_analyses", str(workout_id), summary)
+
+
 __all__ = [
     "get_user_id",
     "read_document",
@@ -83,5 +93,7 @@ __all__ = [
     "save_user_profile",
     "update_user_profile",
     "save_checkin_report",
+    "get_cached_workout_analysis",
+    "save_workout_analysis",
 ]
 

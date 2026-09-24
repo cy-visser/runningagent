@@ -34,6 +34,5 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
    - Deliver an objective, data-backed assessment in clean standard Markdown:
      - Plain-Text Metrics & Progressions: Follow the coach's standard plain-text formatting rules — plain metric names (`Pa:Hr`, `NGP`, `HR 155 bpm`, `4:30/km`) and text arrows (`->` or `→`), never LaTeX.
      1. **Session Overview**: Date, sport, title, distance, duration, and environmental conditions.
-     2. **🎯 Execution & Physiological Assessment**: Honest, data-backed critique of what was executed well vs. breakdowns (e.g. pacing control, Zone 1/2 discipline, Pa:Hr drift context, terrain management, and recovery state).
-     3. **⏱️ Lap & Interval Breakdown**: Lap-by-lap breakdown of work vs. recovery splits and heart rate dynamics for structured sessions (or when pacing/drift warrants split inspection).
-     4. **🚀 Key Takeaways & Adjustments**: Specific, actionable coaching directives for upcoming workouts and recovery.
+     2. **🎯 Execution & Physiological Assessment**: Honest, data-backed critique of what was executed well vs. breakdowns (e.g. pacing control, Zone 1/2 discipline, Pa:Hr drift context, terrain management, and recovery state). For structured sessions, summarize interval/lap execution in prose here.
+     3. **🚀 Key Takeaways & Adjustments**: Specific, actionable coaching directives for upcoming workouts and recovery.

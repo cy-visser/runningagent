@@ -1,8 +1,11 @@
+import asyncio
 from datetime import date
 
 import pytest
 
+from running_coach import tools
 from running_coach.tools import (
+    _build_goal_projection,
     _location_args,
     _new_week_bucket,
     _result_or_none,
@@ -10,6 +13,7 @@ from running_coach.tools import (
     _tally_workout,
 )
 from running_coach.utils.metrics import parse_mcp_response  # noqa: F401  (import sanity)
+from running_coach.utils.race_readiness import ANALYSIS_SCHEMA_VERSION
 from tests.test_metrics import mcp_envelope
 
 
@@ -75,6 +79,101 @@ class TestSummarizeFitness:
 
     def test_missing_payload_returns_none(self):
         assert _summarize_fitness(None, {}, date(2026, 9, 15)) is None
+
+    def test_window_start_limits_bounds_but_keeps_history(self):
+        payload = mcp_envelope({"daily_data": [
+            {"date": "2026-07-01", "ctl": 70.0},
+            {"date": "2026-09-01", "ctl": 40.0},
+            {"date": "2026-09-15", "ctl": 50.0},
+        ]})
+        result = _summarize_fitness(payload, {}, date(2026, 9, 15), window_start=date(2026, 9, 1))
+        assert (result["ctl_start"], result["ctl_end"]) == (40.0, 50.0)
+        assert len(result["daily_list"]) == 2
+        assert len(result["history"]) == 3
+
+
+class TestBuildGoalProjection:
+    def test_no_goal_distance_yields_empty_projection(self):
+        out = asyncio.run(_build_goal_projection(None, None, {}, [], None, None, None, date(2026, 9, 24)))
+        assert out == {"goal_label": None, "projection": None}
+
+
+def _analysis(laps):
+    return mcp_envelope({"totals": {"Pa:Hr": {"value": 4.0, "unit": "%"}}, "lapData": laps})
+
+
+class TestLoadWorkoutSummaries:
+    WORKOUTS = [
+        {"id": 1, "date": "2026-09-10", "title": "Threshold 2x15", "distance_actual_km": 3.1},
+        {"id": 2, "date": "2026-09-20", "title": "28km long", "distance_actual_km": 3.0},
+    ]
+    LAP = {"TotalTimerTime": 900, "TotalDistance": 3.1, "AveragePace": 290, "AverageHeartRate": 160}
+    CACHED_LAPS = [{"distance_km": 3.1, "duration_s": 900, "speed_ms": 3.4, "hr": 160}]
+
+    def _patch(self, monkeypatch, cache, analysed, fail_cache=False):
+        async def fake_read(user_id, wid):
+            if fail_cache:
+                raise RuntimeError("firestore down")
+            return cache.get(wid)
+
+        async def fake_write(user_id, wid, summary):
+            if fail_cache:
+                raise RuntimeError("firestore down")
+            cache[wid] = summary
+
+        async def fake_tp(ctx, name, **kw):
+            analysed.append(kw["workout_id"])
+            return _analysis([self.LAP])
+
+        monkeypatch.setattr(tools, "get_cached_workout_analysis", fake_read)
+        monkeypatch.setattr(tools, "save_workout_analysis", fake_write)
+        monkeypatch.setattr(tools, "_run_tp_tool", fake_tp)
+
+    def test_analyses_misses_and_populates_cache(self, monkeypatch):
+        cache, analysed = {}, []
+        self._patch(monkeypatch, cache, analysed)
+        out = asyncio.run(tools._load_workout_summaries(None, self.WORKOUTS, "user_x"))
+        assert analysed == ["1", "2"]
+        assert set(cache) == {"1", "2"}
+        assert len(out) == 2 and out[0]["laps"][0]["hr"] == 160
+
+    def test_uses_cache_hits_and_ignores_old_schema(self, monkeypatch):
+        cache = {
+            "1": {"version": ANALYSIS_SCHEMA_VERSION, "workout_id": "1", "distance_km": 3.1,
+                  "laps": self.CACHED_LAPS, "date": "2026-09-10"},
+            "2": {"version": ANALYSIS_SCHEMA_VERSION - 1, "workout_id": "2", "laps": self.CACHED_LAPS},
+        }
+        analysed = []
+        self._patch(monkeypatch, cache, analysed)
+        out = asyncio.run(tools._load_workout_summaries(None, self.WORKOUTS, "user_x"))
+        assert analysed == ["2"]
+        assert cache["2"]["version"] == ANALYSIS_SCHEMA_VERSION
+        assert len(out) == 2
+
+    def test_partially_synced_workout_is_used_but_not_cached(self, monkeypatch):
+        cache, analysed = {}, []
+        self._patch(monkeypatch, cache, analysed)
+        partial = [{"id": 9, "date": "2026-09-24", "title": "Canova 8x1km", "distance_actual_km": 12.9}]
+        out = asyncio.run(tools._load_workout_summaries(None, partial, "user_x"))
+        assert len(out) == 1 and cache == {}
+        # A stale partial entry already in the cache is treated as a miss.
+        cache["9"] = out[0]
+        asyncio.run(tools._load_workout_summaries(None, partial, "user_x"))
+        assert analysed == ["9", "9"]
+
+    def test_refresh_bypasses_cache(self, monkeypatch):
+        cache = {"1": {"version": ANALYSIS_SCHEMA_VERSION, "laps": self.CACHED_LAPS}}
+        analysed = []
+        self._patch(monkeypatch, cache, analysed)
+        asyncio.run(tools._load_workout_summaries(None, self.WORKOUTS[:1], "user_x", refresh=True))
+        assert analysed == ["1"]
+
+    def test_firestore_failure_falls_back_to_analysis(self, monkeypatch):
+        analysed = []
+        self._patch(monkeypatch, {}, analysed, fail_cache=True)
+        out = asyncio.run(tools._load_workout_summaries(None, self.WORKOUTS, "user_x"))
+        assert analysed == ["1", "2"]
+        assert len(out) == 2
 
 
 class TestTallyWorkout:

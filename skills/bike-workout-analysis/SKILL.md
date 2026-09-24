@@ -35,7 +35,6 @@ You are now equipped with the **Bike Workout Analysis** skill. Use this skill wh
 3. **Deliver Bike Workout Summary**:
    - Deliver in clean standard Markdown, following the coach's standard plain-text formatting rules (plain `Pw:Hr`, `NP`, `EF`; text arrows `->` or `→`; never LaTeX):
      1. **Ride Overview**: Identifying the analyzed cycling session (title, date/time, duration, distance, total work in kJ, indoor/outdoor conditions).
-     2. **⚡ Power & Physiological Profile**: Objective evaluation of NP, Avg Power, IF, TSS, EF, and `Pw:Hr` aerobic drift status.
+     2. **⚡ Power & Physiological Profile**: Objective evaluation of NP, Avg Power, IF, TSS, EF, and `Pw:Hr` aerobic drift status. For structured sessions, summarize interval execution (power stability, HR recovery) in prose here.
      3. **🧠 Recovery & Readiness Synthesis**: Connecting morning recovery indicators (Sleep, HRV, RHR) with ride execution, effort, and fatigue.
-     4. **⏱️ Interval & Lap Breakdown** *(for structured interval/sweet spot/tempo workouts)*: Lap-by-lap comparison of target power vs actual power and heart rate recovery.
-     5. **🚀 Actionable Coaching Recommendations**: Specific takeaways covering fueling/hydration, cadence work, or upcoming training adjustments.
+     4. **🚀 Actionable Coaching Recommendations**: Specific takeaways covering fueling/hydration, cadence work, or upcoming training adjustments.

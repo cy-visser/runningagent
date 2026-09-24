@@ -17,13 +17,24 @@ from .date_helpers import (
 from .metrics import (
     coerce_mcp_payload,
     extract_health_metrics,
+    extract_health_metrics_dated,
     parse_mcp_response,
 )
 from .profile_helpers import (
+    RUNNER_ID_STATE_KEY,
     get_user_id,
     merge_profile_data,
     parse_runner_name,
     sync_profile_to_state,
+)
+from .race_readiness import (
+    ANALYSIS_SCHEMA_VERSION,
+    PROJECTION_WINDOW_DAYS,
+    completed_runs,
+    extract_thresholds,
+    project_race,
+    select_for_analysis,
+    summarize_analysis,
 )
 from .status_summary import (
     compile_checkin_summary,
@@ -31,7 +42,11 @@ from .status_summary import (
     format_recovery_metrics,
     format_schedule_audit_summary,
 )
-from .trajectory import evaluate_goal_trajectory
+from .trajectory import (
+    evaluate_goal_trajectory,
+    parse_target_time_minutes,
+    resolve_goal_distance,
+)
 from .workouts import (
     format_workout_analysis,
     is_workout_completed,
@@ -51,12 +66,22 @@ __all__ = [
     # MCP / metrics helpers
     "coerce_mcp_payload",
     "extract_health_metrics",
+    "extract_health_metrics_dated",
     "parse_mcp_response",
     # Profile helpers
+    "RUNNER_ID_STATE_KEY",
     "get_user_id",
     "merge_profile_data",
     "parse_runner_name",
     "sync_profile_to_state",
+    # Race readiness projection
+    "ANALYSIS_SCHEMA_VERSION",
+    "PROJECTION_WINDOW_DAYS",
+    "completed_runs",
+    "extract_thresholds",
+    "project_race",
+    "select_for_analysis",
+    "summarize_analysis",
     # Status summary formatters
     "compile_checkin_summary",
     "format_nutrition_context_summary",
@@ -64,6 +89,8 @@ __all__ = [
     "format_schedule_audit_summary",
     # Trajectory
     "evaluate_goal_trajectory",
+    "parse_target_time_minutes",
+    "resolve_goal_distance",
     # Workouts
     "format_workout_analysis",
     "is_workout_completed",
