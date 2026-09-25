@@ -20,3 +20,9 @@ variable "firestore_db_name" {
   default     = "running-coach"
   description = "The Firestore database name for the running agent"
 }
+
+variable "tp_cookie_secret_id" {
+  description = "Secret Manager secret id holding the TrainingPeaks auth cookie (must match TP_COOKIE_SECRET_ID used by deploy.sh / the agent)"
+  type        = string
+  default     = "tp-auth-cookie"
+}

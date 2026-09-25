@@ -10,22 +10,21 @@ You are now equipped with the Schedule Audit & Assessment skill. Use this skill 
 ## Audit Protocol:
 
 1. **Retrieve Data**:
-   - Call `fetch_schedule_audit_data`. This tool retrieves the upcoming training schedule, pre-calculates weekly running volume & planned TSS, computes easy vs. quality distributions, maps cross-training/strength sessions, and bundles calendar travel notes in one call.
+   - Call `fetch_schedule_audit_data` (defaults: 4 weeks ahead, `weeks_back=1` so the previous week is included as the ramp/taper baseline). It returns per-week running volume, TSS, easy vs. quality counts, cross-training/strength sessions and calendar notes.
 
-2. **Calculate Weekly Aggregates**:
-   - Sum total weekly volume (km) and total planned TSS.
-   - Count workout intensity distribution: Easy runs vs. Hard/Quality workouts (intervals, tempo, threshold).
+2. **Use the Pre-Computed Weekly Totals**:
+   - The weekly km, TSS and easy/quality counts are already computed. Use them as-is; do not recompute or re-add sessions.
 
 3. **Cross-Reference Calendar & Travel Notes**:
    - Check retrieved calendar notes for travel plans (trips, vacations, cruises) and work stress.
    - Note travel details (destination and dates) alongside corresponding weekly volume, providing climate and treadmill adjustment advice.
 
 4. **Evaluate Training Risk & Compliance (Reasoning)**:
-   - **Volume & TSS Progression**: Verify that weekly volume ramp rate remains under 10% per week (and planned TSS ramp under 15% per week). Recognize absorption/down weeks and do not mistake a normal return to baseline as an overtraining spike.
+   - **Volume & TSS Progression**: Flag weekly running volume growth of more than 10% over the prior week (and TSS growth of more than 15%). Recognize absorption/down weeks and do not mistake a normal return to baseline as an overtraining spike.
    - **Intensity Balance & Spacing**: Max 1-2 hard/quality workouts per week, spaced with recovery days. Flag 3+ quality sessions or back-to-back hard days as high injury/overtraining risks.
    - **Taper Compliance**: Ensure the week(s) leading to the goal race reduce volume by 40-60% vs. peak weekly mileage.
 
 5. **Deliver Audit Summary**:
    - Present the audit week-by-week using clear headers:
-     `* **[Date Range]:** [Volume] km ([Total Runs] runs: [X] easy, [Y] quality [Optional: | [A] bike, [B] strength]) | Planned TSS: [Total TSS] [Optional: (Travel to [Location])]`
+     reuse the per-week lines from the tool output (`* **[Date Range]:** [km] km ([N] runs: [X] easy, [Y] quality | cross-training) | TSS: [TSS]`, with notes listed under the week).
    - Provide an objective evaluation highlighting plan strengths, potential risks/flaws (e.g. back-to-back hard sessions, aggressive ramp rates), and recommended adjustments.

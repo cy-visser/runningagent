@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timedelta
 from typing import Optional, Union
 
@@ -56,14 +57,39 @@ def parse_iso_timestamp(timestamp_input: DateLike) -> Optional[datetime]:
         return None
 
 
+# Unambiguous month-name formats accepted as a fallback (e.g. free-text goal dates).
+# Numeric d/m/y vs m/d/y is deliberately NOT supported: it is ambiguous.
+_TEXT_DATE_FMTS = ("%B %d %Y", "%b %d %Y", "%d %B %Y", "%d %b %Y")
+_ORDINAL_RE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE)
+
+
+def _parse_text_date(raw: str) -> Optional[date]:
+    """Parses month-name dates like 'November 1st, 2026' or '1 Nov 2026'."""
+    cleaned = _ORDINAL_RE.sub(r"\1", raw.replace(",", " ").replace(".", " "))
+    cleaned = " ".join(cleaned.split())
+    for fmt in _TEXT_DATE_FMTS:
+        try:
+            return datetime.strptime(cleaned, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def parse_date(date_input: DateLike) -> Optional[date]:
-    """Safely parses a date string, date, or datetime into a date object."""
+    """Safely parses a date string, date, or datetime into a date object.
+
+    ISO formats are tried first, then unambiguous month-name dates.
+    """
     if isinstance(date_input, datetime):
         return date_input.date()
     if isinstance(date_input, date):
         return date_input
     parsed = parse_iso_timestamp(date_input)
-    return parsed.date() if parsed else None
+    if parsed:
+        return parsed.date()
+    if isinstance(date_input, str) and date_input.strip():
+        return _parse_text_date(date_input.strip())
+    return None
 
 
 def format_display_date(date_input: DateLike) -> str:

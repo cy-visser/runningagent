@@ -9,40 +9,20 @@ from .services.firestore import (
     save_user_profile,
     update_user_profile,
 )
-from .services.tp_mcp import get_tp_tool
 from .services.weather import geocode_location
 from .utils import (
     calculate_age,
-    extract_health_metrics,
-    get_past_date_str,
     get_today_date,
-    get_today_str,
     merge_profile_data,
+    onboarding_prefill,
     parse_date,
     parse_mcp_response,
     parse_runner_name,
+    profile_user_id,
     sync_profile_to_state,
 )
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_SLEEP_HOURS = 7.0
-METRICS_LOOKBACK_DAYS = 14
-
-# Profile fields pre-filled from an existing Firestore record so onboarding can
-# skip questions the runner has already answered.
-_PREFILL_FIELDS = (
-    "firstname",
-    "lastname",
-    "age",
-    "height",
-    "weight",
-    "location",
-    "injuries",
-    "recent_race_times",
-    "cross_training_strength",
-    "shoe_rotation",
-)
 
 
 def _as_dict(value: Any) -> dict:
@@ -111,7 +91,7 @@ async def load_profile_by_id(ctx: Context, user_id: str) -> Optional[dict]:
     except Exception as e:  # non-fatal: the profile itself was found
         logger.warning("Could not cache coordinates for %s: %s", user_id, e)
     sync_profile_to_state(ctx, profile)
-    ctx.state["temp_onboarding_data"] = {f: profile.get(f) for f in _PREFILL_FIELDS}
+    ctx.state["temp_onboarding_data"] = onboarding_prefill(profile)
     return profile
 
 
@@ -155,41 +135,18 @@ async def check_profile_step(ctx: Context, tp_profile: Any) -> str:
     return PROFILE_NEW
 
 
-async def _fetch_sleep_average(ctx: Context) -> float:
-    """Returns the runner's mean nightly sleep over the recent metrics window."""
-    try:
-        tp_get_metrics_tool = await get_tp_tool("tp_get_metrics")
-        raw_response = await ctx.run_node(
-            tp_get_metrics_tool,
-            node_input={
-                "start_date": get_past_date_str(days=METRICS_LOOKBACK_DAYS),
-                "end_date": get_today_str(),
-            },
-        )
-        sleep_hours = extract_health_metrics(raw_response).get("sleep", [])
-        if sleep_hours:
-            return round(sum(sleep_hours) / len(sleep_hours), 2)
-    except Exception as e:
-        logger.warning("Could not fetch sleep metrics for the new profile: %s", e)
-    return DEFAULT_SLEEP_HOURS
-
-
 async def create_profile_step(ctx: Context) -> bool:
-    """Fetches metrics, resolves coordinates, and saves the final profile to Firestore.
+    """Resolves coordinates and saves the final profile to Firestore.
 
     Returns False (and writes nothing) when the runner's name is unknown.
     """
     onboarding_answers = _as_dict(ctx.state.get("onboarding_answers"))
     temp_data = ctx.state.get("temp_onboarding_data") or {}
 
-    _, _, user_id = parse_runner_name(
-        f"{temp_data.get('firstname', '')} {temp_data.get('lastname', '')}"
-    )
-    if not user_id or user_id == "_":
-        logger.error("Refusing to save a profile without a runner name (user_id=%r).", user_id)
+    user_id = profile_user_id(temp_data)
+    if not user_id:
+        logger.error("Refusing to save a profile without a runner name.")
         return False
-
-    sleep_avg = await _fetch_sleep_average(ctx)
 
     location = onboarding_answers.get("location") or temp_data.get("location") or ""
     lat, lon = None, None
@@ -201,7 +158,6 @@ async def create_profile_step(ctx: Context) -> bool:
     profile = merge_profile_data(
         answers=onboarding_answers,
         temp_data=temp_data,
-        sleep_avg=sleep_avg,
         lat=lat,
         lon=lon,
         location=location,

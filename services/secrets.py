@@ -1,26 +1,31 @@
 import logging
 import os
 
-logger = logging.getLogger(__name__)
+from .config import gcp_project_id, tp_cookie_secret_id
 
-SECRET_ID = "tp-auth-cookie"
+logger = logging.getLogger(__name__)
 
 
 def get_secret_name() -> str:
     """Returns the fully-qualified Secret Manager resource name for the TP cookie."""
-    project_id = os.environ.get("FIRESTORE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
+    project_id = gcp_project_id()
     if not project_id:
         raise ValueError(
             "GCP Project ID must be set via FIRESTORE_PROJECT_ID or GOOGLE_CLOUD_PROJECT "
             "environment variable."
         )
-    return f"projects/{project_id}/secrets/{SECRET_ID}/versions/latest"
+    return f"projects/{project_id}/secrets/{tp_cookie_secret_id()}/versions/latest"
 
 
 def inject_production_secrets() -> None:
-    """Injects secrets from GCP Secret Manager into environment variables at runtime in production."""
-    if not os.environ.get("K_SERVICE"):
-        return  # Local development; rely on local .env file
+    """Loads TP_AUTH_COOKIE from Secret Manager when it is not already in the environment.
+
+    Locally the cookie comes from `.env`. Deployments deliberately ship without it
+    (see deploy.sh / .ae_ignore), so a missing cookie means "fetch it from Secret
+    Manager" regardless of the hosting platform.
+    """
+    if os.environ.get("TP_AUTH_COOKIE"):
+        return
 
     try:
         from google.cloud import secretmanager

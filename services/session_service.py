@@ -2,6 +2,8 @@ import os
 import sys
 import logging
 from typing import Any, Optional
+from urllib.parse import urlparse
+
 from dotenv import load_dotenv
 
 from ..utils.paths import DOTENV_PATH
@@ -17,6 +19,9 @@ from google.adk.sessions.base_session_service import ListSessionsResponse
 from google.adk.events.event import Event
 from google.cloud import firestore
 import google.adk.cli.utils.service_factory as service_factory
+
+from .config import firestore_database, gcp_project_id
+from .firestore import make_async_client
 
 logger = logging.getLogger("google_adk.running_coach.services")
 
@@ -43,25 +48,24 @@ def desanitize_state(state: Any) -> Any:
         return [desanitize_state(item) for item in state]
     return state
 
+def _root_collection_from_uri(uri: Optional[str]) -> Optional[str]:
+    """`firestore://<name>` -> '<name>' (used as the root collection), or None."""
+    return urlparse(uri).netloc or None if uri else None
+
+
 class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
     def __init__(self, *args, client: Optional[firestore.AsyncClient] = None, root_collection: Optional[str] = None, **kwargs):
-        project = os.environ.get("FIRESTORE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        database = os.environ.get("FIRESTORE_DATABASE", "running-coach")
-        
-        uri = kwargs.pop("uri", None)
-        if uri and not root_collection:
-            from urllib.parse import urlparse
-            parsed = urlparse(uri)
-            root_collection = parsed.netloc or None
-            
-        if not project and root_collection:
-            project = root_collection
+        root_collection = root_collection or _root_collection_from_uri(kwargs.pop("uri", None))
+        # Existing deployments pass firestore://<PROJECT_ID>, so the root collection
+        # doubles as the project when no project is configured.
+        project = gcp_project_id() or root_collection
+        database = firestore_database()
 
-        if (client is None 
-            or not hasattr(client, "_database") 
+        if (client is None
+            or not hasattr(client, "_database")
             or client._database != database):
             logger.info(f"Initializing custom Firestore AsyncClient for database '{database}' (project: '{project}')")
-            client = firestore.AsyncClient(project=project, database=database)
+            client = make_async_client(project)
         super().__init__(client=client, root_collection=root_collection)
 
     async def create_session(
@@ -107,7 +111,10 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
         session.state = desanitize_state(session.state)
 
         try:
-            greeting_text = "Hello! I'm your AI running coach, ready to help you achieve your running goals. To start, please tell me your first and last name."
+            greeting_text = (
+                "Hi! I'm your AI running coach. I can analyze a workout, run your weekly check-in, "
+                "audit your schedule, or plan sessions and fueling. What would you like to do?"
+            )
             greeting_event = Event(
                 invocation_id=Event.new_id(),
                 author=app_name,
@@ -162,10 +169,7 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
 
 # Factory function for the registry
 def firestore_session_factory(uri: str, **kwargs):
-    from urllib.parse import urlparse
-    parsed = urlparse(uri)
-    root_collection = parsed.netloc or None
-    return AutoLoadPreviousSessionFirestoreService(root_collection=root_collection)
+    return AutoLoadPreviousSessionFirestoreService(root_collection=_root_collection_from_uri(uri))
 
 # Register the firestore scheme
 get_service_registry().register_session_service("firestore", firestore_session_factory)

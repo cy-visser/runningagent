@@ -1,11 +1,13 @@
 import asyncio
 import logging
-from datetime import datetime
+import os
 from typing import Any, AsyncGenerator, Optional
 
 from google.adk import Agent, Context, Event, Workflow
 from google.adk.apps import App
-from google.adk.models import LlmRequest
+from google.adk.apps.app import EventsCompactionConfig
+from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
+from google.adk.models.google_llm import Gemini
 from google.adk.plugins.auto_tracing_plugin import AutoTracingPlugin
 from google.adk.workflow import node
 from google.genai import types
@@ -31,7 +33,7 @@ from .tools import (
     save_checkin_report_tool,
     skill_toolset,
 )
-from .utils import RUNNER_ID_STATE_KEY
+from .utils import RUNNER_ID_STATE_KEY, format_profile_summary, get_today_str, onboarding_prefill
 
 logger = logging.getLogger(__name__)
 
@@ -69,25 +71,39 @@ async def run_node_with_retry(
     initial_delay: float = 2.0,
     backoff_factor: float = 4.0,
 ) -> Any:
-    """Wraps ctx.run_node with exponential backoff on rate-limit errors."""
-    delay = initial_delay
-    last_error: Optional[Exception] = None
+    """Wraps ctx.run_node with exponential backoff on rate-limit errors.
 
+    Only used for idempotent nodes (the TrainingPeaks profile lookup). LLM agents
+    retry at the model call instead (see `_model`), so a 429 never replays tool
+    calls such as `create_workout`.
+    """
+    delay = initial_delay
     for attempt in range(1, max_retries + 1):
         try:
             return await ctx.run_node(node_or_agent, node_input=node_input, raise_on_wait=raise_on_wait)
         except Exception as e:
-            last_error = e
-            if not _is_rate_limit_error(e) or attempt == max_retries:
+            if not _is_rate_limit_error(e) or attempt >= max_retries:
                 raise
             logger.warning(
                 "Rate limited; retrying in %.1fs (attempt %d/%d)", delay, attempt, max_retries
             )
             await asyncio.sleep(delay)
             delay *= backoff_factor
+    raise ValueError("max_retries must be >= 1")
 
-    # Defensive: the loop either returns or raises, but keep the contract explicit.
-    raise last_error if last_error else RuntimeError("run_node_with_retry exhausted without a result")
+
+# ==============================================================================
+# Models (override with COACH_MODEL / ONBOARDING_MODEL env vars)
+# ==============================================================================
+COACH_MODEL = os.getenv("COACH_MODEL", "gemini-3.8-flash")
+ONBOARDING_MODEL = os.getenv("ONBOARDING_MODEL", "gemini-3.1-flash-lite")
+
+# Retry 429s at the model call (same schedule as run_node_with_retry).
+_MODEL_RETRY = types.HttpRetryOptions(attempts=3, initial_delay=2, exp_base=4, http_status_codes=[429])
+
+
+def _model(name: str) -> Gemini:
+    return Gemini(model=name, retry_options=_MODEL_RETRY)
 
 
 # ==============================================================================
@@ -98,8 +114,14 @@ class OnboardingAnswers(BaseModel):
     height: Optional[str] = Field(None, description="Height of the runner")
     weight: Optional[str] = Field(None, description="Weight of the runner")
     location: Optional[str] = Field(None, description="Location of the runner")
-    training_goal: Optional[str] = Field(None, description="Specific race or fitness goal")
-    timeline: Optional[str] = Field(None, description="Training timeline (ISO format YYYY-MM-DD)")
+    training_goal: Optional[str] = Field(
+        None,
+        description=(
+            "Goal as '<target time> <distance>' or 'Finish <distance>', "
+            "e.g. 'Sub-3:30 Marathon', 'Sub-19:30 5K', 'Finish Half Marathon'"
+        ),
+    )
+    timeline: Optional[str] = Field(None, description="Goal/race date as an ISO date string (YYYY-MM-DD)")
     recent_race_times: Optional[str] = Field(None, description="Recent race or time trial times")
     injuries: Optional[str] = Field(None, description="Past or present injuries")
     cross_training_strength: Optional[str] = Field(None, description="Cross-training or strength work")
@@ -107,34 +129,35 @@ class OnboardingAnswers(BaseModel):
 
 
 onboarding_agent = Agent(
-    model="gemini-3.1-flash-lite",
+    model=_model(ONBOARDING_MODEL),
     name="onboarding_agent",
     description="Onboarding assistant that gathers runner profile details.",
     instruction="""
-    You are the onboarding assistant for the AI Running Coach. Your sole job is to gather the necessary profile information from the runner to build or update their training plan.
-    
-    Here is the data we already harvested or loaded from their profile:
+    You are the onboarding assistant for the AI Running Coach. Your sole job is to gather the profile information needed to build or update the runner's training plan.
+
+    Data we already have (from TrainingPeaks or their existing profile):
     {temp_onboarding_data?}
-    
-    You must collect answers for any missing fields or updated preferences:
-    1. First and Last Name (Already gathered)
-    2. Age
-    3. Height and Weight
-    4. Location / Where they live
-    5. Training Goal (Specific race/date, weight loss, finishing a 5K, etc.)
-    6. Timeline (Target goal/race date MUST be provided as an ISO date string in YYYY-MM-DD format, e.g., '2026-11-01')
-    7. Recent Race Times / Time Trials (Most recent 5K, 10K, or half marathon times)
-    8. Past and Present Injuries (Dodgy knees, plantar fasciitis, nagging aches)
-    9. Cross-Training & Strength Work (Weights, yoga, cycling)
-    10. Current Shoe Rotation (Shoes used for easy runs, tempo runs, intervals, race days)
-    
+
+    Fields to collect (skip any that already have a value above unless the runner wants to change it):
+    1. Age
+    2. Height and Weight
+    3. Location / Where they live
+    4. Training Goal: record it as "<target time> <distance>" or "Finish <distance>" (e.g. "Sub-3:30 Marathon", "Sub-19:30 5K", "Finish Half Marathon")
+    5. Timeline: the goal/race date
+    6. Recent Race Times / Time Trials (most recent 5K, 10K or half marathon)
+    7. Past and Present Injuries
+    8. Cross-Training & Strength Work
+    9. Current Shoe Rotation (easy, tempo, intervals, race day)
+
+    REQUIRED fields: `training_goal` and `timeline`. The others are optional; collect them if missing but do not insist.
+
     CRITICAL RULES:
-    - If updating an existing runner's goal, greet them warmly, acknowledge their previous goal completion, and ask for their updated training goal and target race date (timeline strictly in YYYY-MM-DD format).
-    - Never ask all questions at once. Ask only 1 to 2 questions at a time, wait for their response, acknowledge it, and then move to the next.
-    - Never use LaTeX formatting or dollar signs ($...$); output all text, numbers, and units in clean standard text.
-    - Ensure the `timeline` field is formatted strictly as an ISO date string (YYYY-MM-DD).
-    - Once you have answers for the goal and required missing fields, you MUST call the `finish_task` tool immediately passing the collected information in the expected JSON schema format. Do not ask any more questions or continue chatting.
-    
+    - If the runner already has a profile (the data above contains their details), greet them warmly, acknowledge their previous goal, and ask for their new training goal and race date.
+    - Ask only 1 to 2 questions at a time, wait for the answer, acknowledge it, then move on.
+    - `timeline` MUST be an ISO date string (YYYY-MM-DD, e.g. '2026-11-01'); convert whatever date the runner gives you.
+    - Never use LaTeX formatting or dollar signs ($...$); output all text, numbers and units as plain text.
+    - As soon as the required fields are collected and the missing optional fields have been asked once, call `finish_task` with the collected information. Do not keep chatting.
+
     GOAL REALISM CHECK (Required):
     - Once you have both the training goal and the recent race times, sanity-check the target against the time available.
       The stated goal drives every downstream fitness target and ramp-rate calculation, so an implausible goal
@@ -165,54 +188,28 @@ coaching_agent_tools = [
     get_weather_tool,
 ]
 
-PROFILE_CONTEXT_MARKER = "[System Context: Runner Profile]"
-
-
-def inject_profile_context_cb(callback_context: Context, llm_request: LlmRequest) -> Optional[Any]:
-    """Injects the dynamic runner profile into the message history if not already present."""
-    summary = callback_context.state.get("user_profile_summary")
-    if not summary:
-        return None
-
-    # Check if profile context was already prepended to avoid duplicate injection
-    for content in llm_request.contents:
-        if content.parts and any(PROFILE_CONTEXT_MARKER in str(part.text or "") for part in content.parts):
-            return None
-
-    extra_ctx = ""
-    expired_date = callback_context.state.get("expired_timeline_date")
-    if expired_date:
-        extra_ctx = (
-            f"\n\n[CRITICAL NOTICE: Today's date ({datetime.now().strftime('%Y-%m-%d')}) is PAST the "
-            f"runner's target timeline date ({expired_date})! You MUST immediately and warmly inform the "
-            f"runner that their goal date has passed and ask if they want to (1) analyze their workout/race "
-            f"on {expired_date} or (2) set up a new training goal via the request_new_goal tool.]"
-        )
-
-    llm_request.contents.insert(0, types.Content(
-        role="user",
-        parts=[types.Part(text=f"{PROFILE_CONTEXT_MARKER}\n{summary}{extra_ctx}")],
-    ))
-    llm_request.contents.insert(1, types.Content(
-        role="model",
-        parts=[types.Part(text="Understood. I will use this runner profile context to guide my coaching.")],
-    ))
-    return None
-
-
 coaching_agent = Agent(
-    model="gemini-3.8-flash",
+    model=_model(COACH_MODEL),
     name="coaching_agent",
     description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
     instruction="""
     You are an expert running coach and exercise physiologist. Your coaching is analytical, direct, and grounded strictly in sports science and physiological data.
     
-    You are in active coaching mode. Proactively use the dedicated skill facades to fetch complete context in a single call:
-    - To analyze a completed run or ride: use `analyze_workout` (bundles telemetry, laps, recovery, and weather).
-    - For weekly check-ins or progress reports: use `fetch_checkin_data` (bundles 14-day history, PMC trends, recovery, and weather).
-    - To audit or review the training schedule: use `fetch_schedule_audit_data` (bundles 4-week volume, planned TSS, easy/hard split, and travel notes).
-    - For nutrition and fueling strategy: use `fetch_nutrition_context` (bundles runner biometrics, upcoming 3-day demands, and climate).
-    - To schedule, plan, create, or modify/update workouts: use `create_workout` (automatically updates existing workouts on that date or creates new ones). For calendar notes (travel, rest days, illness notes): use `create_note`.
+    Today's date is {current_date_str?}.
+
+    RUNNER PROFILE:
+    {user_profile_summary?}
+    {expired_timeline_notice?}
+
+    SKILL ROUTING: load the skill first, then follow its protocol exactly.
+    - Analyze a completed run         -> workout-analysis      -> analyze_workout
+    - Analyze a completed ride        -> bike-workout-analysis -> analyze_workout
+    - Weekly check-in / progress      -> check-in-report       -> fetch_checkin_data (+ save_checkin_report)
+    - Review / audit the plan         -> schedule-audit        -> fetch_schedule_audit_data
+    - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
+    - Create/change workouts or notes -> workout-creator       -> create_workout / create_note
+    Do not reload a skill whose instructions are already in this conversation.
+    New goal, or the goal date has passed -> request_new_goal. Ad-hoc weather -> get_weather.
     
     CRITICAL COACHING CONTRACT (Non-Negotiable):
     1. You are a coach, not an assistant. Your job is to protect the runner's long-term progression, including
@@ -243,16 +240,8 @@ coaching_agent = Agent(
        - NEVER use LaTeX math mode, dollar-sign delimiters ($...$ or $$...$$), or LaTeX commands (e.g. \\rightarrow, \\to, \\text{...}, or math subscripts like $P_a:HR$).
        - For lap progressions and transitions, use standard text arrows (-> or →) or plain text words (e.g. "4:37/km -> 4:32/km" or "4:37/km to 4:32/km").
        - Format metric abbreviations in standard plain text: Pa:Hr (or Pace:HR decoupling), Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W.
-    
-    EXPIRED TIMELINE PROTOCOL:
-    - If notified that the runner's goal timeline date has passed:
-      1. Warmly inform the runner that their target goal date has passed.
-      2. Ask whether they want to analyze their race on the goal date or set up a new training goal via `request_new_goal`.
-    
-    Today's date is {current_date_str?}.
     """,
     tools=coaching_agent_tools,
-    before_model_callback=inject_profile_context_cb,
     mode="chat",
 )
 
@@ -308,11 +297,19 @@ async def _resolve_profile(ctx: Context) -> tuple[Optional[dict], bool]:
     return ctx.state.get("user_profile"), False
 
 
+def expired_timeline_notice(expired_date: str) -> str:
+    """Instruction text shown to the coach once the runner's goal date has passed."""
+    return (
+        f"GOAL DATE PASSED: the runner's goal date ({expired_date}) is in the past. Before anything else, "
+        f"warmly tell them and ask whether they want to (1) analyze their race/workout on {expired_date} "
+        "or (2) set up a new training goal via `request_new_goal`."
+    )
+
+
 @node(name="profile_router", rerun_on_resume=True)
 async def profile_router(ctx: Context, node_input: Any = None) -> None:
     """Dynamic runner state evaluation routing to onboarding or coaching."""
-    # Set dynamic date in state so it is resolved correctly in the coaching instructions
-    ctx.state["current_date_str"] = datetime.now().strftime("%Y-%m-%d (%A)")
+    ctx.state["current_date_str"] = get_today_str(with_weekday=True)
 
     profile, unavailable = await _resolve_profile(ctx)
     if unavailable:
@@ -320,12 +317,21 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
         return
 
     if not profile or ctx.state.get("reonboard_requested"):
+        # Re-onboarding an existing runner: seed their known details (incl. name)
+        # so create_profile_step can save, even if the profile came from state.
+        if profile and not ctx.state.get("temp_onboarding_data"):
+            ctx.state["temp_onboarding_data"] = onboarding_prefill(profile)
         ctx.route = ROUTE_ONBOARDING
         return
 
-    # Check timeline vs current date
+    # Keep the instruction's profile summary in sync with the stored profile.
+    summary = format_profile_summary(profile)
+    if ctx.state.get("user_profile_summary") != summary:
+        ctx.state["user_profile_summary"] = summary
+
     is_expired, expired_date = check_timeline_expiration(profile)
     ctx.state["expired_timeline_date"] = expired_date if is_expired else None
+    ctx.state["expired_timeline_notice"] = expired_timeline_notice(expired_date) if is_expired else ""
 
     ctx.route = ROUTE_COACHING
 
@@ -339,9 +345,7 @@ async def tp_unavailable_node(ctx: Context, node_input: Any = None) -> AsyncGene
 @node(name="onboarding_node", rerun_on_resume=True)
 async def onboarding_node(ctx: Context, node_input: Any = None) -> AsyncGenerator[Any, None]:
     """Runs the onboarding agent, persists the runner profile to Firestore, and emits confirmation."""
-    onboarding_answers = await run_node_with_retry(
-        ctx, onboarding_agent, node_input=node_input, raise_on_wait=True
-    )
+    onboarding_answers = await ctx.run_node(onboarding_agent, node_input=node_input, raise_on_wait=True)
     if not onboarding_answers:
         return
 
@@ -354,6 +358,7 @@ async def onboarding_node(ctx: Context, node_input: Any = None) -> AsyncGenerato
         return
     ctx.state["reonboard_requested"] = None
     ctx.state["expired_timeline_date"] = None
+    ctx.state["expired_timeline_notice"] = ""
 
     firstname = (ctx.state.get("user_profile") or {}).get("firstname", "Runner")
     yield Event(
@@ -365,7 +370,7 @@ async def onboarding_node(ctx: Context, node_input: Any = None) -> AsyncGenerato
 @node(name="coaching_node", rerun_on_resume=True)
 async def coaching_node(ctx: Context, node_input: Any = None) -> None:
     """Runs the coaching agent for active interactive running guidance."""
-    await run_node_with_retry(ctx, coaching_agent, node_input=node_input, raise_on_wait=True)
+    await ctx.run_node(coaching_agent, node_input=node_input, raise_on_wait=True)
 
 
 # ==============================================================================
@@ -390,4 +395,11 @@ app = App(
     name="running_coach",
     root_agent=root_agent,
     plugins=[AutoTracingPlugin()],
+    # Sessions auto-resume, so compact history instead of growing it forever. The root is a
+    # Workflow (not an LlmAgent), so the summarizer model must be given explicitly.
+    events_compaction_config=EventsCompactionConfig(
+        compaction_interval=10,
+        overlap_size=2,
+        summarizer=LlmEventSummarizer(llm=_model(ONBOARDING_MODEL)),
+    ),
 )

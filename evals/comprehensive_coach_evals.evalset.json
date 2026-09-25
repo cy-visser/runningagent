@@ -17,8 +17,10 @@
         "query": "Can you analyze my run from yesterday? It felt harder than usual towards the end.",
         "expected_tool_use": [
           {
-            "tool_name": "analyze_workout",
-            "tool_input": {}
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "workout-analysis"
+            }
           }
         ],
         "reference": "I've analyzed your run from yesterday. Looking at your telemetry, your pace remained steady but your heart rate drifted upward in the final third of the run, indicating aerobic decoupling (Pa:Hr drift). When accounting for elevation and Normalized Graded Pace (NGP), your physiological effort was consistent on the uphill segments. Given the heat stress and elevated humidity, this cardiovascular drift is expected. Be sure to prioritize hydration and take an easy recovery day today."
@@ -42,11 +44,13 @@
         "query": "Give me my weekly check-in report and save it to my profile history. How are my CTL and ATL trending?",
         "expected_tool_use": [
           {
-            "tool_name": "fetch_checkin_data",
-            "tool_input": {}
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "check-in-report"
+            }
           },
           {
-            "tool_name": "save_checkin_report",
+            "tool_name": "fetch_checkin_data",
             "tool_input": {}
           }
         ],
@@ -70,6 +74,12 @@
       {
         "query": "Can you audit my training schedule for the next 4 weeks? I want to make sure I don't overtrain before my taper.",
         "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "schedule-audit"
+            }
+          },
           {
             "tool_name": "fetch_schedule_audit_data",
             "tool_input": {}
@@ -98,6 +108,12 @@
         "query": "What should my fueling and hydration plan be for my 32km long run this Sunday?",
         "expected_tool_use": [
           {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "nutrition-planner"
+            }
+          },
+          {
             "tool_name": "fetch_nutrition_context",
             "tool_input": {}
           }
@@ -123,8 +139,10 @@
         "query": "Please schedule a 5x1000m VO2max workout on my calendar for this Thursday with 2km warmup and cooldown.",
         "expected_tool_use": [
           {
-            "tool_name": "create_workout",
-            "tool_input": {}
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "workout-creator"
+            }
           }
         ],
         "reference": "I've scheduled your 5x1000m VO2max workout for this Thursday on your TrainingPeaks calendar. It includes a 2km warmup, 5x1000m at 5K target pace with 400m recovery jogs, and a 2km cooldown."
@@ -140,8 +158,7 @@
           "lastname": "Runner",
           "timeline": "2026-08-01",
           "training_goal": "Berlin Marathon"
-        },
-        "expired_timeline_date": "2026-08-01"
+        }
       }
     },
     "data": [

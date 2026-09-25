@@ -17,8 +17,10 @@
         "query": "Can you analyze my run from yesterday? It felt harder than usual towards the end.",
         "expected_tool_use": [
           {
-            "tool_name": "analyze_workout",
-            "tool_input": {}
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "workout-analysis"
+            }
           }
         ],
         "reference": "I've analyzed your run from yesterday. Looking at your telemetry, your pace remained steady but your heart rate drifted upward in the final third of the run, indicating aerobic decoupling (Pa:Hr drift). When accounting for elevation and Normalized Graded Pace (NGP), your physiological effort was consistent on the uphill segments. Given the heat stress and elevated humidity, this cardiovascular drift is expected. Be sure to prioritize hydration and take an easy recovery day today."
@@ -42,8 +44,10 @@
         "query": "How did my 1000m intervals go yesterday? Did I hit the target power and pace?",
         "expected_tool_use": [
           {
-            "tool_name": "analyze_workout",
-            "tool_input": {}
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "workout-analysis"
+            }
           }
         ],
         "reference": "Analyzing your interval session from yesterday: your lap splits were consistent across all repetitions with strong power-to-heart rate efficiency (Pw:Hr). Your recovery between sets was prompt, bringing your heart rate back down into Zone 2 before the start of each interval."

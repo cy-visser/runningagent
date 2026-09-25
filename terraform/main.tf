@@ -57,7 +57,7 @@ resource "google_project_iam_member" "agent_role_bindings" {
 
 # 4. Create the Secret Manager Container (Value managed by deploy script)
 resource "google_secret_manager_secret" "tp_cookie_secret" {
-  secret_id = "tp-auth-cookie"
+  secret_id = var.tp_cookie_secret_id
   labels = {
     agent = "running-coach"
   }

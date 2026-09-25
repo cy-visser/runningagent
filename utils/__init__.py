@@ -22,9 +22,12 @@ from .metrics import (
 )
 from .profile_helpers import (
     RUNNER_ID_STATE_KEY,
+    format_profile_summary,
     get_user_id,
     merge_profile_data,
+    onboarding_prefill,
     parse_runner_name,
+    profile_user_id,
     sync_profile_to_state,
 )
 from .race_readiness import (
@@ -50,6 +53,8 @@ from .trajectory import (
 from .workouts import (
     format_workout_analysis,
     is_workout_completed,
+    select_primary_workout,
+    format_other_sessions,
     partition_workouts_by_date,
 )
 
@@ -70,9 +75,12 @@ __all__ = [
     "parse_mcp_response",
     # Profile helpers
     "RUNNER_ID_STATE_KEY",
+    "format_profile_summary",
     "get_user_id",
     "merge_profile_data",
+    "onboarding_prefill",
     "parse_runner_name",
+    "profile_user_id",
     "sync_profile_to_state",
     # Race readiness projection
     "ANALYSIS_SCHEMA_VERSION",
@@ -94,5 +102,7 @@ __all__ = [
     # Workouts
     "format_workout_analysis",
     "is_workout_completed",
+    "select_primary_workout",
+    "format_other_sessions",
     "partition_workouts_by_date",
 ]

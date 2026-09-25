@@ -18,17 +18,17 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
         *   Differentiate **Easy/Recovery Runs** (low effort, Zone 1/2 HR discipline) from **Structured Workouts** (intervals, tempo, threshold, races, MP blocks).
         *   Check workout balance (~80% easy / ~20% hard) to ensure adequate recovery between quality sessions.
     *   **Pillar 2: Dynamic Volume Progression**:
-        *   Calculate dynamic **weekly mileage growth** (week-over-week volume progression) directly from `fetch_checkin_data`.
-        *   Verify volume growth follows safe guidelines (~10-15% weekly cap) to prevent overuse injury risks.
+        *   Use the pre-computed **Weekly Totals** section (km, TSS, easy/quality counts per week); do not re-add workouts yourself.
+        *   Flag weekly running volume growth of more than 10% over the prior week as an overuse-injury risk (recognise planned cutback/return-to-baseline weeks).
     *   **Pillar 3: Physiological & Environmental Context**:
         *   Synthesize fitness load trends holistically alongside recovery metrics (HRV trends, Resting Heart Rate, sleep averages). ATL and TSB are provided on the `Load context (analysis only, not displayed)` line: use them for reasoning but do not render them as table rows. **Do not rely on hardcoded single-metric rules for TSB**: evaluate whether low or negative TSB represents healthy productive overload or overreaching risk by checking autonomic markers (e.g. dropped HRV, spiked resting HR) and sleep trends.
         *   Contextualize variances against environmental factors (heat, humidity, travel) and **Calendar Notes** (work stress, illness, fatigue).
     *   **Pillar 4: Goal Alignment & Trajectory (LLM Sports Science Reasoning)**:
         *   **Target Peak CTL & Goal Context**: Evaluate the runner's target peak CTL and benchmark range dynamically resolved from their event distance and goal finish time (from `training_goal`).
-        *   **Required Ramp Rate Analysis**: Check `required_ramp_rate` from `fetch_checkin_data`:
-            - **<= 3.5 pts/week**: Safe, sustainable build rate leading into the 2-week pre-race taper (🟢 On Track).
-            - **3.5 - 5.0 pts/week**: Moderate to aggressive build. Achievable if autonomic recovery metrics (HRV/sleep/RHR) are stable and positive (🟡 Build Focus Needed).
-            - **> 5.0 pts/week**: High musculoskeletal and overtraining risk for running. Recommend adjusting timeline, restructuring weekly mileage, or revising race pace expectations (🔴 Adjustment Recommended).
+        *   **Required Ramp Rate Analysis**: The CTL row shows `Req. Ramp` with a pre-computed tier badge (thresholds are defined in code; quote the badge, do not re-derive it):
+            - 🟢 safe: sustainable build into the pre-race taper (🟢 On Track).
+            - 🟡 aggressive: achievable only if HRV/sleep/RHR are stable and positive (🟡 Build Focus Needed).
+            - 🔴 high risk: recommend adjusting the timeline, restructuring weekly mileage, or revising the goal (🔴 Adjustment Recommended).
         *   **Projected Goal-Race Time (Race Readiness)**: The `Projected {goal}` row shows **Today** (race run tomorrow at current fitness) → **Race day** (projected CTL after a safe build + taper), plus goal, gap, range, confidence and a health readiness flag. It is computed deterministically from the **Projection drivers** table: threshold laps vs the TP threshold setting, goal-pace segments (judged by %LTHR and lap Pa:Hr decoupling), an HR→pace efficiency fit, durability (longest run + long-run Pa:Hr), load (CTL → race day) and health (HRV/RHR/sleep 5d vs 28d). Easy/Zone 2 runs are never treated as race efforts. **Quote the times, gap and confidence exactly as provided; never invent, recompute, or alter them.**
             - Explain the **limiting drivers**: which signal is slowest, and why (e.g. MP block ran at 90% LTHR, long-run decoupling > 5%, durability `weak`, no threshold laps confirming the TP setting). Tie `Goal-pace work` and `Threshold anchor` evidence to specific sessions by date.
             - Use the gap between **Today** and **Race day** to discuss what the remaining build must deliver, and read it alongside TSB: a deeply negative TSB means today's number understates fitness; state whether the race-day gap to goal is realistically closable.
@@ -39,7 +39,6 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
         *   **Formulate Trajectory Verdict**: Synthesize these factors to provide your own authoritative status badge (e.g. `🟢 On Track`, `🟡 Build Focus Needed`, `🔴 Adjustment Recommended`) with tailored coaching rationale.
 
 3.  **Deliver Check-In Summary**:
-    *   **Visual Presentation**: Display the Markdown visual progress table provided by `fetch_checkin_data` (CTL row + Projected goal-race row), followed by the **Projection drivers** table exactly as provided.
     *   Deliver in clean standard Markdown, following the coach's standard plain-text formatting rules (plain metrics, text arrows `->` or `→`, never LaTeX).
     *   Output a structured summary formatted with these sections:
         1. **Check-In Overview**: Concise opening framing the current training cycle and check-in window.

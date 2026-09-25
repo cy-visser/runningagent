@@ -1,6 +1,7 @@
 from typing import Optional
 from .date_helpers import format_display_date
 from .race_readiness import format_drivers_table, format_projection_row
+from .trajectory import DEFAULT_PEAK_CTL, DEFAULT_PEAK_RANGE, TAPER_WEEKS, ramp_status
 
 PROGRESS_BAR_SEGMENTS = 10
 
@@ -20,7 +21,7 @@ def format_completed_workouts(
         time_identifier = w.get("start_time") or w.get("date", "")
         time_display = format_display_date(time_identifier)
         dist_km = round(w.get("distance_actual_km") or 0.0, 1)
-        dur_hrs = w.get("duration_actual") or w.get("duration_actual_min")
+        dur_hrs = w.get("duration_actual")
         dur_str = f" | Dur: {round(dur_hrs, 2)}h" if dur_hrs and isinstance(dur_hrs, (int, float)) else ""
         dist_str = f": {dist_km}km" if dist_km > 0 else ""
         actual_tss = w.get("tss_actual") or w.get("tss") or 0
@@ -102,8 +103,8 @@ def format_fitness_pmc(fitness_data: Optional[dict], race_projection: Optional[d
     atl_end = round(fitness_data.get("atl_end", 0.0), 1)
     tsb_end = round(fitness_data.get("tsb_end", 0.0), 1)
 
-    target_peak = trajectory_info.get("target_peak_ctl", 70.0)
-    ref_range = trajectory_info.get("reference_range", [55.0, 70.0])
+    target_peak = trajectory_info.get("target_peak_ctl", DEFAULT_PEAK_CTL)
+    ref_range = trajectory_info.get("reference_range", list(DEFAULT_PEAK_RANGE))
     req_ramp = trajectory_info.get("required_ramp_rate")
     weeks_rem = trajectory_info.get("weeks_remaining")
 
@@ -111,7 +112,10 @@ def format_fitness_pmc(fitness_data: Optional[dict], race_projection: Optional[d
     filled = pct // PROGRESS_BAR_SEGMENTS
     bar = "█" * filled + "░" * (PROGRESS_BAR_SEGMENTS - filled)
 
-    ramp_str = f" | Req. Ramp: `+{req_ramp} pts/wk`" if req_ramp is not None else ""
+    ramp_str = (
+        f" | Req. Ramp: `+{req_ramp} pts/wk` {ramp_status(req_ramp)} (build to {int(TAPER_WEEKS)}-week taper)"
+        if req_ramp is not None else ""
+    )
     weeks_str = f" ({weeks_rem}w out)" if weeks_rem is not None else ""
     range_str = f" (Range: `{ref_range[0]}-{ref_range[1]}`)" if ref_range and len(ref_range) == 2 else ""
 
@@ -141,10 +145,12 @@ def compile_checkin_summary(
     notes_list: Optional[list[dict]],
     weather_map: Optional[dict[str, str]] = None,
     race_projection: Optional[dict] = None,
+    weekly_totals: Optional[list[dict]] = None,
 ) -> str:
     """Compiles a complete, unified Check-In Summary payload for the check-in-report skill.
 
     race_projection: {"goal_label": str | None, "projection": dict | None} from race_readiness.project_race.
+    weekly_totals: completed-week buckets from utils.weekly (km, TSS, easy/quality counts).
     """
     parts = ["### Weekly Check-In Training & Physiological Report\n"]
 
@@ -157,67 +163,74 @@ def compile_checkin_summary(
     if metrics_data is not None:
         parts.append(f"**2. Autonomic & Physiological Recovery Trends (Past {lookback_days} days):**\n{format_recovery_metrics(metrics_data)}\n")
 
+    if weekly_totals is not None:
+        parts.append(f"**3. Weekly Totals (completed, pre-computed; do not recompute):**\n{format_weekly_totals(weekly_totals)}\n")
+
     if workouts_past is not None:
-        parts.append(f"**3. Completed Workouts & Environmental Context (Past {lookback_days} days):**\n{format_completed_workouts(workouts_past, weather_map)}\n")
+        parts.append(f"**4. Completed Workouts & Environmental Context (Past {lookback_days} days):**\n{format_completed_workouts(workouts_past, weather_map)}\n")
 
     if notes_list is not None:
-        parts.append(f"**4. Calendar & Travel Notes:**\n{format_calendar_notes(notes_list)}\n")
+        parts.append(f"**5. Calendar & Travel Notes:**\n{format_calendar_notes(notes_list)}\n")
 
     if workouts_future is not None:
-        parts.append(f"**5. Upcoming Scheduled Workouts (Next {lookahead_days} days):**\n{format_planned_workouts(workouts_future)}\n")
+        parts.append(f"**6. Upcoming Scheduled Workouts (Next {lookahead_days} days):**\n{format_planned_workouts(workouts_future)}\n")
 
     return "\n".join(parts)
 
-def format_schedule_audit_summary(
-    weeks_data: list[dict],
-    overall_notes: Optional[list[dict]] = None
-) -> str:
-    """Formats a multi-week schedule audit breakdown."""
+def _format_week_line(w: dict) -> str:
+    """One-line weekly totals: running km, run split, cross-training and TSS."""
+    w_range = w.get("date_range", "Week")
+    total_vol = round(w.get("total_distance_km", 0.0), 1)
+    total_tss = round(w.get("total_tss", 0.0), 1)
+    easy_runs = w.get("easy_count", 0)
+    quality_runs = w.get("quality_count", 0)
+    total_runs = easy_runs + quality_runs
+
+    cross_parts = []
+    bike_count = w.get("bike_count", 0)
+    if bike_count > 0:
+        cross_parts.append(f"{bike_count} bike" if bike_count == 1 else f"{bike_count} bikes")
+    strength_count = w.get("strength_count", 0)
+    if strength_count > 0:
+        cross_parts.append(f"{strength_count} strength")
+    other_count = w.get("other_sport_count", 0)
+    if other_count > 0:
+        cross_parts.append(f"{other_count} other")
+    cross_str = f" | {', '.join(cross_parts)}" if cross_parts else ""
+
+    return (
+        f"* **{w_range}:** {total_vol} km ({total_runs} runs: {easy_runs} easy, "
+        f"{quality_runs} quality{cross_str}) | TSS: {total_tss}"
+    )
+
+
+def format_weekly_totals(weeks: Optional[list[dict]]) -> str:
+    """Pre-computed weekly totals (no LLM arithmetic needed)."""
+    if not weeks:
+        return "No completed training in this window."
+    return "\n".join(_format_week_line(w) for w in weeks)
+
+
+def format_schedule_audit_summary(weeks_data: list[dict]) -> str:
+    """Formats a multi-week schedule audit breakdown with each week's sessions and notes."""
     lines = ["### Training Schedule Audit & Workload Assessment\n"]
 
     for w in weeks_data:
-        w_range = w.get("date_range", "Week")
-        total_vol = round(w.get("total_distance_km", 0.0), 1)
-        total_tss = round(w.get("total_tss", 0.0), 1)
-        easy_runs = w.get("easy_count", 0)
-        quality_runs = w.get("quality_count", 0)
-        total_runs = easy_runs + quality_runs
-        
-        # Cross-training and strength breakdown
-        cross_parts = []
-        bike_count = w.get("bike_count", 0)
-        if bike_count > 0:
-            cross_parts.append(f"{bike_count} bike" if bike_count == 1 else f"{bike_count} bikes")
-        strength_count = w.get("strength_count", 0)
-        if strength_count > 0:
-            cross_parts.append(f"{strength_count} strength")
-        other_count = w.get("other_sport_count", 0)
-        if other_count > 0:
-            cross_parts.append(f"{other_count} other")
-        cross_str = f" | {', '.join(cross_parts)}" if cross_parts else ""
-
-        travel_info = w.get("travel_note")
-        travel_str = f" | ✈️ Travel: {travel_info}" if travel_info else ""
-
-        lines.append(
-            f"* **{w_range}:** {total_vol} km ({total_runs} runs: {easy_runs} easy, {quality_runs} quality{cross_str}) | Planned TSS: {total_tss}{travel_str}"
-        )
-        
-        # List individual sessions in that week
-        sessions = w.get("sessions", [])
-        for s in sessions:
+        lines.append(_format_week_line(w))
+        for s in w.get("sessions", []):
             lines.append(f"    - {s}")
+        for note in w.get("notes", []):
+            lines.append(f"    - 📝 Note: {note}")
         lines.append("")
 
-    if overall_notes:
-        lines.append(f"**Calendar & Life Context:**\n{format_calendar_notes(overall_notes)}\n")
-
     return "\n".join(lines)
+
 
 def format_nutrition_context_summary(
     profile: dict,
     upcoming_workouts: list[dict],
-    weather_forecast: Optional[str] = None
+    weather_forecast: Optional[str] = None,
+    days_forward: int = 3,
 ) -> str:
     """Formats athlete biometrics, upcoming training demands, and forecasted climate for nutrition planning."""
     lines = ["### Athlete Nutrition & Fueling Context\n"]
@@ -226,24 +239,25 @@ def format_nutrition_context_summary(
     lines.append("**1. Runner Biometrics & Target:**")
     weight = profile.get("weight") or "Not recorded"
     age = profile.get("age") or "Not recorded"
-    goal = profile.get("training_goal") or "Marathon Training"
-    timeline = profile.get("timeline") or "Upcoming"
+    goal = profile.get("training_goal") or "Not set"
+    timeline = profile.get("timeline") or "Not set"
     lines.append(f"- Weight: {weight} | Age: {age}")
     lines.append(f"- Training Goal: {goal} (Target Date: {timeline})\n")
 
     # Upcoming Workouts
-    lines.append("**2. Upcoming Training Sessions (Next 3 Days):**")
+    lines.append(f"**2. Upcoming Training Sessions (Next {days_forward} Days):**")
     if upcoming_workouts:
         for w in upcoming_workouts:
             sport = w.get("sport", "Run")
             title = w.get("title") or sport
             date_str = format_display_date(w.get("date") or w.get("start_time"))
-            dist = w.get("distance_planned_km") or w.get("distance_km") or 0.0
-            dur_min = w.get("duration_planned_min") or w.get("duration_minutes") or 0
+            dist = w.get("distance_planned_km") or 0.0
+            hours = w.get("duration_planned")
+            dur_str = f"{round(float(hours) * 60)} min" if isinstance(hours, (int, float)) and hours > 0 else "n/a"
             tss = w.get("tss_planned") or 0
-            lines.append(f"- [{sport}] '{title}' on {date_str} | Distance: {dist}km | Duration: {dur_min}m | Planned TSS: {tss}")
+            lines.append(f"- [{sport}] '{title}' on {date_str} | Distance: {dist}km | Duration: {dur_str} | Planned TSS: {tss}")
     else:
-        lines.append("No planned sessions in the next 3 days.")
+        lines.append(f"No planned sessions in the next {days_forward} days.")
     lines.append("")
 
     # Weather

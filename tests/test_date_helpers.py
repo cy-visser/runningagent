@@ -113,3 +113,20 @@ class TestCalculateAge:
 def test_get_past_date_str_is_n_days_back():
     result = parse_date(get_past_date_str(days=14))
     assert (get_today_date() - result).days == 14
+
+
+class TestParseTextDate:
+    @pytest.mark.parametrize(
+        "raw",
+        ["November 1st, 2026", "November 1, 2026", "Nov 1 2026", "Nov. 1st 2026",
+         "1 November 2026", "1st Nov 2026", "  november 1ST, 2026  "],
+    )
+    def test_parses_month_name_dates(self, raw):
+        assert parse_date(raw) == date(2026, 11, 1)
+
+    @pytest.mark.parametrize("raw", ["15/09/2026", "01-11-2026", "next spring", "November 2026", "Nov 31 2026"])
+    def test_rejects_ambiguous_or_invalid(self, raw):
+        assert parse_date(raw) is None
+
+    def test_iso_timestamp_parser_stays_strict(self):
+        assert parse_iso_timestamp("November 1st, 2026") is None

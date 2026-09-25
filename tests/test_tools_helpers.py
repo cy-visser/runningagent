@@ -7,11 +7,11 @@ from running_coach import tools
 from running_coach.tools import (
     _build_goal_projection,
     _location_args,
-    _new_week_bucket,
     _result_or_none,
     _summarize_fitness,
-    _tally_workout,
 )
+from running_coach.utils.weekly import new_week_bucket as _new_week_bucket
+from running_coach.utils.weekly import tally_workout as _tally_workout
 from running_coach.utils.metrics import parse_mcp_response  # noqa: F401  (import sanity)
 from running_coach.utils.race_readiness import ANALYSIS_SCHEMA_VERSION
 from tests.test_metrics import mcp_envelope

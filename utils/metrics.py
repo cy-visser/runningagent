@@ -46,6 +46,46 @@ def coerce_mcp_payload(response: Any, default: Optional[dict] = None) -> dict:
     return default if default is not None else {}
 
 
+# Unit heuristics for MCP values that arrive without (reliable) units.
+METERS_IF_ABOVE = 100.0        # distances above this are metres (no lap is 100+ km)
+PACE_SECONDS_IF_ABOVE = 30.0   # paces above this are s/km (nobody runs 30 min/km)
+_KM_PER_UNIT = {"m": 0.001, "km": 1.0, "mi": 1.609344}
+
+
+def as_float(value: Any) -> Optional[float]:
+    """Best-effort float from a raw MCP value; placeholders like '--', None and bools -> None."""
+    if isinstance(value, dict):
+        value = value.get("value")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+_as_float = as_float
+
+
+def to_km(value: Any, unit: Optional[str] = None) -> Optional[float]:
+    """Distance in km from a value in m/km/mi; guesses metres vs km when `unit` is unknown."""
+    v = _as_float(value)
+    if v is None:
+        return None
+    factor = _KM_PER_UNIT.get(str(unit or "").strip().lower())
+    if factor is not None:
+        return v * factor
+    return v / 1000.0 if v > METERS_IF_ABOVE else v
+
+
+def pace_seconds(value: Any) -> Optional[float]:
+    """Pace in s/km from a value in s/km or decimal min/km; None when not positive."""
+    v = _as_float(value)
+    if not v or v <= 0:
+        return None
+    return v if v > PACE_SECONDS_IF_ABOVE else v * 60.0
+
+
 # TrainingPeaks metric type identifiers used in the `details` payload.
 METRIC_TYPE_SLEEP = 6
 METRIC_TYPE_HRV = 60

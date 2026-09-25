@@ -16,13 +16,14 @@ one place for tuning. All functions are pure (no I/O) so they are unit-testable
 and so cached workout summaries can be fed straight back in.
 """
 
-import re
 from datetime import date, timedelta
 from typing import Any, Optional
 
+from .classification import RUN_SPORTS, is_quality_title, is_race_title
 from .date_helpers import parse_date
-from .metrics import coerce_mcp_payload
+from .metrics import coerce_mcp_payload, pace_seconds, to_km
 from .race_prediction import ctl_on, detraining_factor, format_seconds_hms, riegel_predict
+from .trajectory import SAFE_RAMP_PER_WEEK
 
 # Bump when the cached workout-summary schema changes; older cache entries are ignored.
 ANALYSIS_SCHEMA_VERSION = 1
@@ -85,7 +86,6 @@ MIN_HR_SPREAD = 0.08
 MAX_EXTRAPOLATION = 0.05
 
 # S5 load
-SAFE_RAMP_PER_WEEK = 3.5
 FITNESS_EXPONENT = 0.15
 MAX_RACE_DAY_GAIN = 0.04
 
@@ -104,13 +104,6 @@ MAX_HEALTH_PENALTY = 0.02
 SIGNAL_WEIGHTS = {"threshold": 0.35, "goal_pace": 0.30, "hr_efficiency": 0.20, "race": 0.15}
 STALE_EVIDENCE_DAYS = 21
 
-RACE_RE = re.compile(r"\b(race|parkrun|time[- ]?trial|tt|wedstrijd)\b", re.IGNORECASE)
-QUALITY_RE = re.compile(
-    r"(interval|tempo|threshold|speed|reps|\bmp\b|marathon pace|race pace|canova|"
-    r"progression|hills?\b|fartlek|vo2|\d+\s*x\s*\d+)",
-    re.IGNORECASE,
-)
-RUN_SPORTS = {"run", "running", "trail run", "treadmill"}
 _CONFIDENCE = ("Low", "Medium", "High")
 
 
@@ -179,11 +172,11 @@ def classify_run(workout: dict, goal_label: str) -> str:
     title = str(workout.get("title") or "")
     km = _num(workout.get("distance_actual_km")) or 0.0
     long_km = DISTANCE_PROFILES[goal_label]["long_km"]
-    if RACE_RE.search(title):
+    if is_race_title(title):
         return "race"
     if km >= ABSOLUTE_LONG_KM or "long" in title.lower():
         return "long"
-    if QUALITY_RE.search(title):
+    if is_quality_title(title):
         return "quality"
     if km >= long_km:
         return "long"
@@ -219,13 +212,6 @@ def select_for_analysis(runs: list[dict], goal_label: str, max_n: int = MAX_ANAL
     return picked[:max_n]
 
 
-def _pace_seconds(value: Any) -> Optional[float]:
-    v = _num(value)
-    if not v or v <= 0:
-        return None
-    return v * 60.0 if v < 30 else v  # decimal min/km -> s/km
-
-
 def summarize_analysis(raw: Any, workout: dict) -> Optional[dict]:
     """Compacts a tp_analyze_workout response into the cacheable workout summary."""
     payload = coerce_mcp_payload(raw) if raw else {}
@@ -243,10 +229,9 @@ def summarize_analysis(raw: Any, workout: dict) -> Optional[dict]:
         dur = _num(lap.get("TotalTimerTime")) or _num(lap.get("TotalMovingTime")) or _num(lap.get("TotalElapsedTime"))
         if not dur or dur <= 0:
             continue
-        dist = _num(lap.get("TotalDistance")) or 0.0
-        dist_km = dist / 1000.0 if dist > 100 else dist
-        pace_s = _pace_seconds(lap.get("AveragePace"))
-        ngp_s = _pace_seconds(lap.get("NormalizedGradedPace"))
+        dist_km = to_km(lap.get("TotalDistance")) or 0.0
+        pace_s = pace_seconds(lap.get("AveragePace"))
+        ngp_s = pace_seconds(lap.get("NormalizedGradedPace"))
         ref_pace = ngp_s or pace_s
         speed = 1000.0 / ref_pace if ref_pace else (dist_km * 1000.0 / dur if dist_km else None)
         laps.append({
@@ -458,9 +443,7 @@ def hr_efficiency_candidate(summaries: list[dict], goal_label: str, lthr: Option
     }
 
 
-def race_effort_candidate(
-    runs: list[dict], goal_label: str, daily_pmc: Optional[list[dict]], ctl_now: Optional[float]
-) -> Optional[dict]:
+def race_effort_candidate(runs: list[dict], goal_label: str) -> Optional[dict]:
     """S7: Riegel on runs explicitly titled as races/time trials (fitness-adjusted)."""
     goal_km = DISTANCE_PROFILES[goal_label]["km"]
     best = None
@@ -567,7 +550,7 @@ def _fitness_adjust(candidate: Optional[dict], daily_pmc, ctl_now) -> Optional[d
 
 def project_race(
     goal_label: str,
-    goal_minutes: Optional[int],
+    goal_minutes: Optional[float],
     runs: list[dict],
     summaries: list[dict],
     thresholds: dict,
@@ -597,7 +580,7 @@ def project_race(
     segments = goal_pace_segments(summaries, goal_label, [r for r in refs if r], lthr)
     candidates["goal_pace"] = _fitness_adjust(goal_pace_candidate(segments), daily_pmc, ctl_now)
     candidates["hr_efficiency"] = _fitness_adjust(hr_efficiency_candidate(summaries, goal_label, lthr), daily_pmc, ctl_now)
-    candidates["race"] = _fitness_adjust(race_effort_candidate(runs, goal_label, daily_pmc, ctl_now), daily_pmc, ctl_now)
+    candidates["race"] = _fitness_adjust(race_effort_candidate(runs, goal_label), daily_pmc, ctl_now)
     active = {k: c for k, c in candidates.items() if c and c.get("speed")}
     if not active:
         return None

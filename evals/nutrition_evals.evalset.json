@@ -18,6 +18,12 @@
         "query": "What should my fueling and hydration plan be for my 32km long run this Sunday?",
         "expected_tool_use": [
           {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "nutrition-planner"
+            }
+          },
+          {
             "tool_name": "fetch_nutrition_context",
             "tool_input": {}
           }

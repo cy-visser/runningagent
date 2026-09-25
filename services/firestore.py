@@ -1,20 +1,24 @@
 from __future__ import annotations
-import os
+
 from typing import Any, Optional
+
 from google.cloud import firestore
 
-from ..utils.profile_helpers import get_user_id
+from .config import firestore_database, gcp_project_id
 
 _client: Optional[firestore.AsyncClient] = None
+
+
+def make_async_client(project: Optional[str] = None) -> firestore.AsyncClient:
+    """Builds a Firestore AsyncClient for the configured project and database."""
+    return firestore.AsyncClient(project=project or gcp_project_id(), database=firestore_database())
 
 
 def _get_client() -> firestore.AsyncClient:
     """Returns or initializes the internal Firestore async client singleton."""
     global _client
     if _client is None:
-        project_id = os.environ.get("FIRESTORE_PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        database_name = os.environ.get("FIRESTORE_DATABASE", "running-coach")
-        _client = firestore.AsyncClient(project=project_id, database=database_name)
+        _client = make_async_client()
     return _client
 
 
@@ -38,10 +42,10 @@ async def read_document(collection_path: str, doc_id: str) -> Optional[dict[str,
     return None
 
 
-async def write_document(collection_path: str, doc_id: str, data: dict[str, Any], merge: bool = False) -> None:
-    """Asynchronously writes a document to Firestore using set (with optional merge)."""
+async def write_document(collection_path: str, doc_id: str, data: dict[str, Any]) -> None:
+    """Asynchronously writes (replaces) a document in Firestore."""
     doc_ref = _get_doc_ref(collection_path, doc_id)
-    await doc_ref.set(data, merge=merge)
+    await doc_ref.set(data)
 
 
 async def update_document(collection_path: str, doc_id: str, data: dict[str, Any]) -> None:
@@ -59,9 +63,9 @@ async def get_user_profile(user_id: str) -> Optional[dict[str, Any]]:
     return await read_document("users", user_id)
 
 
-async def save_user_profile(user_id: str, profile_data: dict[str, Any], merge: bool = False) -> None:
+async def save_user_profile(user_id: str, profile_data: dict[str, Any]) -> None:
     """Asynchronously persists the user profile document into the 'users' collection."""
-    await write_document("users", user_id, profile_data, merge=merge)
+    await write_document("users", user_id, profile_data)
 
 
 async def update_user_profile(user_id: str, updates: dict[str, Any]) -> None:
@@ -85,7 +89,7 @@ async def save_workout_analysis(user_id: str, workout_id: str, summary: dict[str
 
 
 __all__ = [
-    "get_user_id",
+    "make_async_client",
     "read_document",
     "write_document",
     "update_document",
@@ -96,4 +100,3 @@ __all__ = [
     "get_cached_workout_analysis",
     "save_workout_analysis",
 ]
-

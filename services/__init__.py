@@ -7,29 +7,8 @@ to it (see services/session_service.py). Because importing any submodule of this
 package executes this file, that registration is guaranteed to happen before the
 ADK CLI builds its session service. Removing the import silently disables session
 persistence, so keep it even if nothing references the symbols directly.
+
+Callers import from the submodules directly (e.g. ``.services.firestore``).
 """
 
 from . import session_service  # noqa: F401  (imported for registration side effects)
-from .firestore import (
-    get_user_profile,
-    save_checkin_report,
-    save_user_profile,
-    update_user_profile,
-)
-from .secrets import inject_production_secrets
-from .session_service import AutoLoadPreviousSessionFirestoreService
-from .tp_mcp import get_tp_tool
-from .weather import geocode_location, get_weather_conditions, get_weather_for_dates
-
-__all__ = [
-    "AutoLoadPreviousSessionFirestoreService",
-    "geocode_location",
-    "get_tp_tool",
-    "get_user_profile",
-    "get_weather_conditions",
-    "get_weather_for_dates",
-    "inject_production_secrets",
-    "save_checkin_report",
-    "save_user_profile",
-    "update_user_profile",
-]

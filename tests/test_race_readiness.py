@@ -284,13 +284,29 @@ class TestHrEfficiency:
 
 class TestRaceEfforts:
     def test_zone2_long_run_is_not_a_race_effort(self):
-        assert race_effort_candidate([ZONE2_HM_WORKOUT], "Marathon", None, None) is None
+        assert race_effort_candidate([ZONE2_HM_WORKOUT], "Marathon") is None
 
     def test_titled_race_uses_riegel(self):
         race = {"title": "Half Marathon race", "date": "2026-09-06", "distance_actual_km": 21.0975,
                 "duration_actual": 1 + 45 / 60}
-        cand = race_effort_candidate([race], "Marathon", None, None)
+        cand = race_effort_candidate([race], "Marathon")
         assert 42195 / cand["speed"] == pytest.approx(6300 * 2 ** 1.06, rel=1e-3)
+
+    def test_shakeout_is_not_a_riegel_candidate(self):
+        shakeout = {"title": "Pre-race shakeout", "date": "2026-09-06", "distance_actual_km": 4.0,
+                    "duration_actual": 0.4}
+        assert race_effort_candidate([shakeout], "Marathon") is None
+
+
+class TestRaceTitleClassification:
+    @pytest.mark.parametrize("title, expected", [
+        ("Race Pace Block", "quality"),
+        ("Pre-race shakeout", "easy"),
+        ("Race week easy", "easy"),
+        ("10K race", "race"),
+    ])
+    def test_race_word_does_not_imply_race(self, title, expected):
+        assert classify_run({"title": title, "distance_actual_km": 6}, "Marathon") == expected
 
 
 class TestLoadProjection:

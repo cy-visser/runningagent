@@ -75,24 +75,36 @@ class TestResolveTargetPeakCtl:
 
 class TestResolveGoalDistance:
     @pytest.mark.parametrize(
-        "goal, label, pr_type",
+        "goal, label",
         [
-            ("Sub-20 5K", "5K", "speed5K"),
-            ("Run a 10k", "10K", "speed10K"),
-            ("Sub-1:15 10 mile", "10 Mile", "speed10Mi"),
-            ("Dam tot Damloop 10 miles", "10 Mile", "speed10Mi"),
-            ("Sub-1:45 Half Marathon", "Half Marathon", "speedHalfMarathon"),
-            ("Sub-3:30 Marathon", "Marathon", "speedMarathon"),
+            ("Sub-20 5K", "5K"),
+            ("Run a 10k", "10K"),
+            ("Sub-50min 10K", "10K"),
+            ("Sub-1:15 10 mile", "10 Mile"),
+            ("Dam tot Damloop 10 miles", "10 Mile"),
+            ("Sub-1:45 Half Marathon", "Half Marathon"),
+            ("Sub-3:30 Marathon", "Marathon"),
         ],
     )
-    def test_resolves_supported_distances(self, goal, label, pr_type):
-        resolved = resolve_goal_distance(goal)
-        assert resolved[0] == label
-        assert resolved[2] == pr_type
+    def test_resolves_supported_distances(self, goal, label):
+        assert resolve_goal_distance(goal) == label
 
-    @pytest.mark.parametrize("goal", [None, "", "General fitness", "100k ultra"])
+    @pytest.mark.parametrize("goal", [None, "", "General fitness", "100k ultra", "15k race"])
     def test_unsupported_goals_return_none(self, goal):
         assert resolve_goal_distance(goal) is None
+
+
+class TestHardenedGoalParsing:
+    def test_minutes_suffix_is_not_an_ultra(self):
+        peak, _ = resolve_target_peak_ctl("Sub-50min 10K")
+        assert peak == 55.0
+
+    @pytest.mark.parametrize(
+        "goal, expected",
+        [("Sub-19:30 5K", 19.5), ("40:00 10K", 40), ("3:15:00 Marathon", 195), ("Sub-1:05 10 mile", 65)],
+    )
+    def test_mm_ss_vs_h_mm(self, goal, expected):
+        assert parse_target_time_minutes(goal) == pytest.approx(expected)
 
 
 class TestEvaluateGoalTrajectory:
@@ -126,5 +138,15 @@ class TestEvaluateGoalTrajectory:
         result = evaluate_goal_trajectory(profile, current_ctl=50.0, today_date=date(2026, 9, 15))
         assert result["weeks_remaining"] is None
 
-    def test_defaults_goal_name_when_absent(self):
-        assert evaluate_goal_trajectory({}, current_ctl=50.0)["goal_name"] == "General Fitness"
+    def test_no_goal_uses_default_peak(self):
+        result = evaluate_goal_trajectory({}, current_ctl=50.0)
+        assert result["target_peak_ctl"] == DEFAULT_PEAK_CTL
+        assert "goal_name" not in result
+
+
+class TestFreeTextTimeline:
+    def test_month_name_timeline_drives_projections(self):
+        profile = {"training_goal": "Sub-3:30 Marathon", "timeline": "November 1st, 2026"}
+        result = evaluate_goal_trajectory(profile, current_ctl=40.0, today_date=date(2026, 9, 25))
+        assert result["weeks_remaining"] == 5.3  # 37 days
+        assert result["required_ramp_rate"] is not None

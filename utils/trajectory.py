@@ -15,82 +15,102 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PEAK_RANGE = (55.0, 70.0)
 DEFAULT_PEAK_CTL = 65.0
+# Standard pre-race taper excluded from the CTL build window.
+TAPER_WEEKS = 2.0
+# Weekly CTL ramp tiers (pts/week): <= SAFE is sustainable, <= MAX is aggressive, above is high risk.
+SAFE_RAMP_PER_WEEK = 3.5
+MAX_RAMP_PER_WEEK = 5.0
 
-TEN_MILE_KEYWORDS = ("10 mile", "10-mile", "10mi", "10 mi ", "ten mile", "16k", "16.1k")
 
-# Goal race distances: (label, km, TrainingPeaks run PR type).
-GOAL_DISTANCES = {
-    "5k": ("5K", 5.0, "speed5K"),
-    "10k": ("10K", 10.0, "speed10K"),
-    "10mi": ("10 Mile", 16.0934, "speed10Mi"),
-    "half": ("Half Marathon", 21.0975, "speedHalfMarathon"),
-    "marathon": ("Marathon", 42.195, "speedMarathon"),
+def ramp_status(required_ramp_rate: Optional[float]) -> Optional[str]:
+    """Status badge for a required weekly CTL ramp rate (single source for the check-in tiers)."""
+    if required_ramp_rate is None:
+        return None
+    if required_ramp_rate <= SAFE_RAMP_PER_WEEK:
+        return f"🟢 safe (<= {SAFE_RAMP_PER_WEEK})"
+    if required_ramp_rate <= MAX_RAMP_PER_WEEK:
+        return f"🟡 aggressive ({SAFE_RAMP_PER_WEEK}-{MAX_RAMP_PER_WEEK})"
+    return f"🔴 high risk (> {MAX_RAMP_PER_WEEK})"
+
+# Goal distance patterns, most specific first ("half marathon" must match
+# before "marathon", "10 mile" before "10k"). Word boundaries stop "15k"
+# from matching "5k" and "50min" from matching an ultra.
+_DISTANCE_PATTERNS = (
+    ("ultra", re.compile(r"\bultra\b|\b(50|100)\s?(k|km|mi|miles?)\b")),
+    ("half", re.compile(r"\bhalf\b|\b21(\.1)?\s?km?\b")),
+    ("10mi", re.compile(r"\b(10|ten)[\s-]?mi(les?)?\b|\b16(\.1)?\s?km?\b")),
+    ("marathon", re.compile(r"\bmarathon\b|\b42(\.2)?\s?km?\b")),
+    ("10k", re.compile(r"\b10\s?km?\b")),
+    ("5k", re.compile(r"\b5\s?km?\b")),
+)
+
+# Supported goal races -> label used by the race-readiness DISTANCE_PROFILES.
+GOAL_LABELS = {
+    "5k": "5K",
+    "10k": "10K",
+    "10mi": "10 Mile",
+    "half": "Half Marathon",
+    "marathon": "Marathon",
 }
 
 
 def _goal_distance_key(text: str) -> Optional[str]:
-    """Classifies a lowercase goal string into a distance key (order matters)."""
-    if any(k in text for k in ["ultra", "50k", "100k", "50m", "100m"]):
-        return "ultra"
-    # Half before marathon because 'half marathon' contains 'marathon'.
-    if any(k in text for k in ["half", "21k", "21.1k"]):
-        return "half"
-    if any(k in f"{text} " for k in TEN_MILE_KEYWORDS):
-        return "10mi"
-    if any(k in text for k in ["marathon", "42k", "42.2k"]):
-        return "marathon"
-    if "10k" in text:
-        return "10k"
-    if "5k" in text:
-        return "5k"
+    """Classifies a goal string into a distance key, or None."""
+    text = str(text or "").lower()
+    for key, pattern in _DISTANCE_PATTERNS:
+        if pattern.search(text):
+            return key
     return None
 
 
-def resolve_goal_distance(goal_text: Optional[str]) -> Optional[tuple[str, float, str]]:
-    """Returns (label, distance_km, pr_type) for supported goal races, else None."""
-    key = _goal_distance_key(str(goal_text or "").lower().strip())
-    return GOAL_DISTANCES.get(key) if key else None
+def resolve_goal_distance(goal_text: Optional[str]) -> Optional[str]:
+    """Returns the goal-race label (e.g. 'Half Marathon') for supported goals, else None."""
+    return GOAL_LABELS.get(_goal_distance_key(goal_text or ""))
 
 
-def parse_target_time_minutes(goal_text: Optional[str]) -> Optional[int]:
-    """Extracts target race finish time in total minutes from goal strings.
-    
+def parse_target_time_minutes(goal_text: Optional[str]) -> Optional[float]:
+    """Extracts the target race finish time in minutes from a goal string.
+
+    'A:BB' is read as MM:SS when A >= 10 (no supported race takes 10+ hours)
+    and as H:MM otherwise; 'H:MM:SS' is always hours.
+
     Examples:
         'Sub-3:30 Marathon' -> 210
-        '3:00 Marathon' -> 180
+        'Sub-19:30 5K' -> 19.5
+        '3:15:00 Marathon' -> 195
         'Sub-4 hour marathon' -> 240
         '3 hours and 15 mins' -> 195
-        'Sub-1:45 Half' -> 105
         'Sub-20 5K' -> 20
-        'Sub-45 10K' -> 45
     """
     if not goal_text:
         return None
     text = str(goal_text).lower().strip()
-    
-    # 1. H:MM(:SS)? format
-    m = re.search(r"\b(\d{1,2}):(\d{2})(?::\d{2})?\b", text)
+
+    # 1. H:MM:SS, H:MM or MM:SS
+    m = re.search(r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b", text)
     if m:
-        h, mins = int(m.group(1)), int(m.group(2))
-        return h * 60 + mins if h > 0 else mins
-        
+        a, b, c = int(m[1]), int(m[2]), m[3]
+        if c is not None:
+            return a * 60 + b + int(c) / 60
+        return a + b / 60 if a >= 10 else a * 60 + b
+
     # 2. X hours Y minutes format
     m = re.search(r"\b(\d+)\s*(?:hours?|hrs?|h)\s*(?:and\s*)?(?:(\d+)\s*(?:mins?|minutes?|m)?)?\b", text)
     if m:
         h = int(m.group(1))
         mins = int(m.group(2)) if m.group(2) else 0
         return h * 60 + mins
-        
+
     # 3. X mins format (for 5K/10K)
     m = re.search(r"\b(\d+)\s*(?:mins?|minutes?)\b", text)
     if m:
         return int(m.group(1))
-        
+
     # 4. sub-XX format (e.g. sub-20, sub-45)
     m = re.search(r"\bsub[- ]?(\d{2})\b", text)
     if m:
         return int(m.group(1))
-        
+
     return None
 
 
@@ -172,44 +192,35 @@ def evaluate_goal_trajectory(
 ) -> dict:
     """Computes quantitative trajectory metrics and required build rates for LLM coaching reasoning."""
     ref_date = parse_date(today_date) or get_today_date()
-    goal_name = profile.get("training_goal", "") or "General Fitness"
     timeline_str = profile.get("timeline")
-    
+
     # Resolve dynamic target peak CTL and reference range from training_goal
-    target_peak_ctl, ref_range = resolve_target_peak_ctl(goal_name)
-    
+    target_peak_ctl, ref_range = resolve_target_peak_ctl(profile.get("training_goal"))
+
     weeks_remaining = None
     build_weeks = None
     required_ramp_rate = None
-    
-    if timeline_str:
-        try:
-            timeline_date = parse_date(timeline_str)
-            if timeline_date:
-                days_diff = (timeline_date - ref_date).days
-                weeks_remaining = max(0.0, round(days_diff / 7.0, 1))
-                
-                # Friel/Coggan safe running CTL ramp rate: ~3.0 - 5.0 pts/week (sweet spot 3.5).
-                # Accounts for a standard 2-week race taper (build_weeks = weeks_remaining - 2).
-                build_weeks = max(0.0, weeks_remaining - 2.0)
-                
-                # Calculate required weekly CTL build rate to reach target peak before taper
-                ctl_deficit = max(0.0, target_peak_ctl - current_ctl)
-                if build_weeks > 0:
-                    required_ramp_rate = round(ctl_deficit / build_weeks, 2)
-                else:
-                    required_ramp_rate = 0.0 if ctl_deficit == 0 else round(ctl_deficit, 2)
-        except Exception as e:
-            logger.warning("Failed to evaluate timeline date '%s': %s", timeline_str, e)
+
+    timeline_date = parse_date(timeline_str) if timeline_str else None
+    if timeline_str and not timeline_date:
+        logger.warning("Could not parse timeline date '%s'", timeline_str)
+    if timeline_date:
+        days_diff = (timeline_date - ref_date).days
+        weeks_remaining = max(0.0, round(days_diff / 7.0, 1))
+        # Build until the standard pre-race taper starts.
+        build_weeks = max(0.0, weeks_remaining - TAPER_WEEKS)
+
+        # Required weekly CTL build rate to reach the target peak before the taper
+        ctl_deficit = max(0.0, target_peak_ctl - current_ctl)
+        if build_weeks > 0:
+            required_ramp_rate = round(ctl_deficit / build_weeks, 2)
+        else:
+            required_ramp_rate = round(ctl_deficit, 2)
 
     return {
-        "goal_name": goal_name,
-        "timeline_date": timeline_str,
         "weeks_remaining": weeks_remaining,
         "build_weeks": build_weeks,
         "target_peak_ctl": target_peak_ctl,
         "reference_range": list(ref_range),
-        "current_ctl": current_ctl,
         "required_ramp_rate": required_ramp_rate,
-        "safe_ramp_limit": 5.0
     }

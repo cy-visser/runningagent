@@ -16,11 +16,13 @@
         "query": "Give me my weekly check-in report and save it to my profile history. How are my CTL and ATL trending?",
         "expected_tool_use": [
           {
-            "tool_name": "fetch_checkin_data",
-            "tool_input": {}
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "check-in-report"
+            }
           },
           {
-            "tool_name": "save_checkin_report",
+            "tool_name": "fetch_checkin_data",
             "tool_input": {}
           }
         ],
@@ -44,6 +46,12 @@
       {
         "query": "Can you audit my training schedule for the next 4 weeks? I want to make sure I don't overtrain before my taper.",
         "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "schedule-audit"
+            }
+          },
           {
             "tool_name": "fetch_schedule_audit_data",
             "tool_input": {}
@@ -70,8 +78,10 @@
         "query": "Please schedule a 5x1000m VO2max workout on my calendar for this Thursday with 2km warmup and cooldown.",
         "expected_tool_use": [
           {
-            "tool_name": "create_workout",
-            "tool_input": {}
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "workout-creator"
+            }
           }
         ],
         "reference": "I've scheduled your 5x1000m VO2max workout for this Thursday on your TrainingPeaks calendar. It includes a 2km warmup, 5x1000m at 5K target pace with 400m recovery jogs, and a 2km cooldown."
@@ -95,8 +105,10 @@
         "query": "Can you add a travel note on my calendar for this Saturday because I will be on a flight all morning?",
         "expected_tool_use": [
           {
-            "tool_name": "create_note",
-            "tool_input": {}
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "workout-creator"
+            }
           }
         ],
         "reference": "I have added a travel note to your calendar for this Saturday noting morning flight travel so your schedule reflects reduced availability."

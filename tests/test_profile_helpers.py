@@ -1,10 +1,13 @@
 import pytest
 
 from running_coach.utils.profile_helpers import (
+    RUNNER_ID_STATE_KEY,
     format_profile_summary,
     get_user_id,
     merge_profile_data,
+    onboarding_prefill,
     parse_runner_name,
+    profile_user_id,
     sync_profile_to_state,
 )
 
@@ -75,9 +78,9 @@ class TestMergeProfileData:
         )
         assert profile["location"] == "Explicit City"
 
-    def test_defaults_sleep_average_and_coordinates(self):
+    def test_defaults_coordinates_and_has_no_sleep_average(self):
         profile = merge_profile_data(answers={}, temp_data={})
-        assert profile["sleep_hours_2w_avg"] == 7.0
+        assert "sleep_hours_2w_avg" not in profile
         assert profile["latitude"] is None
         assert profile["longitude"] is None
 
@@ -97,18 +100,57 @@ class TestMergeProfileData:
 
 
 class TestSyncProfileToState:
-    def test_populates_profile_summary_and_user_id(self):
+    def test_populates_profile_summary_and_runner_id(self):
         ctx = FakeContext()
         sync_profile_to_state(ctx, {"firstname": "Casper", "lastname": "Visser", "age": "41"})
-        assert ctx.state["user_id"] == "casper_visser"
+        assert ctx.state[RUNNER_ID_STATE_KEY] == "casper_visser"
+        assert "user_id" not in ctx.state
         assert ctx.state["user_profile"]["age"] == "41"
         assert "Casper Visser" in ctx.state["user_profile_summary"]
 
-    def test_omits_user_id_when_name_is_absent(self):
+    def test_omits_runner_id_when_name_is_absent(self):
         ctx = FakeContext()
         sync_profile_to_state(ctx, {"age": "41"})
-        assert "user_id" not in ctx.state
+        assert RUNNER_ID_STATE_KEY not in ctx.state
+
+
+class TestProfileUserId:
+    def test_returns_id_for_named_profile(self):
+        assert profile_user_id({"firstname": "Casper", "lastname": "Visser"}) == "casper_visser"
+
+    @pytest.mark.parametrize("profile", [None, {}, {"firstname": " ", "lastname": ""}])
+    def test_returns_none_without_name(self, profile):
+        assert profile_user_id(profile) is None
+
+
+def test_onboarding_prefill_copies_answered_fields():
+    prefill = onboarding_prefill({"firstname": "Casper", "age": "41", "training_goal": "x"})
+    assert prefill["firstname"] == "Casper"
+    assert prefill["age"] == "41"
+    assert "training_goal" not in prefill
 
 
 def test_format_profile_summary_is_empty_for_empty_profile():
     assert format_profile_summary({}) == ""
+
+
+def test_format_profile_summary_omits_coordinates_and_sleep():
+    summary = format_profile_summary({"firstname": "C", "latitude": 52.1, "sleep_hours_2w_avg": 7})
+    assert "Lat" not in summary
+    assert "Sleep" not in summary
+
+
+class TestNormalizeTimeline:
+    from running_coach.utils.profile_helpers import normalize_timeline as _norm
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [("November 1st, 2026", "2026-11-01"), ("2026-11-01", "2026-11-01"),
+         ("next spring", "next spring"), (None, None), ("", "")],
+    )
+    def test_normalizes_when_parseable(self, raw, expected):
+        assert TestNormalizeTimeline._norm(raw) == expected
+
+    def test_merge_profile_data_stores_iso_timeline(self):
+        profile = merge_profile_data(answers={"timeline": "November 1st, 2026"}, temp_data={})
+        assert profile["timeline"] == "2026-11-01"

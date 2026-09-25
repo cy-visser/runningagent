@@ -20,7 +20,7 @@ PROJECT_ID="$GOOGLE_CLOUD_PROJECT"
 REGION="${DEPLOY_REGION:-europe-west4}"
 IDENTITY="running-coach-agent@${PROJECT_ID}.iam.gserviceaccount.com"
 SESSION_URI="firestore://${PROJECT_ID}"
-SECRET_NAME="tp-auth-cookie"
+SECRET_NAME="${TP_COOKIE_SECRET_ID:-tp-auth-cookie}"
 DRY_RUN=false
 
 # Parse parameters
@@ -91,7 +91,21 @@ else
     echo "Using existing '${SECRET_NAME}' secret from Secret Manager."
 fi
 
-# 2. Run the ADK deployment
+# 2. Build the Agent Engine env file WITHOUT the TrainingPeaks cookie. Without
+#    --env_file, `adk deploy` would copy every .env variable (including the
+#    cookie) into the Agent Engine environment. The cookie is read from Secret
+#    Manager at runtime instead (services/secrets.py).
+DEPLOY_ENV=$(mktemp)
+trap 'rm -f "$DEPLOY_ENV"' EXIT
+if [ -f .env ]; then
+    grep -v -E '^(TP_AUTH_COOKIE|TP_COOKIE_SECRET_ID)=' .env > "$DEPLOY_ENV" || true
+fi
+echo "TP_COOKIE_SECRET_ID=${SECRET_NAME}" >> "$DEPLOY_ENV"
+
+# 3. Run the agent under the dedicated service account for this project.
+printf '{\n  "service_account": "%s"\n}\n' "${IDENTITY}" > .agent_engine_config.json
+
+# 4. Run the ADK deployment
 echo "Triggering Vertex AI deployment..."
 adk deploy agent_engine \
   --project "${PROJECT_ID}" \
@@ -99,6 +113,7 @@ adk deploy agent_engine \
   --display_name "Running Coach" \
   --description "AI Running Coach integrated with TrainingPeaks and Firestore" \
   --session_service_uri "${SESSION_URI}" \
+  --env_file "${DEPLOY_ENV}" \
   --otel_to_cloud \
   .
 

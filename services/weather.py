@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 HTTP_TIMEOUT_SECONDS = 5.0
 FORECAST_HORIZON_DAYS = 16
-_USER_AGENT = {"User-Agent": "Mozilla/5.0"}
+_USER_AGENT = {"User-Agent": "running-coach/1.0"}
 
 
 def _fetch_json(url: str) -> dict:
@@ -88,7 +88,8 @@ def _build_condition_map(
     weather_url = (
         "https://api.open-meteo.com/v1/forecast?"
         f"latitude={lat}&longitude={lon}&start_date={min_date}&end_date={max_date}"
-        "&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max"
+        "&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,"
+        "relative_humidity_2m_mean,precipitation_sum,wind_speed_10m_max"
         "&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m"
         "&timezone=auto"
     )
@@ -103,15 +104,25 @@ def _build_condition_map(
     temp_unit = daily_units.get("temperature_2m_max", "°C")
     precip_unit = daily_units.get("precipitation_sum", "mm")
     wind_unit = daily_units.get("wind_speed_10m_max", "km/h")
+    hum_unit = daily_units.get("relative_humidity_2m_mean", "%")
 
-    daily_map = {
-        t_str: (
-            f"Day: {daily['temperature_2m_min'][i]}{temp_unit}-{daily['temperature_2m_max'][i]}{temp_unit}, "
-            f"Precip: {daily['precipitation_sum'][i]}{precip_unit}, "
-            f"Wind: {daily['wind_speed_10m_max'][i]}{wind_unit}"
-        )
-        for i, t_str in enumerate(daily.get("time", []))
-    }
+    def _daily(key: str, i: int):
+        values = daily.get(key) or []
+        return values[i] if i < len(values) else None
+
+    def _day_summary(i: int) -> str:
+        parts = [f"Day: {_daily('temperature_2m_min', i)}{temp_unit}-{_daily('temperature_2m_max', i)}{temp_unit}"]
+        feels = _daily("apparent_temperature_max", i)
+        if feels is not None:
+            parts.append(f"Feels max: {feels}{temp_unit}")
+        humidity = _daily("relative_humidity_2m_mean", i)
+        if humidity is not None:
+            parts.append(f"Humidity: {humidity}{hum_unit}")
+        parts.append(f"Precip: {_daily('precipitation_sum', i)}{precip_unit}")
+        parts.append(f"Wind: {_daily('wind_speed_10m_max', i)}{wind_unit}")
+        return ", ".join(parts)
+
+    daily_map = {t_str: _day_summary(i) for i, t_str in enumerate(daily.get("time", []))}
 
     hourly_units = weather_data.get("hourly_units", {})
     h_temp_unit = hourly_units.get("temperature_2m", "°C")
@@ -164,6 +175,14 @@ def get_weather_conditions(
     return conditions
 
 
+def format_weather_conditions(location: str, conditions: dict[str, str]) -> str:
+    """Renders a {date_or_timestamp: conditions} map as model-facing narrative text."""
+    if not conditions:
+        return ""
+    lines = [f"- {input_str}: {summary}" for input_str, summary in conditions.items()]
+    return f"Weather in {location or 'your location'} for requested dates/times:\n" + "\n".join(lines)
+
+
 def get_weather_for_dates(
     location: str,
     dates: list[str],
@@ -172,7 +191,8 @@ def get_weather_for_dates(
 ) -> str:
     """Fetches weather data (daily and hourly) for a list of dates/timestamps in a single API call.
 
-    Bypasses geocoding if lat and lon are provided.
+    Bypasses geocoding if lat and lon are provided. Failures are returned as a
+    human-readable message (this is the ad-hoc tool path).
     """
     try:
         error, conditions = _build_condition_map(location, dates, lat, lon)
@@ -182,6 +202,4 @@ def get_weather_for_dates(
 
     if error:
         return error
-
-    lines = [f"- {input_str}: {summary}" for input_str, summary in conditions.items()]
-    return f"Weather in {location} for requested dates/times:\n" + "\n".join(lines)
+    return format_weather_conditions(location, conditions)

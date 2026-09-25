@@ -164,12 +164,14 @@ class TestFormatScheduleAuditSummary:
             "total_distance_km": 52.345, "total_tss": 310.0,
             "easy_count": 4, "quality_count": 2, "bike_count": 1,
             "strength_count": 1, "other_sport_count": 0,
-            "sessions": ["[Run] 'Easy' on Monday"], "travel_note": "Trip to Milan",
+            "sessions": ["[Run] 'Easy' on Monday"], "notes": ["Trip to Milan"],
         }])
         assert "52.3 km (6 runs: 4 easy, 2 quality" in out
         assert "1 bike, 1 strength" in out
-        assert "Planned TSS: 310.0" in out
-        assert "Travel: Trip to Milan" in out
+        assert "TSS: 310.0" in out
+        assert "Planned TSS" not in out
+        assert out.count("Trip to Milan") == 1
+        assert "📝 Note: Trip to Milan" in out
 
     def test_handles_an_empty_schedule(self):
         assert "Training Schedule Audit" in format_schedule_audit_summary([])
@@ -189,6 +191,32 @@ class TestFormatNutritionContextSummary:
     def test_reports_when_nothing_is_scheduled(self):
         out = format_nutrition_context_summary(profile={}, upcoming_workouts=[])
         assert "No planned sessions in the next 3 days." in out
+        assert "Not set" in out
+        assert "Marathon" not in out
+
+    def test_duration_is_converted_from_planned_hours(self):
+        out = format_nutrition_context_summary(
+            profile={}, upcoming_workouts=[{"sport": "Run", "title": "Tempo", "date": "2026-09-16", "duration_planned": 1.5}],
+        )
+        assert "90 min" in out
+
+    def test_header_follows_days_forward(self):
+        out = format_nutrition_context_summary(profile={}, upcoming_workouts=[], days_forward=5)
+        assert "Next 5 Days" in out
+        assert "No planned sessions in the next 5 days." in out
+
+
+class TestWeeklyTotals:
+    def test_checkin_includes_precomputed_weekly_totals(self):
+        weeks = [{"date_range": "Sep 7 - Sep 13, 2026", "total_distance_km": 40.0, "total_tss": 250.0,
+                  "easy_count": 3, "quality_count": 1, "bike_count": 0, "strength_count": 0,
+                  "other_sport_count": 0, "sessions": [], "notes": []}]
+        out = compile_checkin_summary(
+            lookback_days=14, lookahead_days=7, workouts_past=[], workouts_future=[], metrics_data={}, fitness_data={},
+            notes_list=[], weekly_totals=weeks,
+        )
+        assert "Weekly Totals" in out
+        assert "40.0 km (4 runs: 3 easy, 1 quality" in out
 
 
 def test_format_calendar_notes_reports_empty_state():
