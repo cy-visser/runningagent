@@ -37,4 +37,6 @@ scratch/
 
 # ADK local runtime state & generated artifacts
 .adk/
+deployment_metadata.json*
+
 

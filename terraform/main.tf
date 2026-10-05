@@ -17,6 +17,7 @@ provider "google" {
 locals {
   apis = [
     "aiplatform.googleapis.com",      # Vertex AI / Agent Platform
+    "discoveryengine.googleapis.com", # Gemini Enterprise (Discovery Engine)
     "secretmanager.googleapis.com",   # Secret Manager
     "firestore.googleapis.com",       # Firestore (Session State)
     "cloudtrace.googleapis.com",      # Cloud Trace (Telemetry)
@@ -102,7 +103,31 @@ resource "google_firestore_database" "default_db" {
   depends_on = [google_project_service.services]
 }
 
+# 8. Cloud Storage Bucket for Prompt & Response Telemetry (traces_runningagent)
+import {
+  to = google_storage_bucket.traces
+  id = var.traces_bucket_name
+}
+
+resource "google_storage_bucket" "traces" {
+  name                        = var.traces_bucket_name
+  location                    = upper(var.region)
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  lifecycle {
+    ignore_changes = [encryption]
+  }
+}
+
+resource "google_storage_bucket_iam_member" "agent_traces_access" {
+  bucket = google_storage_bucket.traces.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.agent_sa.email}"
+}
+
 output "agent_service_account_email" {
   value       = google_service_account.agent_sa.email
   description = "The service account email to configure in the agent deployment"
 }
+

@@ -7,7 +7,7 @@ from google.adk.tools import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from mcp import StdioServerParameters
 
-from .secrets import inject_production_secrets
+from .secrets import get_tp_cookie
 from ..utils.paths import PACKAGE_DIR
 
 logger = logging.getLogger(__name__)
@@ -23,11 +23,13 @@ _tp_tools_by_name: dict[str, Any] = {}
 
 
 def _build_toolset() -> Any:
-    # Fetches the cookie from Secret Manager when it isn't in the environment.
-    inject_production_secrets()
-    cookie_value = os.environ.get("TP_AUTH_COOKIE")
+    # Reads the cookie from Secret Manager and passes it only to the tp-mcp subprocess.
+    cookie_value = get_tp_cookie()
     if not cookie_value:
-        logger.warning("TP_AUTH_COOKIE is not set; TrainingPeaks calls will likely fail.")
+        logger.warning(
+            "TrainingPeaks cookie could not be loaded from Secret Manager; "
+            "TrainingPeaks calls will likely fail."
+        )
     tp_env = {"TP_AUTH_COOKIE": cookie_value} if cookie_value else None
     return McpToolset(
         connection_params=StdioConnectionParams(

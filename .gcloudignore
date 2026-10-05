@@ -1,0 +1,19 @@
+#!include:.gitignore
+
+# Non-runtime directories & dev/deploy artifacts
+terraform
+terraform/
+terraform/*
+trainingpeaks-mcp
+trainingpeaks-mcp/
+trainingpeaks-mcp/*
+tests
+tests/
+tests/*
+evals
+evals/
+evals/*
+*.log
+deploy_help.txt
+deploy.sh
+deployment_metadata.json*

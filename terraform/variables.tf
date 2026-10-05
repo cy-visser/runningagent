@@ -26,3 +26,10 @@ variable "tp_cookie_secret_id" {
   type        = string
   default     = "tp-auth-cookie"
 }
+
+variable "traces_bucket_name" {
+  description = "Cloud Storage bucket for GenAI prompt/response completion logs"
+  type        = string
+  default     = "traces_runningagent"
+}
+

@@ -131,7 +131,9 @@ class TestCreateProfileGuard:
 
 
 class TestTpMcpTimeout:
-    def test_toolset_uses_explicit_connect_timeout(self, monkeypatch):
+    def test_toolset_uses_explicit_connect_timeout_and_subprocess_cookie(self, monkeypatch):
+        import os
+
         captured = {}
 
         class FakeToolset:
@@ -141,11 +143,16 @@ class TestTpMcpTimeout:
             async def get_tools(self):
                 return [type("T", (), {"name": "tp_get_profile"})()]
 
+        monkeypatch.delenv("TP_AUTH_COOKIE", raising=False)
         monkeypatch.setattr(tp_mcp, "_tp_toolset", None)
         monkeypatch.setattr(tp_mcp, "McpToolset", FakeToolset)
-        monkeypatch.setattr(tp_mcp, "inject_production_secrets", lambda: None)
+        monkeypatch.setattr(tp_mcp, "get_tp_cookie", lambda: "secret-cookie")
 
         asyncio.run(tp_mcp.get_tp_tool("tp_get_profile"))
         params = captured["params"]
         assert isinstance(params, tp_mcp.StdioConnectionParams)
         assert params.timeout == tp_mcp.TP_MCP_CONNECT_TIMEOUT_S >= 30
+        assert params.server_params.env == {"TP_AUTH_COOKIE": "secret-cookie"}
+        assert "TP_AUTH_COOKIE" not in os.environ
+
+

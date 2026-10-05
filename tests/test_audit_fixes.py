@@ -264,14 +264,23 @@ class TestTpToolCache:
 
 
 # ---------------------------------------------------------------- secrets
-class TestInjectProductionSecrets:
-    def test_skips_secret_manager_when_cookie_is_set(self, monkeypatch):
-        monkeypatch.setenv("TP_AUTH_COOKIE", "local")
-        monkeypatch.setattr(secrets, "get_secret_name", lambda: pytest.fail("should not be called"))
-        secrets.inject_production_secrets()
-        assert os.environ["TP_AUTH_COOKIE"] == "local"
+class TestGetTpCookie:
+    def test_reads_secret_manager_even_when_env_cookie_is_set(self, monkeypatch):
+        from google.cloud import secretmanager
 
-    def test_reads_secret_manager_when_cookie_missing(self, monkeypatch):
+        monkeypatch.setenv("TP_AUTH_COOKIE", "local-ignored")
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+
+        class FakeClient:
+            def access_secret_version(self, request):
+                payload = type("P", (), {"data": b" secret-cookie \n"})()
+                return type("R", (), {"payload": payload})()
+
+        monkeypatch.setattr(secretmanager, "SecretManagerServiceClient", FakeClient)
+        assert secrets.get_tp_cookie() == "secret-cookie"
+        assert os.environ["TP_AUTH_COOKIE"] == "local-ignored"
+
+    def test_reads_secret_manager_without_mutating_environ(self, monkeypatch):
         from google.cloud import secretmanager
 
         monkeypatch.delenv("TP_AUTH_COOKIE", raising=False)
@@ -285,20 +294,75 @@ class TestInjectProductionSecrets:
                 return type("R", (), {"payload": payload})()
 
         monkeypatch.setattr(secretmanager, "SecretManagerServiceClient", FakeClient)
-        secrets.inject_production_secrets()
-        assert os.environ["TP_AUTH_COOKIE"] == "secret-cookie"
+        assert secrets.get_tp_cookie() == "secret-cookie"
+        assert "TP_AUTH_COOKIE" not in os.environ
         assert requested["name"].startswith("projects/")
         assert requested["name"].endswith("/versions/latest")
 
+    def test_returns_none_on_secret_manager_error(self, monkeypatch):
+        from google.cloud import secretmanager
+
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj")
+
+        class BrokenClient:
+            def access_secret_version(self, request):
+                raise RuntimeError("secret access denied")
+
+        monkeypatch.setattr(secretmanager, "SecretManagerServiceClient", BrokenClient)
+        assert secrets.get_tp_cookie() is None
+
 
 # ---------------------------------------------------------------- deploy packaging
-def test_ae_ignore_excludes_env_and_cookie_files():
-    with open(os.path.join(PACKAGE_DIR, ".ae_ignore")) as f:
-        patterns = [line.strip() for line in f if line.strip()]
+def test_gcloudignore_excludes_env_cookie_and_dev_dirs():
+    patterns = []
+    with open(os.path.join(PACKAGE_DIR, ".gcloudignore")) as f:
+        for raw in f:
+            line = raw.strip()
+            if line == "#!include:.gitignore":
+                with open(os.path.join(PACKAGE_DIR, ".gitignore")) as gf:
+                    for graw in gf:
+                        gline = graw.strip().rstrip("/")
+                        if gline and not gline.startswith("#"):
+                            patterns.append(gline)
+            elif line and not line.startswith("#"):
+                patterns.append(line.rstrip("/"))
     ignore = shutil.ignore_patterns(*patterns)
-    ignored = ignore(PACKAGE_DIR, [".env", ".env.prod", "tp.cookie", "agent.py", "tools.py"])
-    assert {".env", ".env.prod", "tp.cookie"} <= ignored
-    assert "agent.py" not in ignored
+    candidates = [
+        ".env",
+        ".env.prod",
+        "tp.cookie",
+        "tests",
+        "terraform",
+        "trainingpeaks-mcp",
+        "deployment_metadata.json",
+        "deploy.sh",
+        "Dockerfile",
+        "requirements.txt",
+        "tp_mcp-2.0.0-py3-none-any.whl",
+        "skills",
+        "agent.py",
+        "tools.py",
+    ]
+    ignored = ignore(PACKAGE_DIR, candidates)
+    assert {
+        ".env",
+        ".env.prod",
+        "tp.cookie",
+        "tests",
+        "terraform",
+        "trainingpeaks-mcp",
+        "deployment_metadata.json",
+        "deploy.sh",
+    } <= ignored
+    assert {
+        "Dockerfile",
+        "requirements.txt",
+        "tp_mcp-2.0.0-py3-none-any.whl",
+        "skills",
+        "agent.py",
+        "tools.py",
+    }.isdisjoint(ignored)
+
 
 
 # ---------------------------------------------------------------- ramp tiers

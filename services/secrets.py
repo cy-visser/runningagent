@@ -1,5 +1,5 @@
 import logging
-import os
+from typing import Optional
 
 from .config import gcp_project_id, tp_cookie_secret_id
 
@@ -17,23 +17,25 @@ def get_secret_name() -> str:
     return f"projects/{project_id}/secrets/{tp_cookie_secret_id()}/versions/latest"
 
 
-def inject_production_secrets() -> None:
-    """Loads TP_AUTH_COOKIE from Secret Manager when it is not already in the environment.
+def get_tp_cookie() -> Optional[str]:
+    """Reads the TrainingPeaks auth cookie from Secret Manager.
 
-    Locally the cookie comes from `.env`. Deployments deliberately ship without it
-    (see deploy.sh / .ae_ignore), so a missing cookie means "fetch it from Secret
-    Manager" regardless of the hosting platform.
+    Used by both local runs (via Application Default Credentials) and deployed Agent
+    Runtime instances (via the agent service account). Never reads from or writes to
+    process environment variables.
     """
-    if os.environ.get("TP_AUTH_COOKIE"):
-        return
-
     try:
         from google.cloud import secretmanager
 
         client = secretmanager.SecretManagerServiceClient()
         response = client.access_secret_version(request={"name": get_secret_name()})
-        # Inject into environment so the MCP subprocess inherits it.
-        os.environ["TP_AUTH_COOKIE"] = response.payload.data.decode("UTF-8").strip()
-        logger.info("Injected TP_AUTH_COOKIE from Secret Manager.")
+        cookie = response.payload.data.decode("UTF-8").strip()
+        if cookie:
+            logger.info("Loaded TrainingPeaks auth cookie from Secret Manager.")
+            return cookie
+        logger.warning("Secret Manager returned an empty TrainingPeaks cookie.")
+        return None
     except Exception as e:
-        logger.error("Failed to inject production secrets: %s", e)
+        logger.error("Failed to load TrainingPeaks cookie from Secret Manager: %s", e)
+        return None
+

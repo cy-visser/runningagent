@@ -1,6 +1,8 @@
-google-adk[extensions,a2a,mcp]==2.2.0
+google-adk[extensions,a2a,mcp,otel-gcp]==2.2.0
 google-cloud-firestore
 python-dotenv
 ./agents/running_coach/tp_mcp-2.0.0-py3-none-any.whl
 google-cloud-secret-manager
-google-cloud-aiplatform
+google-cloud-aiplatform[agent_engines]>=1.148.1,<2
+opentelemetry-util-genai[upload]
+gcsfs

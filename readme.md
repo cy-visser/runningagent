@@ -30,8 +30,14 @@ pip install ./tp_mcp-2.0.0-py3-none-any.whl
 pip install $(grep -v 'tp_mcp.*\.whl' requirements.txt)
 ```
 
-### 2. Configure Environment Variables
-Create a `.env` file in the project root containing the configuration parameters. Copy the template below and replace placeholder values with your actual configuration:
+### 2. Configure Environment Variables & Credentials
+Both local runs and deployed instances read the TrainingPeaks cookie from **Secret Manager** (`tp-auth-cookie`). Authenticate Application Default Credentials once so local runs can access Secret Manager and Firestore:
+
+```bash
+gcloud auth application-default login
+```
+
+Create a `.env` file in the project root containing the configuration parameters (never put `TP_AUTH_COOKIE` in `.env`):
 
 ```env
 # Enable Vertex AI GenAI SDK mode
@@ -47,9 +53,6 @@ FIRESTORE_DATABASE=running-coach
 
 # PYTHONPATH injection needed specifically for container deployment startup
 PYTHONPATH=/app/agents/running_coach
-
-# TrainingPeaks Cookie (Required for local test runs; Secret Manager handles production)
-TP_AUTH_COOKIE=YOUR_TRAININGPEAKS_COOKIE_HERE
 ```
 
 ### 3. Run the Local Web Server
@@ -81,10 +84,16 @@ adk eval . evals/comprehensive_coach_evals.evalset.json --config_file_path evals
 
 ## Production Deployment Guide
 
-We follow production best practices: managing infrastructure via **Terraform (IaC)** and storing sensitive credentials securely in **GCP Secret Manager** .
+We follow production best practices: managing infrastructure via **Terraform (IaC)**, storing sensitive credentials in **GCP Secret Manager**, and deploying/publishing with **`agents-cli`**.
+
+### Prerequisites
+Install `agents-cli` (`google-agents-cli`), `gcloud`, `jq`, and `curl`:
+```bash
+uv tool install google-agents-cli==1.8.0
+```
 
 ### Phase 1: Provision Infrastructure (Terraform)
-Navigate to the `terraform/` directory and run Terraform to enable APIs, create the service account, grant IAM roles, and provision the secret container:
+Navigate to the `terraform/` directory and run Terraform to enable APIs, create the service account, grant IAM roles, provision the secret container, and manage the prompt/response traces bucket:
 
 ```bash
 cd terraform
@@ -92,19 +101,27 @@ terraform init
 terraform apply
 ```
 *Review the plan and type `yes` to approve. This will provision:*
-*   **APIs**: Vertex AI, Secret Manager, Firestore, Cloud Trace, Cloud Logging.
+*   **APIs**: Vertex AI, Discovery Engine (Gemini Enterprise), Secret Manager, Firestore, Cloud Trace, Cloud Logging.
 *   **Service Account**: `running-coach-agent@your_project_id.iam.gserviceaccount.com`.
-*   **IAM Roles**: Vertex AI User, Firestore User, Trace Agent, Logs Writer, Secret Accessor, and the critical Vertex AI Service Agent binding.
+*   **IAM Roles**: Vertex AI User, Firestore User, Trace Agent, Logs Writer, Secret Accessor, Storage Object User on `gs://traces_runningagent`, and the Vertex AI Service Agent bindings.
 *   **Secret**: A secure container named `tp-auth-cookie`.
+*   **Traces Bucket**: `gs://traces_runningagent` for GenAI prompt and response completion logs.
 
-### Phase 2: Deploy the Agent & Upload the Secret
-Return to the project root and run the deployment script. If this is your first deployment or if you need to update your credentials, pass your TrainingPeaks cookie with `--tp-cookie`. If `tp-auth-cookie` already exists in Secret Manager, the parameter can be omitted:
+### Phase 2: Deploy the Agent & Register in Gemini Enterprise
+Return to the project root and run `deploy.sh`. The script:
+1. Uploads a new TrainingPeaks cookie version to Secret Manager if `--tp-cookie` is passed (otherwise verifies an active version exists).
+2. Ensures a Gemini Enterprise app named **Running Coach** exists (creating it if needed).
+3. Deploys the container image to Vertex AI Agent Runtime via `agents-cli deploy` with prompt/response logging to `gs://traces_runningagent/completions`.
+4. Registers or updates the agent in the **Running Coach** Gemini Enterprise app via `agents-cli publish gemini-enterprise`.
 
 ```bash
 cd ..
 chmod +x deploy.sh
 
-# First deployment (or updating cookie):
+# Validate preflight, app lookup, and deploy config without making changes:
+./deploy.sh --dry-run
+
+# First deployment (or rotating the TrainingPeaks cookie):
 ./deploy.sh --tp-cookie 'YOUR_ACTUAL_TP_COOKIE_HERE'
 
 # Subsequent deployments (reuses secret in Secret Manager):
@@ -115,19 +132,24 @@ chmod +x deploy.sh
 
 ## Monitoring & Telemetry (Production)
 
-Once deployed, the agent is fully instrumented with OpenTelemetry (`--otel_to_cloud`), allowing you to monitor performance, latencies, and costs in the **Google Cloud Console**:
+Once deployed, the agent is instrumented with OpenTelemetry (`--otel_to_cloud`), allowing you to monitor performance, latencies, prompts/responses, and costs in the **Google Cloud Console**:
 
 ### 1. Request Traces & Bottlenecks (Cloud Trace)
 *   Go to **Cloud Trace** -> **Trace Explorer**.
-*   View end-to-end waterfall latency charts for every check-in session, showing exactly how long the LLM, TrainingPeaks API, and weather API took.
+*   View end-to-end waterfall latency charts for every check-in session, showing how long the LLM, TrainingPeaks API, and weather API took.
 
-### 2. Token Usage & Cost Tracking (Cloud Monitoring)
+### 2. Prompt & Response Completion Logs (Cloud Storage)
+*   Every model invocation uploads its prompt inputs, system instructions, tool definitions, and model responses as JSONL files under `gs://traces_runningagent/completions/`.
+*   Message content is kept out of Cloud Trace and Cloud Logging (`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT`); trace spans and log events reference the uploaded GCS objects.
+
+### 3. Token Usage & Cost Tracking (Cloud Monitoring)
 To monitor your token consumption and set up budget alerts:
 *   Go to **Monitoring** -> **Metrics Explorer**.
 *   Select the metric: `aiplatform.googleapis.com/prediction/token_count`.
 *   Group by `model_id` to track and compare token usage.
 *   Set up an **Alerting Policy** to notify you if token consumption spikes, protecting you against billing surprises.
 
-### 3. Live Logs (Cloud Logging)
+### 4. Live Logs (Cloud Logging)
 *   Go to **Logging** -> **Logs Explorer**.
-*   Search for logs associated with the `running-coach-agent` service account to view real-time execution logs (including `DEBUG:` statements) structured by session ID.
+*   Search for logs associated with the `running-coach-agent` service account to view real-time execution logs structured by session ID.
+

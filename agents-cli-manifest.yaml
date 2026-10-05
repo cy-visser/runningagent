@@ -1,0 +1,12 @@
+name: 'Running Coach'
+acli_version: '1.8.0'
+agent_directory: '.'
+region: 'europe-west4'
+language: 'python'
+framework: 'google-adk'
+create_params:
+  root_agent_name: 'running_coach_workflow'
+  deployment_target: 'agent_runtime'
+  session_type: 'none'
+  cicd_runner: 'skip'
+  agent_gateway: false
