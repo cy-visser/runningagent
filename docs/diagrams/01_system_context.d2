@@ -1,0 +1,47 @@
+direction: down
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+classes: {
+  person: {shape: person; style.fill: "#ffffff"; style.stroke: "#5f6368"}
+  compute: {style.fill: "#e8f0fe"; style.stroke: "#1a73e8"; style.border-radius: 6}
+  ai: {style.fill: "#e6f4ea"; style.stroke: "#137333"; style.border-radius: 6}
+  data: {shape: cylinder; style.fill: "#fff8e1"; style.stroke: "#f9ab00"}
+  core: {style.fill: "#f3e8fd"; style.stroke: "#8430ce"; style.border-radius: 6; style.bold: true}
+  ext: {style.fill: "#fce8e6"; style.stroke: "#c5221f"; style.border-radius: 6}
+}
+
+runner: "Runner" {class: person}
+
+gcp: "Google Cloud (europe-west4)" {
+  style.fill: "#f8f9fa"
+  style.stroke: "#bdc1c6"
+
+  ge: "Gemini Enterprise app\n(Running Coach)" {class: compute}
+  runtime: "Agent Platform Agent Runtime" {
+    class: compute
+    core: "Running Coach agent\n(ADK)" {class: core}
+  }
+  gemini: "Gemini on Agent Platform" {class: ai}
+  firestore: "Firestore\n(sessions, profiles, reports)" {class: data}
+
+  ge -> runtime.core: "A2A"
+  runtime.core -> gemini: "LLM calls"
+  runtime.core -> firestore: "read / write"
+}
+
+external: "External services" {
+  style.fill: "#f8f9fa"
+  style.stroke: "#bdc1c6"
+
+  tp: "TrainingPeaks API\n(workouts, metrics, calendar)" {class: ext}
+  meteo: "Open-Meteo\n(geocoding, weather)" {class: ext}
+}
+
+runner -> gcp.ge: "chat"
+gcp.runtime.core -> external.tp: "MCP (tp-mcp)"
+gcp.runtime.core -> external.meteo: "HTTPS"

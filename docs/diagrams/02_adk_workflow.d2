@@ -1,0 +1,52 @@
+direction: down
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+classes: {
+  compute: {style.fill: "#e8f0fe"; style.stroke: "#1a73e8"; style.border-radius: 6}
+  ai: {style.fill: "#e6f4ea"; style.stroke: "#137333"; style.border-radius: 6}
+  det: {style.fill: "#ffffff"; style.stroke: "#5f6368"; style.border-radius: 6}
+  data: {shape: cylinder; style.fill: "#fff8e1"; style.stroke: "#f9ab00"}
+  core: {style.fill: "#f3e8fd"; style.stroke: "#8430ce"; style.border-radius: 6; style.bold: true}
+  decision: {shape: diamond; style.fill: "#fef7e0"; style.stroke: "#f9ab00"}
+}
+
+client: "Gemini Enterprise\n(A2A)" {shape: person; style.fill: "#ffffff"; style.stroke: "#5f6368"}
+session: "Session state\n(Firestore session service,\nauto-resume + compaction)" {class: data}
+
+app: "ADK App: running_coach" {
+  style.fill: "#f8f9fa"
+  style.stroke: "#bdc1c6"
+
+  start: "START" {shape: circle; class: det}
+  router: "profile_router\n(deterministic)" {class: decision}
+
+  unavailable: "tp_unavailable_node\n(fixed message)" {class: det}
+
+  onboarding: "onboarding_node" {
+    class: det
+    agent: "onboarding_agent\nLLM, task mode\n(flash-lite)" {class: ai}
+    save: "create_profile_step\n(geocode + save)" {class: det}
+    agent -> save: "OnboardingAnswers"
+  }
+
+  coaching: "coaching_node" {
+    class: det
+    agent: "coaching_agent\nLLM, chat mode\n(flash)" {class: core}
+    tools: "load_skill + 9 facade tools" {class: compute}
+    agent <-> tools: "tool calls"
+  }
+
+  start -> router
+  router -> onboarding: "no profile /\nre-onboard"
+  router -> coaching: "profile found"
+  router -> unavailable: "TrainingPeaks\nunreachable"
+}
+
+client -> app.start: "user message"
+app.router <-> session: "user_profile,\nuser:runner_id"
+app.onboarding.save -> session: "user_profile"

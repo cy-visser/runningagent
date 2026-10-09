@@ -1,0 +1,65 @@
+direction: down
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+classes: {
+  person: {shape: person; style.fill: "#ffffff"; style.stroke: "#5f6368"}
+  compute: {style.fill: "#e8f0fe"; style.stroke: "#1a73e8"; style.border-radius: 6}
+  ai: {style.fill: "#e6f4ea"; style.stroke: "#137333"; style.border-radius: 6}
+  sec: {style.fill: "#fff8e1"; style.stroke: "#f9ab00"; style.border-radius: 6}
+  data: {shape: cylinder; style.fill: "#fff8e1"; style.stroke: "#f9ab00"}
+  core: {style.fill: "#f3e8fd"; style.stroke: "#8430ce"; style.border-radius: 6; style.bold: true}
+  tool: {style.fill: "#ffffff"; style.stroke: "#5f6368"; style.border-radius: 6}
+}
+
+dev: "Developer" {class: person}
+
+tooling: "Deploy tooling" {
+  style.fill: "#f8f9fa"
+  style.stroke: "#bdc1c6"
+  tf: "Terraform\n(APIs, SA, IAM, secret,\nFirestore DB, traces bucket)" {class: tool}
+  deploy: "deploy.sh\n(agents-cli deploy + publish)" {class: tool}
+}
+
+gcp: "Google Cloud project (europe-west4)" {
+  style.fill: "#f8f9fa"
+  style.stroke: "#bdc1c6"
+
+  ge: "Gemini Enterprise app\n\"Running Coach\"" {class: compute}
+  runtime: "Agent Runtime\n(container: adk api_server --a2a)" {
+    class: compute
+    agent: "Running Coach agent" {class: core}
+    mcp: "tp-mcp subprocess\n(stdio)" {class: tool}
+    agent -> mcp
+  }
+  sa: "Service account\nrunning-coach-agent" {class: sec}
+  secret: "Secret Manager\ntp-auth-cookie" {class: sec}
+  gemini: "Gemini" {class: ai}
+  firestore: "Firestore\nrunning-coach DB" {class: data}
+
+  telemetry: "Observability" {
+    style.fill: "#ffffff"
+    style.stroke: "#bdc1c6"
+    trace: "Cloud Trace / Logging\n(no message content)" {class: tool}
+    gcs: "gs://traces_runningagent\n(prompt/response JSONL)" {class: data}
+  }
+
+  ge -> runtime.agent: "A2A"
+  runtime -> sa: "runs as" {style.stroke-dash: 3}
+  runtime.mcp -> secret: "cookie" {style.stroke-dash: 3}
+  runtime.agent -> gemini
+  runtime.agent -> firestore
+  runtime.agent -> telemetry.trace: "OTel"
+  runtime.agent -> telemetry.gcs: "completions"
+}
+
+dev -> tooling.tf
+dev -> tooling.deploy
+tooling.tf -> gcp: "provision"
+tooling.deploy -> gcp.runtime: "deploy image"
+tooling.deploy -> gcp.ge: "register agent"
+tooling.deploy -> gcp.secret: "rotate cookie\n(--tp-cookie)"

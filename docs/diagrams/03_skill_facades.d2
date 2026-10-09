@@ -1,0 +1,60 @@
+direction: right
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+
+classes: {
+  skill: {style.fill: "#f3e8fd"; style.stroke: "#8430ce"; style.border-radius: 6}
+  facade: {style.fill: "#e8f0fe"; style.stroke: "#1a73e8"; style.border-radius: 6}
+  ext: {style.fill: "#fce8e6"; style.stroke: "#c5221f"; style.border-radius: 6}
+  data: {shape: cylinder; style.fill: "#fff8e1"; style.stroke: "#f9ab00"}
+  ai: {style.fill: "#e6f4ea"; style.stroke: "#137333"; style.border-radius: 6; style.bold: true}
+}
+
+coach: "coaching_agent\n(Gemini flash)" {class: ai}
+
+skills: "1. Skills (protocol + output format)" {
+  style.fill: "#f8f9fa"
+  style.stroke: "#bdc1c6"
+  wa: "workout-analysis" {class: skill}
+  bwa: "bike-workout-analysis" {class: skill}
+  ci: "check-in-report" {class: skill}
+  sa: "schedule-audit" {class: skill}
+  np: "nutrition-planner" {class: skill}
+  wc: "workout-creator" {class: skill}
+}
+
+facades: "2. Facade tools (one per skill, parallel fetch + maths in code)" {
+  style.fill: "#f8f9fa"
+  style.stroke: "#bdc1c6"
+  analyze: "analyze_workout\nworkout, analysis, settings, recovery, weather" {class: facade}
+  checkin: "fetch_checkin_data (+ save_checkin_report)\nworkouts, notes, metrics, fitness, cached analyses, weather" {class: facade}
+  audit: "fetch_schedule_audit_data\nworkouts, calendar notes per ISO week" {class: facade}
+  nutrition: "fetch_nutrition_context\nupcoming workouts, forecast" {class: facade}
+  create: "create_workout / create_note\nduplicate check, create or update" {class: facade}
+}
+
+backends: "Backends" {
+  style.fill: "#f8f9fa"
+  style.stroke: "#bdc1c6"
+  tp: "TrainingPeaks\n(tp-mcp, stdio)" {class: ext}
+  meteo: "Open-Meteo" {class: ext}
+  fs: "Firestore\n(analysis cache, reports)" {class: data}
+}
+
+coach -> skills: "load_skill(name)"
+coach -> facades: "1 tool call" {style.bold: true}
+
+skills.wa -> facades.analyze
+skills.bwa -> facades.analyze
+skills.ci -> facades.checkin
+skills.sa -> facades.audit
+skills.np -> facades.nutrition
+skills.wc -> facades.create
+
+facades -> backends.tp: "many MCP calls"
+facades -> backends.meteo
+facades -> backends.fs
