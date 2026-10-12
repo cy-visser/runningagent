@@ -98,3 +98,19 @@ def add_notes_to_weeks(weeks: dict[str, dict], notes: Optional[list[dict]]) -> N
         title = n.get("title") or "Note"
         desc = n.get("description") or ""
         bucket["notes"].append(f"{format_display_date(n_date)}: {title}" + (f" | {desc}" if desc else ""))
+
+
+def annotate_week_progression(weeks: list[dict], window_start: date, window_end: date) -> list[dict]:
+    """Marks weeks only partly inside the window and adds running-volume growth vs the prior week.
+
+    Growth is only computed between two complete weeks (a partial week would fake a drop or
+    spike) and when the prior week had running volume. Mutates and returns `weeks`.
+    """
+    prev: Optional[dict] = None
+    for w in weeks:
+        w["partial"] = w["start_date"] < window_start or w["end_date"] > window_end
+        w["growth_pct"] = None
+        if prev and not prev["partial"] and not w["partial"] and prev["total_distance_km"] > 0:
+            w["growth_pct"] = (w["total_distance_km"] / prev["total_distance_km"] - 1) * 100
+        prev = w
+    return weeks

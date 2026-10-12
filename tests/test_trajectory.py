@@ -4,11 +4,39 @@ import pytest
 
 from running_coach.utils.trajectory import (
     DEFAULT_PEAK_CTL,
+    TAPER_WEEKS,
     evaluate_goal_trajectory,
     parse_target_time_minutes,
     resolve_goal_distance,
     resolve_target_peak_ctl,
+    resolve_taper_weeks,
 )
+
+
+class TestResolveTaperWeeks:
+    @pytest.mark.parametrize(
+        "goal, expected",
+        [
+            ("100k ultra", 3.0),
+            ("Sub-4:00 Marathon", 3.0),
+            ("Sub-1:45 Half Marathon", 2.0),
+            ("Sub-1:15 10 mile", 2.0),
+            ("Sub-45 10K", 1.0),
+            ("Sub-20 5K", 1.0),
+            ("General fitness", TAPER_WEEKS),
+            (None, TAPER_WEEKS),
+        ],
+    )
+    def test_distance_defaults(self, goal, expected):
+        assert resolve_taper_weeks(goal) == expected
+
+    @pytest.mark.parametrize("override, expected", [(2, 2.0), ("2.5", 2.5), (0, 0.0)])
+    def test_valid_override_wins(self, override, expected):
+        assert resolve_taper_weeks("Sub-4:00 Marathon", override) == expected
+
+    @pytest.mark.parametrize("override", ["three", -1, ""])
+    def test_invalid_override_falls_back_to_default(self, override):
+        assert resolve_taper_weeks("Sub-4:00 Marathon", override) == 3.0
 
 
 class TestParseTargetTimeMinutes:
@@ -109,13 +137,15 @@ class TestHardenedGoalParsing:
 
 class TestEvaluateGoalTrajectory:
     def test_computes_ramp_rate_excluding_the_taper(self):
-        # 12 weeks out, so 10 build weeks after the 2-week taper; 40 CTL to gain.
+        # 12 weeks out, so 9 build weeks after the 3-week marathon taper; 40 CTL to gain.
         profile = {"training_goal": "Sub-3:30 Marathon", "timeline": "2026-12-08"}
         result = evaluate_goal_trajectory(profile, current_ctl=40.0, today_date=date(2026, 9, 15))
         assert result["weeks_remaining"] == 12.0
-        assert result["build_weeks"] == 10.0
+        assert result["taper_weeks"] == 3.0
+        assert result["build_weeks"] == 9.0
+        assert result["phase"] == "build"
         assert result["target_peak_ctl"] == 80.0
-        assert result["required_ramp_rate"] == 4.0
+        assert result["required_ramp_rate"] == 4.44
 
     def test_no_ramp_needed_when_already_at_target(self):
         profile = {"training_goal": "Sub-3:30 Marathon", "timeline": "2026-12-08"}
@@ -127,6 +157,64 @@ class TestEvaluateGoalTrajectory:
         result = evaluate_goal_trajectory(profile, current_ctl=40.0, today_date=date(2026, 9, 15))
         assert result["weeks_remaining"] == 0.0
         assert result["build_weeks"] == 0.0
+        assert result["phase"] == "taper"
+        assert result["required_ramp_rate"] is None
+
+    # Race Sun 1 Nov -> nominal 3-week taper starts Sun 11 Oct; peak long run on that Sunday.
+    TAPER_PMC = [
+        {"date": "2026-10-09", "ctl": 67.8},
+        {"date": "2026-10-10", "ctl": 68.1},
+        {"date": "2026-10-11", "ctl": 69.0},  # peak long run (nominal first taper day)
+        {"date": "2026-10-12", "ctl": 68.3},
+        {"date": "2026-10-16", "ctl": 66.0},
+        {"date": "2026-10-20", "ctl": 64.2},
+    ]
+
+    def test_marathon_inside_three_week_taper_needs_no_ramp(self):
+        # The reported case: Sub-4 marathon, 2.9w out (20 days).
+        profile = {"training_goal": "Sub-4:00 Marathon", "timeline": "2026-11-01"}
+        result = evaluate_goal_trajectory(
+            profile, current_ctl=68.3, today_date=date(2026, 10, 12), daily_pmc=self.TAPER_PMC
+        )
+        assert result["weeks_remaining"] == 2.9
+        assert result["phase"] == "taper"
+        assert result["required_ramp_rate"] is None
+        assert result["pre_taper_ctl"] == 69.0  # includes the Sunday long run
+
+    def test_peak_ctl_stays_static_through_the_taper(self):
+        profile = {"training_goal": "Sub-4:00 Marathon", "timeline": "2026-11-01"}
+        result = evaluate_goal_trajectory(
+            profile, current_ctl=64.2, today_date=date(2026, 10, 20), daily_pmc=self.TAPER_PMC
+        )
+        assert result["phase"] == "taper"
+        assert result["pre_taper_ctl"] == 69.0
+
+    def test_pre_taper_ctl_ignores_peaks_long_before_the_taper(self):
+        profile = {"training_goal": "Sub-4:00 Marathon", "timeline": "2026-11-01"}
+        pmc = [{"date": "2026-09-01", "ctl": 80.0}, *self.TAPER_PMC]
+        result = evaluate_goal_trajectory(
+            profile, current_ctl=68.3, today_date=date(2026, 10, 12), daily_pmc=pmc
+        )
+        assert result["pre_taper_ctl"] == 69.0
+
+    def test_pre_taper_ctl_falls_back_to_current_without_history(self):
+        profile = {"training_goal": "Sub-4:00 Marathon", "timeline": "2026-11-01"}
+        result = evaluate_goal_trajectory(profile, current_ctl=66.6, today_date=date(2026, 10, 12))
+        assert result["pre_taper_ctl"] == 66.6
+
+    def test_short_build_window_is_floored_to_one_week(self):
+        # Half marathon 2.9w out -> 0.9 build weeks; 3.4 CTL gap reads +3.4/wk, not +3.78.
+        profile = {"training_goal": "Sub-1:35 Half Marathon", "timeline": "2026-11-01"}
+        result = evaluate_goal_trajectory(profile, current_ctl=64.6, today_date=date(2026, 10, 12))
+        assert result["phase"] == "build"
+        assert result["build_weeks"] == 0.9
+        assert result["required_ramp_rate"] == 3.4
+
+    def test_profile_taper_override_is_used(self):
+        profile = {"training_goal": "Sub-4:00 Marathon", "timeline": "2026-11-01", "taper_weeks": 2}
+        result = evaluate_goal_trajectory(profile, current_ctl=66.6, today_date=date(2026, 10, 12))
+        assert result["taper_weeks"] == 2.0
+        assert result["phase"] == "build"
 
     def test_missing_timeline_leaves_projections_unset(self):
         result = evaluate_goal_trajectory({"training_goal": "Marathon"}, current_ctl=50.0)

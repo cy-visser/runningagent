@@ -106,6 +106,8 @@ def merge_profile_data(
         "longitude": lon,
         "training_goal": answers.get("training_goal"),
         "timeline": normalize_timeline(answers.get("timeline")),
+        # Optional taper override for this goal; None -> goal-distance default.
+        "taper_weeks": answers.get("taper_weeks"),
         # Onboarding only runs for new profiles or a new goal, so this marks the
         # start of the current training block (used by the race projection).
         "goal_set_date": get_today_str(),

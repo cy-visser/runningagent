@@ -227,7 +227,7 @@ class TestRouterState:
         instruction = agent.coaching_agent.instruction
         assert "{user_profile_summary?}" in instruction
         assert "{expired_timeline_notice?}" in instruction
-        assert "load the skill first" in instruction
+        assert "call `load_skill` AND the skill's data tool in parallel" in instruction
 
 
 # ---------------------------------------------------------------- tp_mcp cache

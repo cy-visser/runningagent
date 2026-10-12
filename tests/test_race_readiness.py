@@ -415,6 +415,35 @@ class TestProjectRace:
         assert project_race("Marathon", 225, [], [], {"lthr": None, "threshold_speed": None},
                             None, _fitness(), None, None, TODAY) is None
 
+    # Evidence sessions were run at CTL 68; today's CTL is 62.
+    PEAK_PMC = [{"date": "2026-09-01", "ctl": 68.0}]
+    TAPER = {"weeks_remaining": 2.5, "build_weeks": 0.0, "target_peak_ctl": 75.0,
+             "phase": "taper", "pre_taper_ctl": 68.0}
+
+    def test_taper_ctl_decline_is_not_detraining(self, summaries):
+        tapering = self._project(summaries, daily_pmc=self.PEAK_PMC, fitness=_fitness(ctl=62.0),
+                                 trajectory_info=self.TAPER)
+        at_peak = self._project(summaries, daily_pmc=self.PEAK_PMC, fitness=_fitness(ctl=68.0),
+                                trajectory_info=self.TAPER)
+        assert tapering["today_s"] == pytest.approx(at_peak["today_s"])
+        assert tapering["race_day_s"] == pytest.approx(at_peak["race_day_s"])
+        assert not any("fitness-adj." in d[1] for d in tapering["drivers"])
+
+    def test_real_ctl_drop_outside_taper_still_penalised(self, summaries):
+        dropped = self._project(summaries, daily_pmc=self.PEAK_PMC, fitness=_fitness(ctl=62.0),
+                                trajectory_info=_trajectory(weeks=10, build=8))
+        held = self._project(summaries, daily_pmc=self.PEAK_PMC, fitness=_fitness(ctl=68.0),
+                             trajectory_info=_trajectory(weeks=10, build=8))
+        assert dropped["today_s"] > held["today_s"]
+        assert any("fitness-adj." in d[1] for d in dropped["drivers"])
+
+    def test_taper_load_driver_shows_banked_peak(self, summaries):
+        p = self._project(summaries, daily_pmc=self.PEAK_PMC, fitness=_fitness(ctl=62.0, tsb=6.0),
+                          trajectory_info=self.TAPER)
+        load = next(d for d in p["drivers"] if d[0] == "Load")
+        assert load[1] == "Taper: peak CTL 68 banked (now 62), TSB +6"
+        assert load[2] == "race-day +0.0%"
+
     def test_5k_block_after_marathon_is_stale_and_fitness_adjusted(self, summaries):
         # Nov 1 marathon -> 4 weeks recovery -> 5K block starts Dec 1; check-in Dec 8.
         today = date(2026, 12, 8)

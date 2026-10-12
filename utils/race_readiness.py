@@ -566,6 +566,11 @@ def project_race(
     km = prof["km"]
     lthr = thresholds.get("lthr")
     ctl_now, atl_now, tsb_now = fitness.get("ctl_end"), fitness.get("atl_end"), fitness.get("tsb_end")
+    info = trajectory_info or {}
+    in_taper = info.get("phase") == "taper"
+    # In the taper CTL falls by design (fatigue sheds faster than fitness): judge evidence and
+    # race-day load against the fitness banked before the taper, not today's declining CTL.
+    ctl_ref = max(ctl_now or 0.0, info.get("pre_taper_ctl") or 0.0) if in_taper else ctl_now
 
     dur = durability(runs, summaries, goal_label)
     anchor = threshold_anchor(summaries, goal_label, lthr, thresholds.get("threshold_speed"))
@@ -573,14 +578,14 @@ def project_race(
     if anchor:
         candidates["threshold"] = _fitness_adjust(
             {"speed": anchor["speed"] * dur["ratio"], "date": anchor["date"],
-             "evidence": anchor["evidence"]}, daily_pmc, ctl_now)
+             "evidence": anchor["evidence"]}, daily_pmc, ctl_ref)
 
     goal_speed = km * 1000 / (goal_minutes * 60) if goal_minutes else None
     refs = [goal_speed, candidates.get("threshold", {}).get("speed") if candidates.get("threshold") else None]
     segments = goal_pace_segments(summaries, goal_label, [r for r in refs if r], lthr)
-    candidates["goal_pace"] = _fitness_adjust(goal_pace_candidate(segments), daily_pmc, ctl_now)
-    candidates["hr_efficiency"] = _fitness_adjust(hr_efficiency_candidate(summaries, goal_label, lthr), daily_pmc, ctl_now)
-    candidates["race"] = _fitness_adjust(race_effort_candidate(runs, goal_label), daily_pmc, ctl_now)
+    candidates["goal_pace"] = _fitness_adjust(goal_pace_candidate(segments), daily_pmc, ctl_ref)
+    candidates["hr_efficiency"] = _fitness_adjust(hr_efficiency_candidate(summaries, goal_label, lthr), daily_pmc, ctl_ref)
+    candidates["race"] = _fitness_adjust(race_effort_candidate(runs, goal_label), daily_pmc, ctl_ref)
     active = {k: c for k, c in candidates.items() if c and c.get("speed")}
     if not active:
         return None
@@ -590,9 +595,9 @@ def project_race(
     today_s = km * 1000 / speed_today
     cand_times = [km * 1000 / c["speed"] for c in active.values()]
 
-    weeks_remaining = (trajectory_info or {}).get("weeks_remaining")
+    weeks_remaining = info.get("weeks_remaining")
     days_to_race = weeks_remaining * 7 if weeks_remaining is not None else None
-    load = load_projection(ctl_now, trajectory_info)
+    load = load_projection(ctl_ref, trajectory_info)
     health = health_readiness(dated_metrics, today, days_to_race, tsb_now, atl_now, ctl_now)
     race_day_s = today_s * load["time_factor"] * (1 + health["penalty"])
 
@@ -627,8 +632,11 @@ def project_race(
     drivers.append(("Durability", dur["evidence"], f"ratio {dur['ratio']}"))
     if ctl_now:
         tsb_str = f", TSB {tsb_now:+.0f}" if tsb_now is not None else ""
-        drivers.append(("Load", f"CTL {ctl_now:.0f} → ~{load['ctl_race']:.0f} race day{tsb_str}",
-                        f"race-day {(load['time_factor'] - 1) * 100:+.1f}%"))
+        load_evidence = (
+            f"Taper: peak CTL {ctl_ref:.0f} banked (now {ctl_now:.0f}){tsb_str}" if in_taper
+            else f"CTL {ctl_now:.0f} → ~{load['ctl_race']:.0f} race day{tsb_str}"
+        )
+        drivers.append(("Load", load_evidence, f"race-day {(load['time_factor'] - 1) * 100:+.1f}%"))
     drivers.append(("Health", health["detail"], f"{health['flag']} readiness"))
 
     return {

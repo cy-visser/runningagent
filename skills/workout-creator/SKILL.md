@@ -34,7 +34,7 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
      - a 3rd or later quality session in the same week,
      - hard sessions on consecutive days,
      - weekly running volume growth of more than 10% over the prior week,
-     - a quality session inside the 2-week race taper,
+     - a quality session inside the goal-distance race taper (marathon/ultra 3 weeks, half/10 mile 2, 5K/10K 1, unless the profile sets `taper_weeks`),
      - training through an injury or illness documented in the calendar notes.
    - State the objection, name a specific safer counter-proposal (e.g. "move it to Thursday and drop
      Tuesday to easy"), and ask the runner to confirm.

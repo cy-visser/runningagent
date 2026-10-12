@@ -13,6 +13,7 @@ from google.adk.workflow import node
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from .callbacks import apply_thinking_policy, splice_checkin_tables
 from .services.tp_mcp import get_tp_tool
 from .steps import (
     PROFILE_TP_UNAVAILABLE,
@@ -126,6 +127,13 @@ class OnboardingAnswers(BaseModel):
     injuries: Optional[str] = Field(None, description="Past or present injuries")
     cross_training_strength: Optional[str] = Field(None, description="Cross-training or strength work")
     shoe_rotation: Optional[str] = Field(None, description="Current shoe rotation (e.g. shoes for easy runs, tempo runs, intervals, race days)")
+    taper_weeks: Optional[float] = Field(
+        None,
+        description=(
+            "Optional preferred pre-race taper length in weeks (e.g. 2 or 3). "
+            "Leave empty to use the distance default (marathon/ultra 3, half/10 mile 2, 5K/10K 1)."
+        ),
+    )
 
 
 onboarding_agent = Agent(
@@ -148,6 +156,7 @@ onboarding_agent = Agent(
     7. Past and Present Injuries
     8. Cross-Training & Strength Work
     9. Current Shoe Rotation (easy, tempo, intervals, race day)
+    10. Preferred Taper Length in weeks (optional; if they have no preference leave it empty and the distance default is used)
 
     REQUIRED fields: `training_goal` and `timeline`. The others are optional; collect them if missing but do not insist.
 
@@ -201,14 +210,17 @@ coaching_agent = Agent(
     {user_profile_summary?}
     {expired_timeline_notice?}
 
-    SKILL ROUTING: load the skill first, then follow its protocol exactly.
+    SKILL ROUTING: in the SAME step, call `load_skill` AND the skill's data tool in parallel
+    (e.g. load_skill("check-in-report") + fetch_checkin_data()), then follow the skill's protocol exactly
+    on the returned data. Write tools (create_workout, create_note, save_checkin_report) only run when the
+    skill's protocol says so.
     - Analyze a completed run         -> workout-analysis      -> analyze_workout
     - Analyze a completed ride        -> bike-workout-analysis -> analyze_workout
     - Weekly check-in / progress      -> check-in-report       -> fetch_checkin_data (+ save_checkin_report)
     - Review / audit the plan         -> schedule-audit        -> fetch_schedule_audit_data
     - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
-    - Create/change workouts or notes -> workout-creator       -> create_workout / create_note
-    Do not reload a skill whose instructions are already in this conversation.
+    - Create/change workouts or notes -> workout-creator       -> fetch_schedule_audit_data, then create_workout / create_note
+    Do not reload a skill whose instructions are already in this conversation; just call its data tool.
     New goal, or the goal date has passed -> request_new_goal. Ad-hoc weather -> get_weather.
     
     CRITICAL COACHING CONTRACT (Non-Negotiable):
@@ -242,6 +254,9 @@ coaching_agent = Agent(
        - Format metric abbreviations in standard plain text: Pa:Hr (or Pace:HR decoupling), Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W.
     """,
     tools=coaching_agent_tools,
+    # Full reasoning except on post-write confirmations; check-in tables spliced in verbatim.
+    before_model_callback=apply_thinking_policy,
+    after_model_callback=splice_checkin_tables,
     mode="chat",
 )
 

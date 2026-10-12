@@ -131,6 +131,27 @@ class TestFormatFitnessPmc:
     def test_none_renders_nothing(self):
         assert format_fitness_pmc(None) == ""
 
+    def test_build_row_shows_distance_specific_taper(self):
+        data = self._fitness()
+        data["trajectory_info"] |= {"phase": "build", "taper_weeks": 3.0}
+        out = format_fitness_pmc(data)
+        assert "Req. Ramp: `+4.0 pts/wk`" in out
+        assert "(build to 3-week taper)" in out
+
+    def test_taper_phase_replaces_ramp_and_uses_pre_taper_ctl(self):
+        data = self._fitness(ctl_end=66.6)
+        data["trajectory_info"] |= {
+            "target_peak_ctl": 70.0, "required_ramp_rate": None,
+            "phase": "taper", "taper_weeks": 3.0, "pre_taper_ctl": 68.1,
+        }
+        out = format_fitness_pmc(data)
+        assert "Req. Ramp" not in out
+        assert "🏁 **Taper phase** (3-week taper)" in out
+        assert "(peak CTL banked `68.1`)" in out
+        assert "TSB `-10.0` (race-day target +5 to +15)" in out
+        assert "**97%**" in out  # 68.1 / 70, not 66.6 / 70 (95%)
+        assert "| `66.6` |" in out  # current CTL still shown
+
 
 class TestCompileCheckinSummary:
     def test_omits_sections_with_no_data(self):
@@ -155,6 +176,14 @@ class TestCompileCheckinSummary:
         for heading in ("Fitness PMC", "Recovery Trends", "Completed Workouts",
                         "Calendar & Travel Notes", "Upcoming Scheduled Workouts"):
             assert heading in out
+
+    def test_recovery_section_includes_precomputed_baseline(self):
+        out = compile_checkin_summary(
+            lookback_days=14, lookahead_days=7, workouts_past=None, workouts_future=None,
+            metrics_data={"sleep": [7.0], "hrv": [45], "rhr": [50]}, fitness_data=None, notes_list=None,
+            recovery_baseline="HRV -6% vs 28d, RHR +2 bpm, sleep 7.1h (-15 min)",
+        )
+        assert "- 5-day vs 28-day baseline (pre-computed): HRV -6% vs 28d, RHR +2 bpm" in out
 
 
 class TestFormatScheduleAuditSummary:

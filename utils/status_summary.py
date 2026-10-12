@@ -4,6 +4,8 @@ from .race_readiness import format_drivers_table, format_projection_row
 from .trajectory import DEFAULT_PEAK_CTL, DEFAULT_PEAK_RANGE, TAPER_WEEKS, ramp_status
 
 PROGRESS_BAR_SEGMENTS = 10
+# Typical race-day form (TSB) after a good taper; shown in the CTL row during the taper.
+RACE_DAY_TSB_TARGET = (5, 15)
 
 def format_completed_workouts(
     workouts_past: Optional[list[dict]], 
@@ -107,15 +109,28 @@ def format_fitness_pmc(fitness_data: Optional[dict], race_projection: Optional[d
     ref_range = trajectory_info.get("reference_range", list(DEFAULT_PEAK_RANGE))
     req_ramp = trajectory_info.get("required_ramp_rate")
     weeks_rem = trajectory_info.get("weeks_remaining")
+    taper_label = f"{trajectory_info.get('taper_weeks', TAPER_WEEKS):g}-week taper"
+    in_taper = trajectory_info.get("phase") == "taper"
+    pre_taper_ctl = trajectory_info.get("pre_taper_ctl")
 
-    pct = min(100, max(0, int((ctl_end / target_peak) * 100))) if target_peak > 0 else 100
+    # In the taper CTL is expected to decline, so progress is judged on the peak
+    # fitness banked before the taper (static for the whole taper).
+    progress_ctl = round(pre_taper_ctl, 1) if in_taper and pre_taper_ctl is not None else ctl_end
+    pct = min(100, max(0, int((progress_ctl / target_peak) * 100))) if target_peak > 0 else 100
     filled = pct // PROGRESS_BAR_SEGMENTS
     bar = "█" * filled + "░" * (PROGRESS_BAR_SEGMENTS - filled)
 
-    ramp_str = (
-        f" | Req. Ramp: `+{req_ramp} pts/wk` {ramp_status(req_ramp)} (build to {int(TAPER_WEEKS)}-week taper)"
-        if req_ramp is not None else ""
-    )
+    if in_taper:
+        lo, hi = RACE_DAY_TSB_TARGET
+        ramp_str = (
+            f" (peak CTL banked `{progress_ctl}`) | 🏁 **Taper phase** ({taper_label}): "
+            f"hold fitness, shed fatigue; no CTL build required | "
+            f"TSB `{tsb_end:+.1f}` (race-day target +{lo} to +{hi})"
+        )
+    elif req_ramp is not None:
+        ramp_str = f" | Req. Ramp: `+{req_ramp} pts/wk` {ramp_status(req_ramp)} (build to {taper_label})"
+    else:
+        ramp_str = ""
     weeks_str = f" ({weeks_rem}w out)" if weeks_rem is not None else ""
     range_str = f" (Range: `{ref_range[0]}-{ref_range[1]}`)" if ref_range and len(ref_range) == 2 else ""
 
@@ -146,11 +161,14 @@ def compile_checkin_summary(
     weather_map: Optional[dict[str, str]] = None,
     race_projection: Optional[dict] = None,
     weekly_totals: Optional[list[dict]] = None,
+    recovery_baseline: Optional[str] = None,
 ) -> str:
     """Compiles a complete, unified Check-In Summary payload for the check-in-report skill.
 
     race_projection: {"goal_label": str | None, "projection": dict | None} from race_readiness.project_race.
-    weekly_totals: completed-week buckets from utils.weekly (km, TSS, easy/quality counts).
+    weekly_totals: completed-week buckets from utils.weekly (km, TSS, easy/quality counts),
+        optionally annotated by weekly.annotate_week_progression (growth %, partial weeks).
+    recovery_baseline: 5-day vs 28-day HRV/RHR/sleep deltas (race_readiness.health_readiness detail).
     """
     parts = ["### Weekly Check-In Training & Physiological Report\n"]
 
@@ -161,7 +179,10 @@ def compile_checkin_summary(
         )
 
     if metrics_data is not None:
-        parts.append(f"**2. Autonomic & Physiological Recovery Trends (Past {lookback_days} days):**\n{format_recovery_metrics(metrics_data)}\n")
+        recovery = format_recovery_metrics(metrics_data)
+        if recovery_baseline:
+            recovery += f"\n- 5-day vs 28-day baseline (pre-computed): {recovery_baseline}"
+        parts.append(f"**2. Autonomic & Physiological Recovery Trends (Past {lookback_days} days):**\n{recovery}\n")
 
     if weekly_totals is not None:
         parts.append(f"**3. Weekly Totals (completed, pre-computed; do not recompute):**\n{format_weekly_totals(weekly_totals)}\n")
@@ -204,11 +225,30 @@ def _format_week_line(w: dict) -> str:
     )
 
 
+VOLUME_GROWTH_LIMIT_PCT = 10.0
+
+
+def _week_progression(w: dict) -> str:
+    """Pre-computed run split and week-over-week volume growth (check-in weekly totals)."""
+    out = ""
+    runs = w.get("easy_count", 0) + w.get("quality_count", 0)
+    if runs:
+        easy_pct = round(100 * w.get("easy_count", 0) / runs)
+        out += f" | Split: {easy_pct}% easy / {100 - easy_pct}% quality (by runs)"
+    if w.get("partial"):
+        out += " | Partial week (only partly in window): no growth comparison"
+    elif w.get("growth_pct") is not None:
+        growth = w["growth_pct"]
+        flag = f" ⚠️ > {VOLUME_GROWTH_LIMIT_PCT:g}%" if growth > VOLUME_GROWTH_LIMIT_PCT else ""
+        out += f" | Volume vs prior week: {growth:+.1f}%{flag}"
+    return out
+
+
 def format_weekly_totals(weeks: Optional[list[dict]]) -> str:
     """Pre-computed weekly totals (no LLM arithmetic needed)."""
     if not weeks:
         return "No completed training in this window."
-    return "\n".join(_format_week_line(w) for w in weeks)
+    return "\n".join(_format_week_line(w) + _week_progression(w) for w in weeks)
 
 
 def format_schedule_audit_summary(weeks_data: list[dict]) -> str:

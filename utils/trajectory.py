@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import timedelta
 from typing import Any, Optional
 from .date_helpers import parse_date, get_today_date
 
@@ -15,11 +16,42 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PEAK_RANGE = (55.0, 70.0)
 DEFAULT_PEAK_CTL = 65.0
-# Standard pre-race taper excluded from the CTL build window.
+# Pre-race taper excluded from the CTL build window. Distance defaults follow
+# common practice (Pfitzinger / Daniels / Hudson); TAPER_WEEKS is the fallback
+# when the goal distance is unknown. A profile `taper_weeks` overrides both.
 TAPER_WEEKS = 2.0
+TAPER_WEEKS_BY_DISTANCE = {
+    "ultra": 3.0,
+    "marathon": 3.0,
+    "half": 2.0,
+    "10mi": 2.0,
+    "10k": 1.0,
+    "5k": 1.0,
+}
+# CTL can't be meaningfully built in a partial week: floor the ramp divisor.
+MIN_BUILD_WEEKS = 1.0
 # Weekly CTL ramp tiers (pts/week): <= SAFE is sustainable, <= MAX is aggressive, above is high risk.
 SAFE_RAMP_PER_WEEK = 3.5
 MAX_RAMP_PER_WEEK = 5.0
+# Banked (pre-taper) fitness = peak CTL from a week before the nominal taper start up to today,
+# so a final long run on or just after the nominal first taper day still counts. CTL only
+# declines in a taper, so this value stays static for the whole taper.
+PRE_TAPER_PEAK_WINDOW_DAYS = 7
+
+
+def peak_ctl(daily_pmc: Optional[list[dict]], start: Any, end: Any) -> Optional[float]:
+    """Highest CTL in [start, end] from PMC daily data, or None."""
+    best = None
+    for entry in daily_pmc or []:
+        d = parse_date(entry.get("date"))
+        if d is None or not (start <= d <= end):
+            continue
+        try:
+            val = float(entry.get("ctl"))
+        except (TypeError, ValueError):
+            continue
+        best = val if best is None else max(best, val)
+    return best
 
 
 def ramp_status(required_ramp_rate: Optional[float]) -> Optional[str]:
@@ -66,6 +98,19 @@ def _goal_distance_key(text: str) -> Optional[str]:
 def resolve_goal_distance(goal_text: Optional[str]) -> Optional[str]:
     """Returns the goal-race label (e.g. 'Half Marathon') for supported goals, else None."""
     return GOAL_LABELS.get(_goal_distance_key(goal_text or ""))
+
+
+def resolve_taper_weeks(goal_text: Optional[str], override: Any = None) -> float:
+    """Taper length in weeks: a valid profile override, else the goal-distance default."""
+    if override not in (None, ""):
+        try:
+            value = float(override)
+            if value >= 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+        logger.warning("Ignoring invalid taper_weeks '%s'", override)
+    return TAPER_WEEKS_BY_DISTANCE.get(_goal_distance_key(goal_text or ""), TAPER_WEEKS)
 
 
 def parse_target_time_minutes(goal_text: Optional[str]) -> Optional[float]:
@@ -188,18 +233,27 @@ def resolve_target_peak_ctl(goal_name: Optional[str]) -> tuple[float, tuple[floa
 def evaluate_goal_trajectory(
     profile: dict,
     current_ctl: float,
-    today_date: Optional[Any] = None
+    today_date: Optional[Any] = None,
+    daily_pmc: Optional[list[dict]] = None,
 ) -> dict:
-    """Computes quantitative trajectory metrics and required build rates for LLM coaching reasoning."""
+    """Computes quantitative trajectory metrics and required build rates for LLM coaching reasoning.
+
+    phase is "build" (ramp toward the target peak) or "taper" (fitness is banked:
+    no ramp; progress is judged on pre_taper_ctl, the CTL on the day before the
+    taper started, since CTL is expected to decline during the taper).
+    """
     ref_date = parse_date(today_date) or get_today_date()
     timeline_str = profile.get("timeline")
 
     # Resolve dynamic target peak CTL and reference range from training_goal
     target_peak_ctl, ref_range = resolve_target_peak_ctl(profile.get("training_goal"))
+    taper_weeks = resolve_taper_weeks(profile.get("training_goal"), profile.get("taper_weeks"))
 
     weeks_remaining = None
     build_weeks = None
     required_ramp_rate = None
+    phase = None
+    pre_taper_ctl = None
 
     timeline_date = parse_date(timeline_str) if timeline_str else None
     if timeline_str and not timeline_date:
@@ -207,19 +261,28 @@ def evaluate_goal_trajectory(
     if timeline_date:
         days_diff = (timeline_date - ref_date).days
         weeks_remaining = max(0.0, round(days_diff / 7.0, 1))
-        # Build until the standard pre-race taper starts.
-        build_weeks = max(0.0, weeks_remaining - TAPER_WEEKS)
+        # Build until the pre-race taper starts.
+        build_weeks = max(0.0, round(weeks_remaining - taper_weeks, 1))
 
-        # Required weekly CTL build rate to reach the target peak before the taper
-        ctl_deficit = max(0.0, target_peak_ctl - current_ctl)
-        if build_weeks > 0:
-            required_ramp_rate = round(ctl_deficit / build_weeks, 2)
+        if build_weeks <= 0:
+            # In the taper: hold fitness and shed fatigue; no CTL build is required.
+            phase = "taper"
+            taper_start = timeline_date - timedelta(days=round(taper_weeks * 7))
+            window_start = taper_start - timedelta(days=PRE_TAPER_PEAK_WINDOW_DAYS)
+            pre_taper_ctl = peak_ctl(daily_pmc, window_start, ref_date)
+            pre_taper_ctl = max(pre_taper_ctl or 0.0, current_ctl or 0.0)
         else:
-            required_ramp_rate = round(ctl_deficit, 2)
+            phase = "build"
+            # Required weekly CTL build rate to reach the target peak before the taper
+            ctl_deficit = max(0.0, target_peak_ctl - current_ctl)
+            required_ramp_rate = round(ctl_deficit / max(build_weeks, MIN_BUILD_WEEKS), 2)
 
     return {
         "weeks_remaining": weeks_remaining,
         "build_weeks": build_weeks,
+        "taper_weeks": taper_weeks,
+        "phase": phase,
+        "pre_taper_ctl": pre_taper_ctl,
         "target_peak_ctl": target_peak_ctl,
         "reference_range": list(ref_range),
         "required_ramp_rate": required_ramp_rate,

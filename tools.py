@@ -47,8 +47,10 @@ from .utils import (
 from .utils import completed_runs as completed_goal_runs
 from .utils.date_helpers import ISO_DATE_FMT
 from .utils.paths import SKILLS_DIR
-from .utils.race_readiness import HEALTH_BASELINE_DAYS, is_complete_summary
-from .utils.weekly import add_notes_to_weeks, build_week_buckets
+from .utils.race_readiness import HEALTH_BASELINE_DAYS, health_readiness, is_complete_summary
+from .utils.status_summary import format_fitness_pmc
+from .utils.weekly import add_notes_to_weeks, annotate_week_progression, build_week_buckets
+from .callbacks import CHECKIN_TABLES_STATE_KEY, LAST_CHECKIN_REPORT_STATE_KEY, expand_checkin_placeholder
 from .utils.structure import (
     align_laps,
     flatten_structure,
@@ -75,8 +77,9 @@ SKILL_NAMES = (
 _SKILL_INSTRUCTION = (
     "You can use specialized skills. Each skill has a SKILL.md with the protocol and output "
     "format for one task. When a skill matches the request, call `load_skill` with its name "
-    "BEFORE any other tool, then follow its instructions exactly and complete every step. "
-    "Available skills:"
+    "together with the skill's data tool in the same step (parallel calls), then follow its "
+    "instructions exactly and complete every step. Write tools (create_workout, create_note, "
+    "save_checkin_report) only run when the skill's protocol says so. Available skills:"
 )
 
 
@@ -393,7 +396,7 @@ def _summarize_fitness(
         **bounds,
         "daily_list": fitness_list,
         "history": history,
-        "trajectory_info": evaluate_goal_trajectory(profile, bounds["ctl_end"], today_date),
+        "trajectory_info": evaluate_goal_trajectory(profile, bounds["ctl_end"], today_date, daily_pmc=history),
     }
 
 
@@ -562,7 +565,14 @@ async def fetch_checkin_data(
         if dated_metrics else None
     )
     fitness_data = _summarize_fitness(raw["fitness PMC"], profile, today_date, window_start=q_start)
-    weekly_totals = list(build_week_buckets(workouts_past, q_start, min(q_end, today_date)).values())
+    window_end = min(q_end, today_date)
+    weekly_totals = annotate_week_progression(
+        list(build_week_buckets(workouts_past, q_start, window_end).values()), q_start, window_end
+    )
+    fit = fitness_data or {}
+    recovery_baseline = health_readiness(
+        dated_metrics, today_date, None, fit.get("tsb_end"), fit.get("atl_end"), fit.get("ctl_end")
+    )["detail"] if dated_metrics else None
 
     # Phase 2: project the goal race (cache-first analyses) while fetching run-time weather.
     run_timestamps = [
@@ -579,6 +589,10 @@ async def fetch_checkin_data(
         _fetch_weather_map(profile, run_timestamps),
     )
 
+    # Rendered once: the model reasons over it here, and the report gets it spliced in verbatim.
+    if fitness_data is not None:
+        tool_context.state[CHECKIN_TABLES_STATE_KEY] = format_fitness_pmc(fitness_data, race_projection)
+
     return compile_checkin_summary(
         lookback_days=(today_date - q_start).days,
         lookahead_days=(q_end - today_date).days,
@@ -590,6 +604,7 @@ async def fetch_checkin_data(
         weather_map=weather_map,
         race_projection=race_projection,
         weekly_totals=weekly_totals,
+        recovery_baseline=recovery_baseline,
     )
 
 
@@ -850,8 +865,13 @@ create_note_tool = FunctionTool(create_note)
 # ==============================================================================
 # 4. Action Tools (History Persistence, Goal Re-onboarding, General Weather)
 # ==============================================================================
-async def save_checkin_report(tool_context: ToolContext, report_content: str) -> str:
-    """Saves the generated check-in report to Firestore for historical tracking."""
+async def save_checkin_report(tool_context: ToolContext, report_content: Optional[str] = None) -> str:
+    """Saves the check-in report to Firestore for historical tracking.
+
+    Args:
+        report_content: Omit to save the check-in report you just delivered (preferred).
+            Only pass text when saving an edited/different report.
+    """
     profile = tool_context.state.get("user_profile")
     if not profile:
         return "Error: User profile not found in state."
@@ -859,6 +879,12 @@ async def save_checkin_report(tool_context: ToolContext, report_content: str) ->
     user_id = profile_user_id(profile)
     if not user_id:
         return "Error: Name not found in profile."
+
+    report = expand_checkin_placeholder(
+        report_content or "", tool_context.state.get(CHECKIN_TABLES_STATE_KEY)
+    ) or tool_context.state.get(LAST_CHECKIN_REPORT_STATE_KEY)
+    if not report:
+        return "Error: No check-in report found to save; pass report_content."
 
     today = datetime.now()
     iso_year, iso_week, _ = today.isocalendar()
@@ -869,7 +895,7 @@ async def save_checkin_report(tool_context: ToolContext, report_content: str) ->
             "week": iso_week,
             "year": iso_year,
             "created_at": today.isoformat(),
-            "report_markdown": report_content,
+            "report_markdown": report,
         })
     except Exception as e:
         logger.error("Failed to save check-in report '%s' for %s: %s", doc_id, user_id, e)
