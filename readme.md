@@ -73,6 +73,11 @@ require no network access, GCP credentials, or TrainingPeaks cookie:
 python -m pytest tests/ -q
 ```
 
+**Testing policy:** `tests/` is a lean smoke suite (~50 tests): one or two happy-path tests per
+module plus data-safety guards (e.g. never onboard a known runner, never save a nameless
+profile). Don't add a unit test per option, threshold, or edge case — behavioural coverage
+lives in `evals/`.
+
 The behavioural eval sets in `evals/` exercise the full agent and **do** require live
 credentials:
 
@@ -103,7 +108,7 @@ terraform apply
 *Review the plan and type `yes` to approve. This will provision:*
 *   **APIs**: Vertex AI, Discovery Engine (Gemini Enterprise), Secret Manager, Firestore, Cloud Trace, Cloud Logging.
 *   **Service Account**: `running-coach-agent@your_project_id.iam.gserviceaccount.com`.
-*   **IAM Roles**: Vertex AI User, Firestore User, Trace Agent, Logs Writer, Secret Accessor, Storage Object User on `gs://traces_runningagent`, and the Vertex AI Service Agent bindings.
+*   **IAM Roles**: Vertex AI User, Firestore User, Trace Agent, Logs Writer, Service Usage Consumer, Secret Accessor, Storage Object User on `gs://traces_runningagent`, and the Vertex AI Service Agent bindings.
 *   **Secret**: A secure container named `tp-auth-cookie`.
 *   **Traces Bucket**: `gs://traces_runningagent` for GenAI prompt and response completion logs.
 

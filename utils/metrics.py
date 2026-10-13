@@ -35,6 +35,11 @@ def coerce_mcp_payload(response: Any, default: Optional[dict] = None) -> dict:
         return parsed
 
     if isinstance(response, dict):
+        content = response.get("content") or []
+        first = content[0] if isinstance(content, list) and content else None
+        text = first.get("text") if isinstance(first, dict) else None
+        if text:
+            return {"isError": bool(response.get("isError")), "message": text}
         return response
     if isinstance(response, str):
         try:

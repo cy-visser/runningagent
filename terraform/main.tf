@@ -45,7 +45,8 @@ locals {
     "roles/aiplatform.user",     # Call Gemini models
     "roles/datastore.user",      # Read/write Firestore sessions & reports
     "roles/cloudtrace.agent",    # Write Telemetry traces
-    "roles/logging.logWriter"    # Write Telemetry logs
+    "roles/logging.logWriter",   # Write Telemetry logs
+    "roles/serviceusage.serviceUsageConsumer" # Quota-project header on GCS (gcsfs completion uploads)
   ]
 }
 

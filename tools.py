@@ -701,7 +701,7 @@ async def _find_existing_workouts(
 
 
 # Per-action differences between the create and update MCP tools.
-_CREATE_SPEC = {"tool": "tp_create_workout", "date_key": "date_str", "duration_cast": int,
+_CREATE_SPEC = {"tool": "tp_create_workout", "date_key": "date", "duration_cast": int,
                 "verb": "create", "gerund": "creating", "past": "created"}
 _UPDATE_SPEC = {"tool": "tp_update_workout", "date_key": "date", "duration_cast": float,
                 "verb": "update", "gerund": "updating", "past": "updated"}

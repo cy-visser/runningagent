@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 # Tools whose response only needs a short confirmation. Anything else (runner messages,
 # facade outputs, get_weather, unknown tools) keeps the model's default reasoning.
 WRITE_TOOLS = frozenset({"save_checkin_report", "create_workout", "create_note", "request_new_goal"})
-CONFIRMATION_THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL)
+# LOW, not MINIMAL: gemini-3.8-flash (COACH_MODEL) rejects THINKING_LEVEL_MINIMAL with a 400.
+CONFIRMATION_THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW)
 
 
 def _last_function_response_names(llm_request: LlmRequest) -> set[str]:
@@ -37,7 +38,7 @@ def _last_function_response_names(llm_request: LlmRequest) -> set[str]:
 def apply_thinking_policy(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-    """before_model_callback: minimal thinking right after write tools, default otherwise."""
+    """before_model_callback: low thinking right after write tools, default otherwise."""
     names = _last_function_response_names(llm_request)
     if names and names <= WRITE_TOOLS:
         llm_request.config = llm_request.config or types.GenerateContentConfig()
