@@ -1,7 +1,6 @@
 """Evidence-based race readiness model for goal-race projections.
 
-Replaces extrapolating raw distance peaks (which treats Zone 2 runs as race
-efforts) with physiology- and training-specific signals:
+Combines physiology- and training-specific signals:
 
   S1 Threshold anchor      observed threshold laps (HR 88-102% LTHR) vs the TP setting
   S2 Goal-pace segments    laps near race pace, judged by %LTHR and lap Pa:Hr decoupling
@@ -11,9 +10,7 @@ efforts) with physiology- and training-specific signals:
   S6 Health                HRV / RHR / sleep vs 28-day baseline, load- and race-week-aware
   S7 Race efforts          only runs titled as races/time trials, via Riegel
 
-Every constant below is a coaching heuristic (Daniels/McMillan-style), kept in
-one place for tuning. All functions are pure (no I/O) so they are unit-testable
-and so cached workout summaries can be fed straight back in.
+Constants are coaching heuristics (Daniels/McMillan-style). All functions are pure (no I/O).
 """
 
 from datetime import date, timedelta

@@ -28,7 +28,6 @@ def format_completed_workouts(
         dist_str = f": {dist_km}km" if dist_km > 0 else ""
         actual_tss = w.get("tss_actual") or w.get("tss") or 0
         
-        # Check for weather match
         date_key = str(time_identifier)[:10]
         wx_snippet = weather_map.get(str(time_identifier)) or weather_map.get(date_key)
         wx_str = f" [Weather: {wx_snippet}]" if wx_snippet else ""
@@ -271,20 +270,23 @@ def format_nutrition_context_summary(
     upcoming_workouts: list[dict],
     weather_forecast: Optional[str] = None,
     days_forward: int = 3,
+    goal: Optional[dict] = None,
 ) -> str:
-    """Formats athlete biometrics, upcoming training demands, and forecasted climate for nutrition planning."""
-    lines = ["### Athlete Nutrition & Fueling Context\n"]
+    """Formats athlete biometrics, upcoming training demands, and forecasted climate for nutrition planning.
 
-    # Biometrics & Goal
+    goal: the current goal (utils.goals.current_goal); defaults to the profile's single-goal fields.
+    """
+    lines = ["### Athlete Nutrition & Fueling Context\n"]
+    goal = goal or {"training_goal": profile.get("training_goal"), "timeline": profile.get("timeline")}
+
     lines.append("**1. Runner Biometrics & Target:**")
     weight = profile.get("weight") or "Not recorded"
     age = profile.get("age") or "Not recorded"
-    goal = profile.get("training_goal") or "Not set"
-    timeline = profile.get("timeline") or "Not set"
+    goal_text = goal.get("training_goal") or "Not set"
+    timeline = goal.get("timeline") or "Not set"
     lines.append(f"- Weight: {weight} | Age: {age}")
-    lines.append(f"- Training Goal: {goal} (Target Date: {timeline})\n")
+    lines.append(f"- Training Goal: {goal_text} (Target Date: {timeline})\n")
 
-    # Upcoming Workouts
     lines.append(f"**2. Upcoming Training Sessions (Next {days_forward} Days):**")
     if upcoming_workouts:
         for w in upcoming_workouts:
@@ -300,7 +302,6 @@ def format_nutrition_context_summary(
         lines.append(f"No planned sessions in the next {days_forward} days.")
     lines.append("")
 
-    # Weather
     if weather_forecast:
         lines.append(f"**3. Local Climate & Weather Forecast:**\n{weather_forecast}\n")
 

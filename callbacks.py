@@ -1,10 +1,7 @@
-"""Model callbacks for the coaching agent: per-call thinking policy and check-in table splicing.
+"""Model callbacks for the coaching agent.
 
-Both exist to cut latency without touching report quality:
-- Thinking: full (model default) reasoning everywhere except the confirmation call that
-  follows a write tool, where there is nothing left to reason about.
-- Splicing: the check-in tables are rendered deterministically by `fetch_checkin_data`,
-  so the model writes a placeholder instead of re-typing them token by token.
+- Thinking: low reasoning for the confirmation that follows a write tool, default otherwise.
+- Splicing: replaces the check-in table placeholder with the tables from `fetch_checkin_data`.
 """
 
 import logging

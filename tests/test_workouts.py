@@ -27,8 +27,7 @@ class TestPartitionWorkoutsByDate:
         assert [w["date"] for w in past] == ["2026-09-10"]
         assert [w["date"] for w in future] == ["2026-09-20"]
 
-# TrainingPeaks sends '--' as a "no value" placeholder (e.g. VAM/Grade on a session
-# without GPS), which used to crash analyze_workout.
+# Session without GPS: TrainingPeaks sends '--' for VAM/Grade.
 NO_GPS_ANALYSIS = {
     "workoutId": 3937515897,
     "totals": {
@@ -62,8 +61,7 @@ class TestFormatWorkoutAnalysis:
         assert "--" not in out
         assert "- Lap 1:" in out
 
-# Primary-session selection: the 2026-09-24 run + S&C day, where the old
-# `completed[-1]` pick analysed the 30-min strength session instead of the run.
+# Primary-session selection: a run and a later strength session on the same day.
 CANOVA = {"id": "3681731889", "date": "2026-09-24", "start_time": "2026-09-24T07:26:05",
           "title": "Canova 8x1km Alternating (4:55 / 5:20)", "type": "completed", "sport": "Run",
           "duration_actual": 1.17, "distance_actual_km": 12.9, "tss_actual": 101.83}

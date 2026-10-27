@@ -14,6 +14,7 @@ from .services.firestore import (
     get_cached_workout_analysis,
     save_checkin_report as save_checkin_report_data,
     save_workout_analysis,
+    update_user_profile,
 )
 from .services.tp_mcp import get_tp_tool
 from .services.weather import format_weather_conditions, get_weather_conditions, get_weather_for_dates
@@ -22,17 +23,24 @@ from .utils import (
     PROJECTION_WINDOW_DAYS,
     coerce_mcp_payload,
     compile_checkin_summary,
+    current_goal,
     evaluate_goal_trajectory,
     extract_health_metrics,
     extract_health_metrics_dated,
     extract_thresholds,
+    format_goal_plan,
     format_nutrition_context_summary,
+    format_projection_vs_north_star,
     format_recovery_metrics,
+    format_workout_goal_context,
     format_schedule_audit_summary,
     format_other_sessions,
     format_workout_analysis,
     get_today_date,
+    is_plan,
     is_workout_completed,
+    race_duration_s,
+    race_result_update,
     select_primary_workout,
     parse_date,
     parse_mcp_response,
@@ -63,7 +71,7 @@ from .utils.structure import (
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# 1. Skills Toolset Configuration
+# Skills toolset
 # ==============================================================================
 SKILL_NAMES = (
     "nutrition-planner",
@@ -105,7 +113,7 @@ skill_toolset = CompactSkillToolset(
 
 
 # ==============================================================================
-# 2. Shared Helpers
+# Shared helpers
 # ==============================================================================
 def _iso(day: Any) -> str:
     return day.strftime(ISO_DATE_FMT)
@@ -171,10 +179,10 @@ async def _gather_labeled(fetches: dict[str, Any]) -> dict[str, Any]:
 
 
 # ==============================================================================
-# 3. Skill Facades (1 Facade per Skill)
+# Skill facades
 # ==============================================================================
 
-# Workout & Bike Analysis (for workout-analysis & bike-workout-analysis skills) ---
+# Workout analysis ---
 RECOVERY_LOOKBACK_DAYS = 7
 PLANNED_NOTES_MAX_CHARS = 800
 _SERIES_KEYS = ("time", "HeartRate", "Speed", "Power", "Distance")
@@ -245,7 +253,7 @@ async def analyze_workout(
     sport, title, start = "Workout", "", None
     other_sessions: list[dict] = []
 
-    # 1. Resolve workout_id if not provided
+    # Resolve the workout from the date.
     if not workout_id:
         try:
             workouts_list = await _fetch_workouts(tool_context, target_iso, target_iso)
@@ -262,7 +270,7 @@ async def analyze_workout(
                 return f"No completed workout found for {target_iso}. Planned sessions found on calendar: {titles}."
             return f"No completed workouts found on {target_iso}."
 
-        # Pick the day's key session (not simply the last one listed) and disclose the rest.
+        # Pick the day's key session and list the others.
         target_workout, other_sessions = select_primary_workout(completed, sport_hint)
         workout_id = str(target_workout.get("id") or "")
         sport = target_workout.get("sport") or sport
@@ -273,7 +281,7 @@ async def analyze_workout(
         return "Error: No workout ID could be determined."
 
     try:
-        # 2. Workout details (real date, sport, RPE) and telemetry, concurrently
+        # Workout details and telemetry.
         meta_raw, analysis_raw = await asyncio.gather(
             _run_tp_tool(tool_context, "tp_get_workout", workout_id=workout_id),
             _run_tp_tool(tool_context, "tp_analyze_workout", workout_id=workout_id),
@@ -299,8 +307,7 @@ async def analyze_workout(
         structured = meta.get("structured_workout")
         is_structured = has_structure(structured)
 
-        # 3. Recovery (the days leading up to the workout), weather and, for builder
-        #    workouts, the thresholds that turn %-targets into paces, concurrently
+        # Recovery, weather and, for structured workouts, athlete thresholds.
         extras: dict[str, Any] = {}
         if is_structured:
             extras["athlete settings"] = _run_tp_tool(tool_context, "tp_get_athlete_settings")
@@ -316,8 +323,7 @@ async def analyze_workout(
             _gather_labeled(extras), asyncio.to_thread(_load_series, data.get("data_file"))
         )
 
-        # 4. Planned vs executed: align laps to the builder steps; decoupling always skips the
-        #    first minutes and, when aligned, the warm-up / cool-down steps.
+        # Planned vs executed: align laps to the structured steps.
         laps = data.get("lapData") if isinstance(data.get("lapData"), list) else []
         alignment, structure_section = None, ""
         if is_structured:
@@ -349,16 +355,47 @@ async def analyze_workout(
                 )
         if extra.get("weather"):
             sections.append(f"**Environmental & Weather Context:**\n{extra['weather']}")
+        goal_context = await _goal_plan_context(
+            tool_context, profile, workout_date, workout_id, sport, meta, data
+        )
+        if goal_context:
+            sections.append(goal_context)
         return "\n\n".join(sections)
     except Exception as e:
         logger.error("analyze_workout failed for %s: %s", workout_id, e)
         return f"Error: Failed to analyze workout {workout_id}: {e}"
 
 
+async def _goal_plan_context(
+    tool_context: ToolContext, profile: dict, workout_date: Any, workout_id: str, sport: Any,
+    meta: dict, data: dict,
+) -> str:
+    """Goal-plan line for a workout analysis; saves the result when this is a sub-goal race.
+
+    The result logic lives in utils.goals (pure); this only persists the returned update.
+    """
+    if not is_plan(profile):
+        return ""
+    duration_s = race_duration_s(meta, data)
+    update = race_result_update(profile, workout_date, duration_s, workout_id, sport=sport)
+    saved = False
+    if update:
+        user_id = profile_user_id(profile)
+        try:
+            if not user_id:
+                raise ValueError("no runner name in profile")
+            await update_user_profile(user_id, update)
+            tool_context.state["user_profile"] = {**profile, **update}
+            saved = True
+        except Exception as e:
+            logger.error("Failed to save sub-goal race result for %s: %s", user_id, e)
+    return format_workout_goal_context(profile, workout_date, duration_s, saved)
+
+
 analyze_workout_tool = FunctionTool(analyze_workout)
 
 
-# Check-In Report (for check-in-report skill) ---
+# Check-in report ---
 # PMC history window (CTL-at-session lookup for the detraining adjustment).
 PROJECTION_LOOKBACK_DAYS = 90
 
@@ -396,7 +433,9 @@ def _summarize_fitness(
         **bounds,
         "daily_list": fitness_list,
         "history": history,
-        "trajectory_info": evaluate_goal_trajectory(profile, bounds["ctl_end"], today_date, daily_pmc=history),
+        "trajectory_info": evaluate_goal_trajectory(
+            current_goal(profile, parse_date(today_date)), bounds["ctl_end"], today_date, daily_pmc=history
+        ),
     }
 
 
@@ -483,9 +522,10 @@ async def _build_goal_projection(
         tool_context, select_for_analysis(runs, goal_label), profile_user_id(profile),
         refresh=refresh_cache,
     )
+    goal = current_goal(profile, today_date)
     projection = project_race(
         goal_label=goal_label,
-        goal_minutes=parse_target_time_minutes(profile.get("training_goal")),
+        goal_minutes=parse_target_time_minutes(goal["training_goal"]),
         runs=runs,
         summaries=summaries,
         thresholds=extract_thresholds(settings_raw),
@@ -494,7 +534,7 @@ async def _build_goal_projection(
         trajectory_info=fitness_data.get("trajectory_info"),
         dated_metrics=dated_metrics,
         today=today_date,
-        block_start=profile.get("goal_set_date"),
+        block_start=goal["goal_set_date"],
     )
     return {"goal_label": goal_label, "projection": projection}
 
@@ -529,7 +569,7 @@ async def fetch_checkin_data(
     today_date = get_today_date()
     q_start = parse_date(start_date) or (today_date - timedelta(days=14))
     q_end = parse_date(end_date) or (today_date + timedelta(days=7))
-    goal_label = resolve_goal_distance(profile.get("training_goal"))
+    goal_label = resolve_goal_distance(current_goal(profile, today_date)["training_goal"])
 
     start_str, end_str = _iso(q_start), _iso(q_end)
     recovery_end_str = _iso(min(q_end, today_date))
@@ -593,7 +633,7 @@ async def fetch_checkin_data(
     if fitness_data is not None:
         tool_context.state[CHECKIN_TABLES_STATE_KEY] = format_fitness_pmc(fitness_data, race_projection)
 
-    return compile_checkin_summary(
+    summary = compile_checkin_summary(
         lookback_days=(today_date - q_start).days,
         lookahead_days=(q_end - today_date).days,
         workouts_past=workouts_past,
@@ -606,12 +646,26 @@ async def fetch_checkin_data(
         weekly_totals=weekly_totals,
         recovery_baseline=recovery_baseline,
     )
+    north_star_progress = _north_star_progress(profile, race_projection, today_date)
+    return f"{summary}\n\n{north_star_progress}" if north_star_progress else summary
+
+
+def _north_star_progress(profile: dict, race_projection: Optional[dict], today_date: Any) -> str:
+    """'North Star Progress' check-in section (goal plans only; reads saved results, never fills them)."""
+    plan = format_goal_plan(profile, today_date)
+    if not plan:
+        return ""
+    lines = ["### North Star Progress", plan]
+    projection_line = format_projection_vs_north_star(profile, race_projection, today_date)
+    if projection_line:
+        lines.append(projection_line)
+    return "\n".join(lines)
 
 
 fetch_checkin_data_tool = FunctionTool(fetch_checkin_data)
 
 
-# Schedule Audit (for schedule-audit skill) ---
+# Schedule audit ---
 async def fetch_schedule_audit_data(
     tool_context: ToolContext,
     start_date: Optional[str] = None,
@@ -649,7 +703,7 @@ async def fetch_schedule_audit_data(
 fetch_schedule_audit_data_tool = FunctionTool(fetch_schedule_audit_data)
 
 
-# Nutrition & Fueling Context (for nutrition-planner skill) ---
+# Nutrition context ---
 async def fetch_nutrition_context(
     tool_context: ToolContext,
     days_forward: int = 3,
@@ -672,6 +726,7 @@ async def fetch_nutrition_context(
 
     return format_nutrition_context_summary(
         profile=profile,
+        goal=current_goal(profile, today_date),
         upcoming_workouts=upcoming,
         weather_forecast=weather_str,
         days_forward=days_forward,
@@ -681,7 +736,7 @@ async def fetch_nutrition_context(
 fetch_nutrition_context_tool = FunctionTool(fetch_nutrition_context)
 
 
-# Workout & Calendar Note Creation (for workout-creator skill) ---
+# Workout and note creation ---
 async def _find_existing_workouts(
     tool_context: ToolContext,
     target_iso: str,
@@ -863,7 +918,7 @@ create_note_tool = FunctionTool(create_note)
 
 
 # ==============================================================================
-# 4. Action Tools (History Persistence, Goal Re-onboarding, General Weather)
+# Action tools
 # ==============================================================================
 async def save_checkin_report(tool_context: ToolContext, report_content: Optional[str] = None) -> str:
     """Saves the check-in report to Firestore for historical tracking.
@@ -936,7 +991,7 @@ get_weather_tool = FunctionTool(get_weather)
 
 
 # ==============================================================================
-# 5. Public Tool Exports
+# Exports
 # ==============================================================================
 __all__ = [
     "skill_toolset",

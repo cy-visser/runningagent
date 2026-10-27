@@ -1,13 +1,4 @@
-"""Structure-aware workout analysis: planned (TrainingPeaks workout builder) vs executed.
-
-Pure functions only (no I/O):
-- flatten the TP `structured_workout` into ordered planned steps,
-- convert %-of-threshold targets into real units (pace / bpm / watts),
-- align device laps to planned steps (one or more laps per step),
-- compute windowed aerobic decoupling (Pa:Hr / Pw:Hr) from the time series,
-  skipping the first minutes of every session and, for structured sessions,
-  the warm-up and cool-down steps.
-"""
+"""Pure functions comparing a planned TrainingPeaks structured workout with the executed laps and time series."""
 from dataclasses import dataclass, field
 from typing import Any, Optional
 

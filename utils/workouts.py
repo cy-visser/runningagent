@@ -233,12 +233,10 @@ def format_workout_analysis(
     lines = [f"### Workout Analysis {' '.join(header_parts)}"]
 
     if totals:
-        # Distance
         dist_val = _get_metric_val(totals, "Distance", "distance", "TotalDistance")
         dist_km = to_km(dist_val, _get_metric_unit(totals, "Distance", "distance", "TotalDistance"))
         dist_str = f"Distance: {round(dist_km, 2)}km" if dist_km is not None else ""
 
-        # Duration
         dur_val = _clean(_get_metric_val(totals, "Duration", "duration", "Moving time", "Moving Time", "Elapsed time"))
         dur_str = ""
         if dur_val is not None:
@@ -258,7 +256,6 @@ def format_workout_analysis(
         energy_val = as_float(_get_metric_val(totals, "Energy", "Work", "TotalWork"))
         energy_str = f"Work: {round(energy_val)}kJ" if energy_val is not None and energy_val > 0 else ""
 
-        # TSS
         rtss = as_float(_get_metric_val(totals, "rTSS", "rTss"))
         tss = as_float(_get_metric_val(totals, "TSS", "tss"))
         hrtss = as_float(_get_metric_val(totals, "hrTSS", "hrTss"))
@@ -271,7 +268,6 @@ def format_workout_analysis(
             tss_parts.append(f"hrTSS: {round(hrtss, 1)}")
         tss_str = " | ".join(tss_parts)
 
-        # Intensity Factor (IF)
         rif = as_float(_get_metric_val(totals, "rIF", "rIf"))
         if_val = as_float(_get_metric_val(totals, "IF", "intensityFactor"))
         if_str = ""
@@ -280,7 +276,6 @@ def format_workout_analysis(
         elif if_val is not None:
             if_str = f"IF: {round(if_val, 2)}"
 
-        # Normalized Power (NP)
         np_val = as_float(_get_metric_val(totals, "NP", "NormalizedPower"))
         np_str = f"NP: {round(np_val, 0)}W" if np_val is not None else ""
 
@@ -301,7 +296,6 @@ def format_workout_analysis(
             decoup_parts.append(f"EF: {ef}")
         decoup_str = " | ".join(decoup_parts)
 
-        # Elevation Gain & Loss
         el_gain = _clean(_get_metric_val(totals, "El. Gain", "ElevationGain", "TotalAscent"))
         el_loss = _clean(_get_metric_val(totals, "El. Loss", "ElevationLoss", "TotalDescent"))
         el_str = ""
@@ -360,7 +354,6 @@ def format_workout_analysis(
             dur_s = as_float(lap.get("TotalTimerTime", lap.get("TotalMovingTime", lap.get("TotalElapsedTime", lap.get("duration_seconds", lap.get("duration", 0))))))
             dur_str = f"{round(dur_s / 60.0, 1)}m" if dur_s else ""
 
-            # Lap Distance
             lap_km = to_km(lap.get("TotalDistance", lap.get("distance_km", lap.get("Distance", lap.get("distance")))))
             dist_str = f"{round(lap_km, 2)}km" if lap_km else ""
 
@@ -368,7 +361,7 @@ def format_workout_analysis(
             max_hr = _clean(lap.get("MaximumHeartRate"))
             hr_str = f"HR {avg_hr}/{max_hr}bpm" if (avg_hr and max_hr) else f"HR {avg_hr}bpm" if avg_hr else ""
 
-            # Pace & Lap NGP comparison (NGP shown only when it differs noticeably)
+            # NGP is shown only when it differs noticeably from the raw pace.
             raw_s = pace_seconds(lap.get("AveragePace"))
             ngp_s = pace_seconds(lap.get("NormalizedGradedPace"))
             pace_str = ""
@@ -379,7 +372,6 @@ def format_workout_analysis(
             elif ngp_s is not None:
                 pace_str = f"NGP {_format_pace(ngp_s)}"
 
-            # Lap Elevation & Grade
             ascent = lap.get("TotalAscent")
             descent = lap.get("TotalDescent")
             ascent_n = as_float(ascent) or 0.0

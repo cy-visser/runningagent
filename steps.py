@@ -12,10 +12,8 @@ from .services.firestore import (
 from .services.weather import geocode_location
 from .utils import (
     calculate_age,
-    get_today_date,
     merge_profile_data,
     onboarding_prefill,
-    parse_date,
     parse_mcp_response,
     parse_runner_name,
     profile_user_id,
@@ -34,25 +32,6 @@ def _as_dict(value: Any) -> dict:
     if hasattr(value, "model_dump"):
         return value.model_dump()
     return {}
-
-
-def check_timeline_expiration(profile: Optional[dict]) -> tuple[bool, Optional[str]]:
-    """Compares today's date with the runner's profile timeline (YYYY-MM-DD).
-
-    Returns (is_expired, timeline_date_str).
-    """
-    timeline_str = (profile or {}).get("timeline")
-    if not timeline_str:
-        return False, None
-
-    timeline_date = parse_date(timeline_str)
-    if not timeline_date:
-        logger.warning("Could not parse profile timeline date '%s'", timeline_str)
-        return False, None
-
-    if get_today_date() > timeline_date:
-        return True, str(timeline_str).strip()
-    return False, None
 
 
 async def _ensure_cached_coordinates(user_id: str, profile: dict) -> None:
@@ -166,7 +145,6 @@ async def create_profile_step(ctx: Context) -> bool:
     await save_user_profile(user_id, profile)
     sync_profile_to_state(ctx, profile)
 
-    # Clean up temporary onboarding state
     ctx.state["temp_onboarding_data"] = None
     ctx.state["onboarding_answers"] = None
     return True

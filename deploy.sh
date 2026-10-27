@@ -11,7 +11,6 @@ if [ -f .env ] && grep -q -E '^[[:space:]]*TP_AUTH_COOKIE=' .env; then
     exit 1
 fi
 
-# Load .env file if it exists
 if [ -f .env ]; then
     export $(grep -v '^[[:space:]]*#' .env | grep -v '^[[:space:]]*$' | xargs)
 fi
@@ -49,7 +48,6 @@ AGENT_DISPLAY_NAME="Running Coach"
 AGENT_DESCRIPTION="Your running coach which helps you progressing your running fitness."
 DRY_RUN=false
 
-# Parse parameters
 TP_COOKIE=""
 while [[ "$#" -gt 0 ]]; do
     case $1 in

@@ -30,7 +30,7 @@ def _get_doc_ref(collection_path: str, doc_id: str):
 
 
 # ==============================================================================
-# Generic Async Read / Write / Update Operations
+# Generic operations
 # ==============================================================================
 
 async def read_document(collection_path: str, doc_id: str) -> Optional[dict[str, Any]]:
@@ -55,7 +55,7 @@ async def update_document(collection_path: str, doc_id: str, data: dict[str, Any
 
 
 # ==============================================================================
-# Domain-Specific Helper Functions (User Profile & Check-in Reports)
+# Profiles and check-in reports
 # ==============================================================================
 
 async def get_user_profile(user_id: str) -> Optional[dict[str, Any]]:

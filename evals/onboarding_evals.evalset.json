@@ -43,5 +43,65 @@
         "reference": "Welcome, Taylor! That sounds like an exciting challenge. What is your specific half marathon target time or goal, and what is your target race date (YYYY-MM-DD)?"
       }
     ]
+  },
+  {
+    "name": "onboarding_goal_type_question",
+    "initial_session": {
+      "state": {
+        "temp_onboarding_data": {
+          "firstname": "Taylor",
+          "lastname": "Smith",
+          "age": 34,
+          "location": "Utrecht"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Hi! I want to get faster over the next two years.",
+        "expected_tool_use": [],
+        "reference": "Welcome, Taylor! Do you want to set a goal for a specific race, or a north star with multiple sub goals along the way?"
+      }
+    ]
+  },
+  {
+    "name": "onboarding_north_star_with_sub_goals",
+    "initial_session": {
+      "state": {
+        "temp_onboarding_data": {
+          "firstname": "Taylor",
+          "lastname": "Smith",
+          "age": 34,
+          "location": "Utrecht"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "I want a north star: sub 3:15 at the London Marathon in April 2028. Sub goals in 2027: sub 21 5K, sub 43 10K and sub 1:34 half marathon.",
+        "expected_tool_use": [],
+        "reference": "Great plan: those sub goals line up as a progression toward 3:15. Each sub goal is a full training block, so for the 5K: when does the block start and on which date is the race that finishes it?"
+      }
+    ]
+  },
+  {
+    "name": "onboarding_overlapping_blocks_flagged",
+    "initial_session": {
+      "state": {
+        "temp_onboarding_data": {
+          "firstname": "Taylor",
+          "lastname": "Smith",
+          "age": 34,
+          "location": "Utrecht"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "North star sub 3:15 London Marathon 2028-04-23. Sub goals: sub 21 5K from 2026-11-30 with a race on 2027-02-07, and sub 43 10K from 2027-01-15 with a race on 2027-03-14.",
+        "expected_tool_use": [],
+        "reference": "One concern: the 10K block starts on 2027-01-15, before your 5K race on 2027-02-07, so the two blocks overlap. Do you want to start the 10K block after the 5K race, for example on 2027-02-15?"
+      }
+    ]
   }
 ]

@@ -25,13 +25,26 @@ The root agent is an ADK `Workflow` with one deterministic router and three node
 - **`profile_router`** (no LLM) works out who the runner is, from the first source that has a
   profile: session state, then the user-scoped `user:runner_id` in Firestore, then a TrainingPeaks
   profile lookup on the first session. It then routes to one node.
-- **`onboarding_node`** runs `onboarding_agent` in *task mode*. The agent collects the goal, the
-  race date and optional details as a structured `OnboardingAnswers` object, and it checks whether
-  the goal is realistic. The node then geocodes the location and saves the profile to Firestore.
+- **`onboarding_node`** runs `onboarding_agent` in *task mode*. The agent first asks for the goal
+  type: a **single goal** (one race) or a **goal plan** (a north star with dated sub goals). It
+  collects the goal(s), race dates and optional details as a structured `OnboardingAnswers` object
+  and checks whether the goal is realistic and the plan coherent. The node then geocodes the
+  location and saves the profile to Firestore.
 - **`coaching_node`** runs `coaching_agent` in *chat mode*. This is where the coaching happens
-  (see section 2).
+  (see section 2). Its instruction is an ADK *InstructionProvider* (`build_coach_instruction`): the
+  date, profile summary, goal plan and goal notices are derived from `user_profile` on every model
+  call, so session state holds only the profile (no duplicated summary or date keys).
 - **`tp_unavailable_node`** returns a fixed message when TrainingPeaks can't be reached. This stops
   a known runner from being sent back to onboarding by mistake.
+
+**Goal plans.** A plan stores `north_star` and `sub_goals`, each a full training block with a
+`start_date` and a finishing race (`race_date`). `utils/goals.py` (pure) derives the active block
+(`current_goal`) with the same keys as a single goal (`training_goal`, `timeline`,
+`goal_set_date`), so the trajectory, taper and race projection maths are unchanged. Sub-goal races
+never trigger onboarding: the coach analyses the race, and `analyze_workout` saves the result on
+that sub goal. The check-in then adds a **North Star Progress** section (Riegel equivalents and
+gaps). Once the final race (single goal or north star) has passed, the coach offers a race
+analysis and a new goal; onboarding is never forced.
 
 **Session handling.** A custom Firestore session service automatically resumes the runner's
 previous session. Every 10 turns, ADK event compaction summarises older history, so the context
@@ -63,7 +76,8 @@ Why this pattern:
 - **Fewer tokens.** The model sees a summary, not raw JSON and time series.
 - **Consistent numbers.** The maths is done in tested Python, not by the LLM.
 - **Narrow write surface.** Only `create_workout`, `create_note` and `save_checkin_report` change
-  any data.
+  any data, plus one documented exception: `analyze_workout` saves the race result into the
+  matching sub goal when it analyses a sub-goal race (goal plans only).
 
 A typical turn, a weekly check-in:
 

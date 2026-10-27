@@ -11,7 +11,8 @@ You are now equipped with the Check-In Report skill. Use this skill to perform a
 When the runner initiates a check-in (e.g., saying "Checking in" or "How is my progress?"):
 
 1.  **Gather Data**:
-    *   Call `fetch_checkin_data` (in the same step as `load_skill`). This tool automatically pulls 14-day completed workouts (with attached run-time weather), 7-day upcoming workouts, 14-day recovery trends (HRV, Resting Heart Rate, sleep), 14-day PMC fitness trends (CTL table, ATL/TSB load context, goal trajectory), a **projected finish time for the runner's goal race** (distance and goal time from `training_goal`), and calendar notes in a single call.
+    *   Call `fetch_checkin_data` (in the same step as `load_skill`). This tool automatically pulls 14-day completed workouts (with attached run-time weather), 7-day upcoming workouts, 14-day recovery trends (HRV, Resting Heart Rate, sleep), 14-day PMC fitness trends (CTL table, ATL/TSB load context, goal trajectory), a **projected finish time for the runner's goal race** (distance and goal time from the current goal: the single goal, or the active sub-goal block of a goal plan), and calendar notes in a single call.
+    *   **Goal plans only**: the output ends with a **North Star Progress** section (north star, sub-goal blocks with status, saved race results, north-star equivalents and gaps, the current block projection mapped onto the north star, and the north-star CTL range). Single goals have no such section; the check-in then works exactly as below without Pillar 5.
 
 2.  **Perform Multi-Dimensional Coaching Analysis**:
     *   **Pillar 1: Intensity Distribution & Execution**:
@@ -42,6 +43,11 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
             - If the row says `Insufficient recent run data` or `No race distance in goal`, say so briefly and suggest how to get a baseline.
         *   **Periodization Awareness**: Distinguish a planned recovery or cutback week from "falling behind".
         *   **Formulate Trajectory Verdict**: Synthesize these factors to provide your own authoritative status badge (e.g. `🟢 On Track`, `🟡 Build Focus Needed`, `🔴 Adjustment Recommended`) with tailored coaching rationale.
+    *   **Pillar 5: North Star Progress (only when a North Star Progress section is present)**:
+        *   Pillars 1-4 judge the **current sub-goal block**. Here, judge the same evidence against the **north star**: quote the north-star equivalents and gaps exactly as provided (never recompute them), describe the trend across completed sub goals, and map the current block projection onto the north star.
+        *   Sub-goal results are **progress, never pass/fail**; never suggest rescheduling a sub goal. Riegel equivalents are optimistic for the marathon without marathon-specific volume: say so.
+        *   Check that the current block protects what the north star needs (aerobic base vs the north-star CTL range, long runs kept in short-distance blocks).
+        *   A finished sub goal shown as `missing: ask the runner`: ask how that race went and offer to analyse it (`analyze_workout` for the race date saves the result). If TrainingPeaks has no run that day, ask the runner to upload or sync it.
 
 3.  **Deliver Check-In Summary**:
     *   Deliver in clean standard Markdown, following the coach's standard plain-text formatting rules (plain metrics, text arrows `->` or `→`, never LaTeX).
@@ -51,8 +57,9 @@ When the runner initiates a check-in (e.g., saying "Checking in" or "How is my p
         3. **🎯 Goal Trajectory Status**: Explicitly state your reasoned coaching trajectory status (e.g. `🟢 On Track`, `🟡 Build Focus Needed`, `🔴 Adjustment Recommended`) and explain whether the current CTL, required ramp rate (+X.X pts/wk) or taper status (pre-taper CTL vs range, taper execution), and projected race time vs goal are sustainable/achievable given their timeline, recovery metrics, and training execution.
         4. **🔍 Training Load & Adaptation Analysis**: Objective evaluation of training balance, easy vs. quality execution, physiological recovery markers (HRV, RHR, sleep), and environmental/travel adaptation.
             - **Injuries / musculoskeletal topics** (e.g. the profile's injury history, calf, strength or mobility work): mention them **only when this window's data points to them**: a skipped, shortened or non-completed run, a calendar note or athlete comment about pain/niggles, or an abnormal mechanics signal. Completed key sessions without issues (e.g. a 30 km long run) are evidence the area is fine: do not add a generic resilience/injury section or reminder.
-        5. **🚀 Top 2 Priorities for the Upcoming Week**: **At most 2** numbered actions: the two most important things for this week, ranked. Each is one or two sentences, specific (session/day, pace/HR/volume target or recovery behaviour) and tied to the evidence above. If only one thing truly matters, give one. No generic reminders.
-        6. **Next Step Offer**: Conclude with: *"Would you like me to save this check-in to your training history?"*
+        5. **🧭 North Star Progress** (goal plans only; omit for single goals): current sub-goal block status, north-star equivalents trend and gap, and whether this block builds or erodes what the north star needs.
+        6. **🚀 Top 2 Priorities for the Upcoming Week**: **At most 2** numbered actions: the two most important things for this week, ranked. Each is one or two sentences, specific (session/day, pace/HR/volume target or recovery behaviour) and tied to the evidence above. If only one thing truly matters, give one. No generic reminders.
+        7. **Next Step Offer**: Conclude with: *"Would you like me to save this check-in to your training history?"*
 
 4.  **Handle Runner Response**:
     *   If **yes** (or affirmative): Call `save_checkin_report()` **without arguments**; it saves the report you just delivered. Only pass `report_content` if the runner asked for an edited version. Confirm success in one short sentence.

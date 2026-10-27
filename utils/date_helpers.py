@@ -119,11 +119,10 @@ def iso_week_key(date_input: DateLike) -> Optional[str]:
 
 
 def calculate_age(dob_input: DateLike) -> Optional[str]:
-    """Accurately calculates age in years taking calendar month and day into account."""
+    """Age in whole years."""
     dob = parse_date(dob_input)
     if not dob:
         return None
     today = get_today_date()
-    # Correct calendar age accounting for leap years and exact birth month/day
     age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
     return str(max(0, age))

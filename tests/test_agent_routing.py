@@ -85,6 +85,25 @@ class TestProfileRouter:
         assert route(ctx) == agent.ROUTE_ONBOARDING
         assert ctx.state["temp_onboarding_data"]["firstname"] == "Cyrille"
 
+    def test_router_writes_no_derived_keys(self, env):
+        ctx = FakeContext({RUNNER_ID_STATE_KEY: "cyrille_visser"})
+        assert route(ctx) == agent.ROUTE_COACHING
+        for key in ("current_date_str", "user_profile_summary", "expired_timeline_date", "expired_timeline_notice"):
+            assert key not in ctx.state
+
+    def test_final_race_passed_does_not_force_onboarding(self, env):
+        env.store["cyrille_visser"]["timeline"] = "2020-11-01"
+        ctx = FakeContext({RUNNER_ID_STATE_KEY: "cyrille_visser"})
+        for _ in range(3):
+            assert route(ctx) == agent.ROUTE_COACHING
+
+    def test_reonboard_request_seeds_current_plan(self, env):
+        plan = {"goal_type": "plan", "north_star": {"goal": "Sub-3:15 Marathon", "race_date": "2028-04-23"},
+                "sub_goals": [{"goal": "Sub-21 5K", "race_date": "2027-02-07", "result": {"time_s": 1245}}]}
+        ctx = FakeContext({"user_profile": {**PROFILE, **plan}, "reonboard_requested": True})
+        assert route(ctx) == agent.ROUTE_ONBOARDING
+        assert ctx.state["temp_onboarding_data"]["sub_goals"][0]["result"] == {"time_s": 1245}
+
 
 class TestCreateProfileGuard:
     def test_refuses_to_save_without_name(self, monkeypatch):

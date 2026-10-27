@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 
 from ..utils.paths import DOTENV_PATH
 
-# Load .env file
 if os.path.exists(DOTENV_PATH):
     load_dotenv(DOTENV_PATH)
 
@@ -25,7 +24,7 @@ from .firestore import make_async_client
 
 logger = logging.getLogger("google_adk.running_coach.services")
 
-# Sanitization utilities for Firestore compatibility (escapes keys starting with __)
+# Escapes state keys starting with __ (reserved in Firestore).
 def sanitize_state(state: Any) -> Any:
     if isinstance(state, dict):
         new_dict = {}
@@ -56,8 +55,7 @@ def _root_collection_from_uri(uri: Optional[str]) -> Optional[str]:
 class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
     def __init__(self, *args, client: Optional[firestore.AsyncClient] = None, root_collection: Optional[str] = None, **kwargs):
         root_collection = root_collection or _root_collection_from_uri(kwargs.pop("uri", None))
-        # Existing deployments pass firestore://<PROJECT_ID>, so the root collection
-        # doubles as the project when no project is configured.
+        # Without a configured project, firestore://<name> is used as the project ID.
         project = gcp_project_id() or root_collection
         database = firestore_database()
 
@@ -167,15 +165,13 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
                 
         return event
 
-# Factory function for the registry
 def firestore_session_factory(uri: str, **kwargs):
     return AutoLoadPreviousSessionFirestoreService(root_collection=_root_collection_from_uri(uri))
 
-# Register the firestore scheme
 get_service_registry().register_session_service("firestore", firestore_session_factory)
 logger.info("Registered 'firestore' session service scheme with state sanitization.")
 
-# Monkeypatch create_session_service_from_options to default to firestore://
+# Make firestore:// the default session service.
 original_create_session_service = service_factory.create_session_service_from_options
 
 def my_create_session_service(*args, **kwargs):

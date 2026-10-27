@@ -42,6 +42,8 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
    - **Physiological Recovery & Readiness Context**:
      - Cross-reference run execution against morning recovery metrics from `analyze_workout` (Sleep duration, HRV baseline stability, and Resting Heart Rate trends) to assess readiness and strain.
    - **Goal Alignment**: Connect the run execution to long-term goal pacing and phase progression.
+     - **Goal plans** (the tool output contains a **Goal plan** or **Sub-goal race** line): judge the run on both levels, the current sub-goal block and the north star.
+     - **Sub-goal race day**: congratulate the runner, then frame the finish time as progress toward the north star using the north-star equivalent and gap exactly as provided (not pass/fail). When the line says the result was saved, mention it in one short sentence. Riegel equivalents are optimistic for the marathon without marathon-specific volume: say so. Never offer onboarding for a sub-goal race.
 
 3. **Deliver Workout Summary**:
    - Deliver an objective, data-backed assessment in clean standard Markdown:

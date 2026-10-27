@@ -6,13 +6,7 @@ from .date_helpers import parse_date, get_today_date
 
 logger = logging.getLogger(__name__)
 
-# Target peak CTL recommendations based on Dr. Andrew Coggan and Joe Friel's
-# Training Stress Score (TSS) / Performance Management Chart (PMC) methodology.
-# Standard reference ranges:
-# - 5K/10K: CTL 40-65 (Higher intensity density, moderate volume)
-# - Half Marathon: CTL 48-85 (Steady aerobic volume + threshold work)
-# - Marathon: CTL 55-105+ (High aerobic volume, long runs 2.5-3.5h)
-# - Ultra: CTL 80-110+ (Substantial volume, back-to-back long runs)
+# Peak CTL targets per distance follow the Coggan/Friel PMC methodology.
 
 DEFAULT_PEAK_RANGE = (55.0, 70.0)
 DEFAULT_PEAK_CTL = 65.0
@@ -33,9 +27,7 @@ MIN_BUILD_WEEKS = 1.0
 # Weekly CTL ramp tiers (pts/week): <= SAFE is sustainable, <= MAX is aggressive, above is high risk.
 SAFE_RAMP_PER_WEEK = 3.5
 MAX_RAMP_PER_WEEK = 5.0
-# Banked (pre-taper) fitness = peak CTL from a week before the nominal taper start up to today,
-# so a final long run on or just after the nominal first taper day still counts. CTL only
-# declines in a taper, so this value stays static for the whole taper.
+# Banked fitness: peak CTL from this many days before the taper start up to today.
 PRE_TAPER_PEAK_WINDOW_DAYS = 7
 
 
@@ -245,7 +237,6 @@ def evaluate_goal_trajectory(
     ref_date = parse_date(today_date) or get_today_date()
     timeline_str = profile.get("timeline")
 
-    # Resolve dynamic target peak CTL and reference range from training_goal
     target_peak_ctl, ref_range = resolve_target_peak_ctl(profile.get("training_goal"))
     taper_weeks = resolve_taper_weeks(profile.get("training_goal"), profile.get("taper_weeks"))
 

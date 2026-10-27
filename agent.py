@@ -1,9 +1,10 @@
 import asyncio
 import logging
 import os
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Literal, Optional
 
 from google.adk import Agent, Context, Event, Workflow
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.apps import App
 from google.adk.apps.app import EventsCompactionConfig
 from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
@@ -18,7 +19,6 @@ from .services.tp_mcp import get_tp_tool
 from .steps import (
     PROFILE_TP_UNAVAILABLE,
     check_profile_step,
-    check_timeline_expiration,
     create_profile_step,
     load_profile_by_id,
 )
@@ -34,7 +34,17 @@ from .tools import (
     save_checkin_report_tool,
     skill_toolset,
 )
-from .utils import RUNNER_ID_STATE_KEY, format_profile_summary, get_today_str, onboarding_prefill
+from .utils import (
+    RUNNER_ID_STATE_KEY,
+    final_race_passed,
+    format_goal_plan,
+    format_profile_summary,
+    get_today_date,
+    get_today_str,
+    next_block,
+    onboarding_prefill,
+    sub_goals_missing_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +104,7 @@ async def run_node_with_retry(
 
 
 # ==============================================================================
-# Models (override with COACH_MODEL / ONBOARDING_MODEL env vars)
+# Models
 # ==============================================================================
 COACH_MODEL = os.getenv("COACH_MODEL", "gemini-3.8-flash")
 ONBOARDING_MODEL = os.getenv("ONBOARDING_MODEL", "gemini-3.1-flash-lite")
@@ -108,21 +118,44 @@ def _model(name: str) -> Gemini:
 
 
 # ==============================================================================
-# 1. Onboarding Agent - TASK MODE
+# Onboarding agent
 # ==============================================================================
+class SubGoalAnswer(BaseModel):
+    goal: str = Field(description="Sub goal as '<target time> <distance>', e.g. 'Sub-21 5K'")
+    race_name: Optional[str] = Field(None, description="Name of the race that finishes this block")
+    start_date: str = Field(description="Training block start date as ISO (YYYY-MM-DD)")
+    race_date: str = Field(description="Race date that finishes the block, as ISO (YYYY-MM-DD)")
+
+
 class OnboardingAnswers(BaseModel):
     age: Optional[str] = Field(None, description="Age of the runner")
     height: Optional[str] = Field(None, description="Height of the runner")
     weight: Optional[str] = Field(None, description="Weight of the runner")
     location: Optional[str] = Field(None, description="Location of the runner")
+    goal_type: Optional[Literal["single", "plan"]] = Field(
+        None,
+        description="'single' = a goal for one specific race; 'plan' = a north star with multiple sub goals",
+    )
     training_goal: Optional[str] = Field(
         None,
         description=(
-            "Goal as '<target time> <distance>' or 'Finish <distance>', "
+            "Single goal only. Goal as '<target time> <distance>' or 'Finish <distance>', "
             "e.g. 'Sub-3:30 Marathon', 'Sub-19:30 5K', 'Finish Half Marathon'"
         ),
     )
-    timeline: Optional[str] = Field(None, description="Goal/race date as an ISO date string (YYYY-MM-DD)")
+    timeline: Optional[str] = Field(None, description="Single goal only. Race date as an ISO date string (YYYY-MM-DD)")
+    north_star_goal: Optional[str] = Field(None, description="Plan only. North star goal, e.g. 'Sub-3:15 Marathon'")
+    north_star_race_name: Optional[str] = Field(None, description="Plan only. North star race, e.g. 'London Marathon 2028'")
+    north_star_race_date: Optional[str] = Field(None, description="Plan only. North star race date (YYYY-MM-DD)")
+    north_star_start_date: Optional[str] = Field(
+        None,
+        description="Plan only, optional. Start of the north-star training block (YYYY-MM-DD); "
+        "empty = the day after the last sub-goal race",
+    )
+    sub_goals: list[SubGoalAnswer] = Field(
+        default_factory=list,
+        description="Plan only. Sub goals in order; each is a full training block finishing with a race",
+    )
     recent_race_times: Optional[str] = Field(None, description="Recent race or time trial times")
     injuries: Optional[str] = Field(None, description="Past or present injuries")
     cross_training_strength: Optional[str] = Field(None, description="Cross-training or strength work")
@@ -130,8 +163,9 @@ class OnboardingAnswers(BaseModel):
     taper_weeks: Optional[float] = Field(
         None,
         description=(
-            "Optional preferred pre-race taper length in weeks (e.g. 2 or 3). "
-            "Leave empty to use the distance default (marathon/ultra 3, half/10 mile 2, 5K/10K 1)."
+            "Optional preferred pre-race taper length in weeks (e.g. 2 or 3) for the goal race "
+            "(the north star race in a plan). Leave empty to use the distance default "
+            "(marathon/ultra 3, half/10 mile 2, 5K/10K 1)."
         ),
     )
 
@@ -150,39 +184,52 @@ onboarding_agent = Agent(
     1. Age
     2. Height and Weight
     3. Location / Where they live
-    4. Training Goal: record it as "<target time> <distance>" or "Finish <distance>" (e.g. "Sub-3:30 Marathon", "Sub-19:30 5K", "Finish Half Marathon")
-    5. Timeline: the goal/race date
-    6. Recent Race Times / Time Trials (most recent 5K, 10K or half marathon)
-    7. Past and Present Injuries
-    8. Cross-Training & Strength Work
-    9. Current Shoe Rotation (easy, tempo, intervals, race day)
-    10. Preferred Taper Length in weeks (optional; if they have no preference leave it empty and the distance default is used)
+    4. Goal type. Ask first: "Do you want to set a goal for a specific race, or a north star with multiple sub goals?"
+       - Single goal (`goal_type` = "single"):
+         a. Training Goal: record it as "<target time> <distance>" or "Finish <distance>" (e.g. "Sub-3:30 Marathon", "Sub-19:30 5K", "Finish Half Marathon")
+         b. Timeline: the goal/race date
+       - Goal plan (`goal_type` = "plan"):
+         a. North star: goal ("Sub-3:15 Marathon"), race name and race date
+         b. Sub goals, in order. Each sub goal is a full training block: goal ("Sub-21 5K"), block start date,
+            and the race (name and date) that finishes the block
+         c. Optional: the start date of the north-star training block (default: the day after the last sub-goal race)
+    5. Recent Race Times / Time Trials (most recent 5K, 10K or half marathon)
+    6. Past and Present Injuries
+    7. Cross-Training & Strength Work
+    8. Current Shoe Rotation (easy, tempo, intervals, race day)
+    9. Preferred Taper Length in weeks for the goal race (optional; if they have no preference leave it empty and the distance default is used)
 
-    REQUIRED fields: `training_goal` and `timeline`. The others are optional; collect them if missing but do not insist.
+    REQUIRED fields:
+    - Single goal: `goal_type`, `training_goal` and `timeline`.
+    - Goal plan: `goal_type`, `north_star_goal`, `north_star_race_date` and at least one sub goal with `goal`, `start_date` and `race_date`.
+    The others are optional; collect them if missing but do not insist.
 
     CRITICAL RULES:
-    - If the runner already has a profile (the data above contains their details), greet them warmly, acknowledge their previous goal, and ask for their new training goal and race date.
+    - If the runner already has a profile (the data above contains their details), greet them warmly, acknowledge their previous goal (or goal plan), and ask for their new goal type and goal(s).
     - Ask only 1 to 2 questions at a time, wait for the answer, acknowledge it, then move on.
-    - `timeline` MUST be an ISO date string (YYYY-MM-DD, e.g. '2026-11-01'); convert whatever date the runner gives you.
+    - All dates MUST be ISO date strings (YYYY-MM-DD, e.g. '2026-11-01'); convert whatever date the runner gives you.
     - Never use LaTeX formatting or dollar signs ($...$); output all text, numbers and units as plain text.
     - As soon as the required fields are collected and the missing optional fields have been asked once, call `finish_task` with the collected information. Do not keep chatting.
 
     GOAL REALISM CHECK (Required):
-    - Once you have both the training goal and the recent race times, sanity-check the target against the time available.
+    - Once you have the goal(s) and the recent race times, sanity-check the target against the time available.
       The stated goal drives every downstream fitness target and ramp-rate calculation, so an implausible goal
       silently corrupts all future coaching.
     - If the target is not physiologically plausible in the time remaining (for example, a large required
       improvement in race pace over only a few weeks, or a goal date too close to build the necessary aerobic base),
       say so directly and concretely: name the gap between their current fitness and the target, and propose a
       realistic alternative (a softer target time, or the same target with a later date).
-    - Do not lecture and do not refuse. State the concern once, then record whatever goal the runner confirms.
+    - For a goal plan, also check once that: the blocks are in date order and do not overlap; every block is long
+      enough to train for its distance; all sub goals finish before the north-star block; and the sub-goal targets
+      form a coherent progression toward the north star (equivalent performances, e.g. via Riegel).
+    - Do not lecture and do not refuse. State the concern once, then record whatever goal(s) the runner confirms.
     """,
     output_schema=OnboardingAnswers,
     mode="task",
 )
 
 # ==============================================================================
-# 2. Coaching Agent - CHAT MODE
+# Coaching agent
 # ==============================================================================
 coaching_agent_tools = [
     skill_toolset,
@@ -197,19 +244,13 @@ coaching_agent_tools = [
     get_weather_tool,
 ]
 
-coaching_agent = Agent(
-    model=_model(COACH_MODEL),
-    name="coaching_agent",
-    description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
-    instruction="""
-    You are an expert running coach and exercise physiologist. Your coaching is analytical, direct, and grounded strictly in sports science and physiological data.
-    
-    Today's date is {current_date_str?}.
+_COACH_ROLE = (
+    "You are an expert running coach and exercise physiologist. Your coaching is analytical, direct, "
+    "and grounded strictly in sports science and physiological data."
+)
 
-    RUNNER PROFILE:
-    {user_profile_summary?}
-    {expired_timeline_notice?}
-
+# Static coaching rules; `build_coach_instruction` adds the profile-based header.
+_COACH_RULES = """
     SKILL ROUTING: in the SAME step, call `load_skill` AND the skill's data tool in parallel
     (e.g. load_skill("check-in-report") + fetch_checkin_data()), then follow the skill's protocol exactly
     on the returned data. Write tools (create_workout, create_note, save_checkin_report) only run when the
@@ -221,8 +262,19 @@ coaching_agent = Agent(
     - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
     - Create/change workouts or notes -> workout-creator       -> fetch_schedule_audit_data, then create_workout / create_note
     Do not reload a skill whose instructions are already in this conversation; just call its data tool.
-    New goal, or the goal date has passed -> request_new_goal. Ad-hoc weather -> get_weather.
-    
+    New goal (the runner accepts setting one) -> request_new_goal. Ad-hoc weather -> get_weather.
+
+    GOAL PLAN LENS (only when a GOAL PLAN is shown above):
+    1. The current block's sub goal is a step toward the north star, never the end point. Judge results, workouts
+       and plan changes on both levels: the sub goal, and what it means for the north star. Use the north-star
+       equivalents and gaps provided; do not recompute them.
+    2. Sub-goal race results are progress, never pass/fail and never a reason to reschedule. Report the trend of
+       north-star equivalents across the completed blocks.
+    3. Protect the north star: push back on block choices that erode the aerobic base the marathon needs
+       (e.g. dropping long runs in a 5K block). The north-star peak CTL range is shown as context.
+    4. Riegel equivalents are optimistic for the marathon without marathon-specific volume; say so when you use them.
+    5. A sub-goal race never ends the plan: never offer onboarding or a new goal because a sub goal finished.
+
     CRITICAL COACHING CONTRACT (Non-Negotiable):
     1. You are a coach, not an assistant. Your job is to protect the runner's long-term progression, including
        from their own enthusiasm. Agreement is not a service you provide.
@@ -252,7 +304,71 @@ coaching_agent = Agent(
        - NEVER use LaTeX math mode, dollar-sign delimiters ($...$ or $$...$$), or LaTeX commands (e.g. \\rightarrow, \\to, \\text{...}, or math subscripts like $P_a:HR$).
        - For lap progressions and transitions, use standard text arrows (-> or →) or plain text words (e.g. "4:37/km -> 4:32/km" or "4:37/km to 4:32/km").
        - Format metric abbreviations in standard plain text: Pa:Hr (or Pace:HR decoupling), Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W.
-    """,
+"""
+
+
+def final_race_notice(race_date: str) -> str:
+    """Notice once the final goal race (single goal or north star) is in the past. Never forces onboarding."""
+    return (
+        f"GOAL RACE DONE: the runner's goal race ({race_date}) is in the past. If it has not been discussed in this "
+        f"conversation yet: congratulate them, then load workout-analysis and run analyze_workout for {race_date}. "
+        "After the race analysis (or if they decline it), offer to set up a new goal via `request_new_goal`. "
+        "Keep offering it briefly at the end of your replies until they accept; never force it, and do not plan "
+        "training for the finished goal."
+    )
+
+
+def sub_goal_result_notice(block: dict, following: Optional[dict]) -> str:
+    """Notice for a finished sub-goal race without a saved result."""
+    next_text = f" The next block is {following['training_goal']}." if following else ""
+    return (
+        f"SUB-GOAL RACE DONE: sub goal {block['training_goal']} was raced on {block['timeline']} and has no result "
+        f"yet. Congratulate the runner, ask how the race went, and run analyze_workout for {block['timeline']} "
+        "(this saves the result to the goal plan). If TrainingPeaks has no run on that date, ask the runner to "
+        "upload or sync the race to TrainingPeaks, then analyze it. Frame the result as progress toward the north "
+        f"star, not pass/fail.{next_text} Do not offer onboarding."
+    )
+
+
+def goal_notice(profile: dict, today: Any = None) -> str:
+    """Date-driven goal notices for the coach (computed from the profile, never stored)."""
+    finished = final_race_passed(profile, today)
+    if finished:
+        return final_race_notice(str(finished["timeline"]))
+    missing = sub_goals_missing_result(profile, today)
+    if missing:
+        block = missing[-1]  # the most recent race first; older ones surface once it is saved
+        return sub_goal_result_notice(block, next_block(profile, block))
+    return ""
+
+
+def build_coach_instruction(ctx: ReadonlyContext) -> str:
+    """InstructionProvider: the coach instruction, derived from `user_profile` on every model call.
+
+    State only holds the stored profile; the date, profile summary, goal plan and notices
+    are computed here so nothing is duplicated in session state.
+    """
+    profile = ctx.state.get("user_profile") or {}
+    today = get_today_date()
+    sections = [
+        _COACH_ROLE,
+        f"Today's date is {get_today_str(with_weekday=True)}.",
+        f"RUNNER PROFILE:\n{format_profile_summary(profile, today)}",
+    ]
+    goal_plan = format_goal_plan(profile, today)
+    if goal_plan:
+        sections.append(goal_plan)
+    notice = goal_notice(profile, today)
+    if notice:
+        sections.append(notice)
+    return "\n\n".join(sections) + "\n" + _COACH_RULES
+
+
+coaching_agent = Agent(
+    model=_model(COACH_MODEL),
+    name="coaching_agent",
+    description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
+    instruction=build_coach_instruction,
     tools=coaching_agent_tools,
     # Full reasoning except on post-write confirmations; check-in tables spliced in verbatim.
     before_model_callback=apply_thinking_policy,
@@ -261,7 +377,7 @@ coaching_agent = Agent(
 )
 
 # ==============================================================================
-# 3. Workflow Nodes & Router
+# Workflow nodes and router
 # ==============================================================================
 ROUTE_ONBOARDING = "ONBOARDING"
 ROUTE_COACHING = "COACHING"
@@ -312,41 +428,24 @@ async def _resolve_profile(ctx: Context) -> tuple[Optional[dict], bool]:
     return ctx.state.get("user_profile"), False
 
 
-def expired_timeline_notice(expired_date: str) -> str:
-    """Instruction text shown to the coach once the runner's goal date has passed."""
-    return (
-        f"GOAL DATE PASSED: the runner's goal date ({expired_date}) is in the past. Before anything else, "
-        f"warmly tell them and ask whether they want to (1) analyze their race/workout on {expired_date} "
-        "or (2) set up a new training goal via `request_new_goal`."
-    )
-
-
 @node(name="profile_router", rerun_on_resume=True)
 async def profile_router(ctx: Context, node_input: Any = None) -> None:
-    """Dynamic runner state evaluation routing to onboarding or coaching."""
-    ctx.state["current_date_str"] = get_today_str(with_weekday=True)
+    """Resolves the runner and routes to onboarding or coaching.
 
+    Writes no derived goal/date keys: the coach instruction derives them from
+    `user_profile` (see build_coach_instruction).
+    """
     profile, unavailable = await _resolve_profile(ctx)
     if unavailable:
         ctx.route = ROUTE_UNAVAILABLE
         return
 
     if not profile or ctx.state.get("reonboard_requested"):
-        # Re-onboarding an existing runner: seed their known details (incl. name)
-        # so create_profile_step can save, even if the profile came from state.
-        if profile and not ctx.state.get("temp_onboarding_data"):
+        # Re-onboarding: prefill the runner's known details.
+        if profile:
             ctx.state["temp_onboarding_data"] = onboarding_prefill(profile)
         ctx.route = ROUTE_ONBOARDING
         return
-
-    # Keep the instruction's profile summary in sync with the stored profile.
-    summary = format_profile_summary(profile)
-    if ctx.state.get("user_profile_summary") != summary:
-        ctx.state["user_profile_summary"] = summary
-
-    is_expired, expired_date = check_timeline_expiration(profile)
-    ctx.state["expired_timeline_date"] = expired_date if is_expired else None
-    ctx.state["expired_timeline_notice"] = expired_timeline_notice(expired_date) if is_expired else ""
 
     ctx.route = ROUTE_COACHING
 
@@ -372,8 +471,6 @@ async def onboarding_node(ctx: Context, node_input: Any = None) -> AsyncGenerato
         )
         return
     ctx.state["reonboard_requested"] = None
-    ctx.state["expired_timeline_date"] = None
-    ctx.state["expired_timeline_notice"] = ""
 
     firstname = (ctx.state.get("user_profile") or {}).get("firstname", "Runner")
     yield Event(
@@ -389,7 +486,7 @@ async def coaching_node(ctx: Context, node_input: Any = None) -> None:
 
 
 # ==============================================================================
-# 4. Root Workflow & Application
+# Root workflow and app
 # ==============================================================================
 root_agent = Workflow(
     name="running_coach_workflow",
@@ -410,8 +507,7 @@ app = App(
     name="running_coach",
     root_agent=root_agent,
     plugins=[AutoTracingPlugin()],
-    # Sessions auto-resume, so compact history instead of growing it forever. The root is a
-    # Workflow (not an LlmAgent), so the summarizer model must be given explicitly.
+    # Compact session history; a Workflow root needs an explicit summarizer model.
     events_compaction_config=EventsCompactionConfig(
         compaction_interval=10,
         overlap_size=2,

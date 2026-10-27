@@ -173,5 +173,98 @@
         "reference": "Congratulations on finishing the Berlin Marathon! That is a huge accomplishment. Let's transition into setting up your new 10K goal and target race date."
       }
     ]
+  },
+  {
+    "name": "sub_goal_race_progress_no_onboarding",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "location": "Amsterdam",
+          "goal_type": "plan",
+          "north_star": {
+            "goal": "Sub-3:15 Marathon",
+            "race_name": "London Marathon 2028",
+            "start_date": null,
+            "race_date": "2028-04-23",
+            "taper_weeks": null
+          },
+          "sub_goals": [
+            {
+              "goal": "Sub-21 5K",
+              "race_name": "Autumn 5K",
+              "start_date": "2026-08-10",
+              "race_date": "2026-10-18",
+              "taper_weeks": null,
+              "result": null
+            },
+            {
+              "goal": "Sub-43 10K",
+              "race_name": "Winter 10K",
+              "start_date": "2026-11-02",
+              "race_date": "2027-01-24",
+              "taper_weeks": null,
+              "result": null
+            }
+          ]
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "I raced my 5K last Sunday!",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "workout-analysis"
+            }
+          },
+          {
+            "tool_name": "analyze_workout",
+            "tool_input": {
+              "date_str": "2026-10-18",
+              "sport": "run"
+            }
+          }
+        ],
+        "reference": "Congratulations on your 5K race! Your finish time maps to a marathon equivalent for London, which shows how far you have progressed toward sub-3:15 and what gap remains. I saved the result to your goal plan. Your next block is the sub-43 10K starting on 2026-11-02."
+      }
+    ]
+  },
+  {
+    "name": "final_race_done_offer_onboarding",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "goal_type": "single",
+          "training_goal": "Sub-3:30 Marathon",
+          "timeline": "2026-10-18"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Hi coach!",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "workout-analysis"
+            }
+          },
+          {
+            "tool_name": "analyze_workout",
+            "tool_input": {
+              "date_str": "2026-10-18"
+            }
+          }
+        ],
+        "reference": "Congratulations on finishing your marathon on 2026-10-18! Here is the analysis of your race. Whenever you are ready, I can help you set up your next goal."
+      }
+    ]
   }
 ]

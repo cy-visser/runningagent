@@ -118,3 +118,45 @@ class TestCreateWorkout:
 def test_skill_toolset_only_exposes_load_skill():
     tool_list = asyncio.run(tools.skill_toolset.get_tools())
     assert [t.name for t in tool_list] == ["load_skill"]
+
+
+class TestGoalPlanContext:
+    """analyze_workout's goal-plan hook: saves a sub-goal race result, nothing else."""
+
+    @pytest.fixture
+    def writes(self, monkeypatch):
+        calls = []
+
+        async def fake_update(user_id, update):
+            calls.append((user_id, update))
+
+        monkeypatch.setattr(tools, "update_user_profile", fake_update)
+        return calls
+
+    def _run(self, profile, day, sport="Run"):
+        from types import SimpleNamespace
+        ctx = SimpleNamespace(state={"user_profile": profile})
+        text = asyncio.run(tools._goal_plan_context(
+            ctx, profile, date.fromisoformat(day), "w1", sport, {"duration_actual": 1245 / 3600}, {}
+        ))
+        return ctx, text
+
+    def test_race_day_saves_result_and_refreshes_state(self, writes):
+        from tests.test_goals import plan
+        profile = {"firstname": "Cyrille", "lastname": "Visser", **plan()}
+        ctx, text = self._run(profile, "2027-02-07")
+        assert len(writes) == 1
+        user_id, update = writes[0]
+        assert user_id == "cyrille_visser" and set(update) == {"sub_goals"}
+        saved = [s for s in update["sub_goals"] if s["goal"] == "Sub-21 5K"][0]["result"]
+        assert saved == {"time": "20:45", "time_s": 1245, "workout_id": "w1"}
+        assert ctx.state["user_profile"]["sub_goals"] == update["sub_goals"]
+        assert "Result saved" in text
+
+    def test_other_day_bike_or_single_goal_writes_nothing(self, writes):
+        from tests.test_goals import SINGLE, plan
+        profile = {"firstname": "Cyrille", "lastname": "Visser", **plan()}
+        assert "current block" in self._run(profile, "2027-01-10")[1]
+        self._run(profile, "2027-02-07", sport="Bike")
+        assert self._run({"firstname": "C", "lastname": "V", **SINGLE}, "2026-11-01")[1] == ""
+        assert writes == []
