@@ -5,9 +5,7 @@ else stays private to its own module.
 """
 
 from .date_helpers import (
-    calculate_age,
     format_display_date,
-    get_past_date_str,
     get_today_date,
     get_today_str,
     iso_week_key,

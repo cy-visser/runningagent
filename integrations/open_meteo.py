@@ -7,7 +7,7 @@ import urllib.request
 from datetime import datetime, timedelta
 from typing import Optional
 
-from ..utils.date_helpers import parse_iso_timestamp
+from ..shared.dates import parse_iso_timestamp
 
 logger = logging.getLogger(__name__)
 

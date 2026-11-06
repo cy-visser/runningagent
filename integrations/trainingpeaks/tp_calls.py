@@ -8,8 +8,9 @@ from google.adk.tools import ToolContext
 
 from .credentials import resolve_tp_cookie
 from .mcp_toolsets import get_tp_tool
-from ...utils import coerce_mcp_payload, extract_health_metrics_dated
-from ...utils.date_helpers import ISO_DATE_FMT
+from ...shared.dates import ISO_DATE_FMT
+from ...shared.health_metrics import extract_health_metrics_dated
+from ...shared.tp_payloads import coerce_mcp_payload
 
 TP_MAX_RANGE_DAYS = 89  # TP list endpoints reject ranges > 90 days
 
