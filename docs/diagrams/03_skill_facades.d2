@@ -21,12 +21,13 @@ features: "features/<feature>/ (skill + tool + private helpers)" {
   style.fill: "#f8f9fa"
   style.stroke: "#bdc1c6"
 
-  ci: "check_in_report/\ncheck-in-report/SKILL.md\nfetch_checkin_data_tool.py + helpers/" {class: facade}
-  ta: "trend_analysis/\ntrend-analysis/SKILL.md\nfetch_trend_data_tool.py + helpers/" {class: facade}
-  wa: "workout_analysis/\nworkout-analysis + bike-workout-analysis\nanalyze_workout_tool.py + helpers/" {class: facade}
-  sa: "schedule_audit/\nschedule-audit/SKILL.md\nfetch_schedule_audit_data_tool.py + helpers/" {class: facade}
-  np: "nutrition_planner/\nnutrition-planner/SKILL.md\nfetch_nutrition_context_tool.py + helpers/" {class: facade}
-  wc: "workout_creator/\nworkout-creator/SKILL.md\ncreate_workout_tool.py + create_note_tool.py" {class: facade}
+  ci: "check_in_report/\nSKILL.md\nfetch_checkin_data_tool.py + helpers/" {class: facade}
+  ta: "trend_analysis/\nSKILL.md\nfetch_trend_data_tool.py + helpers/" {class: facade}
+  wa: "workout_analysis/\nSKILL.md\nanalyze_workout_tool.py + helpers/" {class: facade}
+  bwa: "bike_workout_analysis/\nSKILL.md\n(reuses analyze_workout)" {class: facade}
+  sa: "schedule_audit/\nSKILL.md\nfetch_schedule_audit_data_tool.py + helpers/" {class: facade}
+  np: "nutrition_planner/\nSKILL.md\nfetch_nutrition_context_tool.py + helpers/" {class: facade}
+  wc: "workout_creator/\nSKILL.md\ncreate_workout_tool.py + create_note_tool.py" {class: facade}
   wl: "weather_lookup/\nget_weather_tool.py" {class: facade}
 }
 

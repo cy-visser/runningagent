@@ -40,7 +40,7 @@ The root agent (`agent.py`) is an ADK `Workflow` with one deterministic router a
 
 Each coaching capability lives in its own vertical slice under `features/<feature>/` rather than calling 60+ raw TrainingPeaks MCP tools directly:
 
-1. **Co-located Skills** (`features/<feature>/<skill-name>/SKILL.md`) hold the coaching protocol and output template for each task, loaded on demand via `load_skill`.
+1. **Co-located Skills** (`features/<feature>/SKILL.md`, next to the feature's `*_tool.py`) hold the coaching protocol and output template for each task, loaded on demand via `load_skill`.
 2. **Feature Tools & Private Helpers** (`features/<feature>/<tool_name>_tool.py` + `helpers/`): each feature tool runs MCP calls, Open-Meteo lookups, and Firestore reads in parallel, computes physiological metrics in deterministic Python using its private `helpers/` and `shared/`, and returns a compact summary.
    - `fetch_checkin_data`, `fetch_trend_data`, and `fetch_schedule_audit_data` also write structured JSON payloads (`checkin_report_data`, `trend_report_data`, and `audit_report_data`, `version: 1`) into `tool_context.state`. The Cloud Run Web App BFF extracts these whitelisted `stateDelta` keys from `/run_sse` and streams `event: report` frames so interactive charts render from the exact numbers used in the prose.
 
@@ -58,13 +58,13 @@ running_coach/
 │   ├── onboarding/                  # onboarding_agent, profile_creation, request_new_goal_tool
 │   └── coaching/                    # coaching_agent, instruction, skill_toolset, model_callbacks
 ├── features/                        # vertical slices: SKILL.md -> *_tool.py -> private helpers/
-│   ├── check_in_report/             # check-in-report/SKILL.md, fetch_checkin_data_tool.py, helpers/
-│   ├── trend_analysis/              # trend-analysis/SKILL.md, fetch_trend_data_tool.py, helpers/
-│   ├── workout_analysis/            # workout-analysis + bike-workout-analysis, analyze_workout_tool.py,
-│   │                                # no_workout_reply_callback.py, helpers/
-│   ├── schedule_audit/              # schedule-audit/SKILL.md, fetch_schedule_audit_data_tool.py, helpers/
-│   ├── nutrition_planner/           # nutrition-planner/SKILL.md, fetch_nutrition_context_tool.py, helpers/
-│   ├── workout_creator/             # workout-creator/SKILL.md, create_workout_tool.py, create_note_tool.py, helpers/
+│   ├── check_in_report/             # SKILL.md, fetch_checkin_data_tool.py, helpers/
+│   ├── trend_analysis/              # SKILL.md, fetch_trend_data_tool.py, helpers/
+│   ├── workout_analysis/            # SKILL.md, analyze_workout_tool.py, no_workout_reply_callback.py, helpers/
+│   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
+│   ├── schedule_audit/              # SKILL.md, fetch_schedule_audit_data_tool.py, helpers/
+│   ├── nutrition_planner/           # SKILL.md, fetch_nutrition_context_tool.py, helpers/
+│   ├── workout_creator/             # SKILL.md, create_workout_tool.py, create_note_tool.py, helpers/
 │   └── weather_lookup/              # get_weather_tool.py
 ├── shared/                          # domain helpers used by 2+ features/coach
 │   ├── dates  units  sports  session_state  runner_identity  parallel_fetch  tp_payloads
@@ -90,7 +90,7 @@ running_coach/
 | `schedule_audit` | `audit_report_data` | `audit` | `features/schedule_audit/` |
 
 **Architectural invariants (enforced by `tests/test_structure.py`):**
-1. Every skill lives at `features/<feature>/<skill-name>/SKILL.md`, and every `<tool_name>_tool.py` defines one `FunctionTool` registered on `coaching_agent`.
+1. Every skill lives at `features/<feature>/SKILL.md` (skill name = kebab-case folder name), and every `<tool_name>_tool.py` defines one `FunctionTool` registered on `coaching_agent`.
 2. `features/<x>/helpers/` is private to its feature; features never import other features, and `coach/` only imports `*_tool.py` and `*_callback.py` from `features/`.
 3. Every `shared/` module serves at least 2 consumers; `shared/` and `integrations/` never import `features/` or `coach/`.
 4. Outside `integrations/`, external I/O is called through module-qualified imports (`firestore.*`, `open_meteo.*`, `tp_calls.*`, `credentials.*`).

@@ -9,7 +9,7 @@ import re
 from google.adk.tools import FunctionTool
 
 from running_coach.coach.coaching.coaching_agent import coaching_agent_tools
-from running_coach.coach.coaching.skill_toolset import SKILL_DIRS, skill_toolset
+from running_coach.coach.coaching.skill_toolset import SKILL_FEATURES, skill_toolset
 from running_coach.features.check_in_report.helpers.web_report import (
     CHECKIN_REPORT_STATE_KEY,
 )
@@ -84,13 +84,11 @@ def _eval_dict_literal(py_file: pathlib.Path, var_name: str) -> dict:
 def test_architecture_rules_and_cross_stack_contract():
     prod_files = _iter_prod_py_files()
 
-    # Rule 1: Every SKILL.md lives at features/<feature>/<skill-name>/SKILL.md and matches SKILL_DIRS.
-    skill_mds = sorted(PACKAGE_ROOT.glob("features/*/*/SKILL.md"))
-    found_skill_dirs = {(p.parent.parent.name, p.parent.name) for p in skill_mds}
-    assert found_skill_dirs == set(SKILL_DIRS)
-    for feat_pkg, skill_kebab in found_skill_dirs:
-        if skill_kebab != "bike-workout-analysis":
-            assert feat_pkg == skill_kebab.replace("-", "_")
+    # Rule 1: Every SKILL.md lives directly in its feature folder (features/<feature>/SKILL.md),
+    # next to that feature's *_tool.py files, and no SKILL.md is nested deeper.
+    skill_mds = sorted(FEATURES_DIR.glob("*/SKILL.md"))
+    assert {p.parent.name for p in skill_mds} == set(SKILL_FEATURES)
+    assert not list(FEATURES_DIR.glob("*/*/SKILL.md")), "SKILL.md must not be nested below features/<feature>/"
 
     # Rule 2 & 7: Every *_tool.py defines exactly 1 FunctionTool named <tool_name> and is registered.
     tool_files = sorted(FEATURES_DIR.rglob("*_tool.py")) + sorted(COACH_DIR.rglob("*_tool.py"))
@@ -116,7 +114,7 @@ def test_architecture_rules_and_cross_stack_contract():
     # Rule 7: Every tool referenced in SKILL.md (`fetch_*`, `analyze_workout`, `create_*`) is registered,
     # and every skill folder is loaded in skill_toolset.
     loaded_skill_names = {s.name for s in skill_toolset._list_skills()}
-    assert loaded_skill_names == {kebab for _, kebab in SKILL_DIRS}
+    assert loaded_skill_names == {f.replace("_", "-") for f in SKILL_FEATURES}
     tool_name_re = re.compile(
         r"\b(fetch_checkin_data|fetch_trend_data|analyze_workout|fetch_schedule_audit_data|"
         r"fetch_nutrition_context|create_workout|create_note|get_weather|request_new_goal)\b"
