@@ -101,14 +101,14 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # Skills toolset
 # ==============================================================================
-SKILL_NAMES = (
-    "nutrition-planner",
-    "check-in-report",
-    "trend-analysis",
-    "workout-analysis",
-    "bike-workout-analysis",
-    "schedule-audit",
-    "workout-creator",
+SKILL_DIRS = (
+    ("nutrition_planner", "nutrition-planner"),
+    ("check_in_report", "check-in-report"),
+    ("trend_analysis", "trend-analysis"),
+    ("workout_analysis", "workout-analysis"),
+    ("workout_analysis", "bike-workout-analysis"),
+    ("schedule_audit", "schedule-audit"),
+    ("workout_creator", "workout-creator"),
 )
 
 # Routing (when to load which skill, parallel data call, write-tool rules) lives in the coach
@@ -133,7 +133,7 @@ class CompactSkillToolset(SkillToolset):
 
 
 skill_toolset = CompactSkillToolset(
-    skills=[load_skill_from_dir(os.path.join(package_paths.PACKAGE_DIR, "skills", name)) for name in SKILL_NAMES],
+    skills=[load_skill_from_dir(os.path.join(package_paths.PACKAGE_DIR, "features", feat, name)) for feat, name in SKILL_DIRS],
 )
 
 
