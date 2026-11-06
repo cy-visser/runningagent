@@ -13,13 +13,13 @@ import {
   Trophy,
   X,
 } from "lucide-react";
-import { fetchProfile, updateProfile } from "../lib/api";
-import { formatShortDate } from "../lib/format";
+import { fetchProfile, updateProfile } from "../../shared/api";
+import { formatShortDate } from "../../shared/format";
 import type {
   ProfileResponse,
   ProfileUpdatePayload,
   SubGoal,
-} from "../types";
+} from "../../shared/types";
 import { ProfileForm } from "./ProfileForm";
 
 interface ProfilePanelProps {

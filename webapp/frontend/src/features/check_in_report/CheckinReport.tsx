@@ -5,10 +5,10 @@ import {
   formatShortDate,
   formatSignedGap,
   splitMarkdownSections,
-} from "../lib/format";
-import type { CheckinLtPaces, CheckinReportData } from "../types";
+} from "../../shared/format";
+import type { CheckinLtPaces, CheckinReportData } from "../../shared/types";
 import { CollapsibleSection } from "./CollapsibleSection";
-import { RichMarkdown, StatusPill } from "./RichMarkdown";
+import { RichMarkdown, StatusPill } from "../../shared/RichMarkdown";
 
 const CheckinCharts = lazy(() => import("./CheckinCharts"));
 

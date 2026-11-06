@@ -1,5 +1,5 @@
 import { Activity, RotateCcw, Target } from "lucide-react";
-import type { MeResponse } from "../types";
+import type { MeResponse } from "../shared/types";
 import { UserMenu } from "./UserMenu";
 
 interface TopBarProps {

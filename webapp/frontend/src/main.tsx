@@ -6,7 +6,7 @@ import "@fontsource/inter/600.css";
 import "@fontsource/space-grotesk/600.css";
 import "@fontsource/space-grotesk/700.css";
 import "./index.css";
-import { App } from "./App";
+import { App } from "./app/App";
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {

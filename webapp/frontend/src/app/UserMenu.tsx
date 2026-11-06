@@ -8,7 +8,7 @@ import {
   ShieldCheck,
   User,
 } from "lucide-react";
-import type { MeResponse } from "../types";
+import type { MeResponse } from "../shared/types";
 
 interface UserMenuProps {
   me: MeResponse;

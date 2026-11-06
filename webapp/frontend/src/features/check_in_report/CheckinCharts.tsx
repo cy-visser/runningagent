@@ -11,8 +11,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatChartTickDate } from "../lib/format";
-import type { CheckinPmcPoint, CheckinWeekItem } from "../types";
+import { formatChartTickDate } from "../../shared/format";
+import type { CheckinPmcPoint, CheckinWeekItem } from "../../shared/types";
 
 interface CheckinChartsProps {
   pmc: CheckinPmcPoint[];

@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { sectionTeaser } from "../lib/format";
-import { RichMarkdown } from "./RichMarkdown";
+import { sectionTeaser } from "../../shared/format";
+import { RichMarkdown } from "../../shared/RichMarkdown";
 
 interface CollapsibleSectionProps {
   title: string;

@@ -6,7 +6,7 @@ import {
   parseAsciiProgressBar,
   splitReportPlaceholders,
   type StatusPillTone,
-} from "../lib/format";
+} from "./format";
 
 interface RichMarkdownProps {
   content: string;

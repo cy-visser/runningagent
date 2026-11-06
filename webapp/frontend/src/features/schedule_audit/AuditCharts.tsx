@@ -9,12 +9,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatChartTickDate } from "../lib/format";
+import { formatChartTickDate } from "../../shared/format";
 import type {
   AuditSession,
   AuditSessionCategory,
   AuditWeek,
-} from "../types";
+} from "../../shared/types";
 
 interface AuditChartsProps {
   weeks: AuditWeek[];

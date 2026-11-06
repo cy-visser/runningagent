@@ -9,8 +9,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatChartTickDate, formatDuration } from "../lib/format";
-import type { TrendWeekPoint } from "../types";
+import { formatChartTickDate, formatDuration } from "../../shared/format";
+import type { TrendWeekPoint } from "../../shared/types";
 
 interface TrendChartsProps {
   weeks: TrendWeekPoint[];

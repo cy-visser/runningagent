@@ -13,8 +13,8 @@ import {
   TrendingUp,
   UserCheck,
 } from "lucide-react";
-import { formatShortDate, greetingForHour } from "../lib/format";
-import type { ChatMessage, MeResponse } from "../types";
+import { formatShortDate, greetingForHour } from "../shared/format";
+import type { ChatMessage, MeResponse } from "../shared/types";
 import { ChatFeed } from "./ChatFeed";
 
 interface DashboardProps {

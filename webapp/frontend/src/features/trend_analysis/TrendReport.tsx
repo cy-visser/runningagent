@@ -1,8 +1,8 @@
 import { Suspense, lazy } from "react";
 import { CheckCircle2, Layers, TrendingUp } from "lucide-react";
-import { extractLeadingStatus, formatShortDate } from "../lib/format";
-import type { TrendReportData } from "../types";
-import { RichMarkdown, StatusPill } from "./RichMarkdown";
+import { extractLeadingStatus, formatShortDate } from "../../shared/format";
+import type { TrendReportData } from "../../shared/types";
+import { RichMarkdown, StatusPill } from "../../shared/RichMarkdown";
 
 const TrendCharts = lazy(() => import("./TrendCharts"));
 

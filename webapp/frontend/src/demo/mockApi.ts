@@ -6,7 +6,7 @@ import type {
   ProfileResponse,
   ProfileUpdatePayload,
   SessionResponse,
-} from "../types";
+} from "../shared/types";
 import {
   DEMO_AUDIT_DATA,
   DEMO_AUDIT_MARKDOWN,

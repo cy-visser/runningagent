@@ -4,7 +4,7 @@ import type {
   MeResponse,
   ProfileResponse,
   TrendReportData,
-} from "../types";
+} from "../shared/types";
 
 export const DEMO_ME_READY: MeResponse = {
   email: "cyrille@cyvisser.altostrat.com",

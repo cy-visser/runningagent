@@ -8,7 +8,7 @@ import type {
   ReportEnvelope,
   SessionResponse,
   ToolChip,
-} from "../types";
+} from "./types";
 
 export class ApiError extends Error {
   status: number;

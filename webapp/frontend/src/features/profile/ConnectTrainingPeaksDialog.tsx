@@ -9,8 +9,8 @@ import {
   Lock,
   X,
 } from "lucide-react";
-import { connectTrainingPeaks } from "../lib/api";
-import type { ConnectTpResponse, TrainingPeaksStatus } from "../types";
+import { connectTrainingPeaks } from "../../shared/api";
+import type { ConnectTpResponse, TrainingPeaksStatus } from "../../shared/types";
 
 interface ConnectTrainingPeaksDialogProps {
   open: boolean;

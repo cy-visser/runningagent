@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
 import { Activity, AlertCircle } from "lucide-react";
-import type { ChatMessage } from "../types";
-import { AuditReport } from "./AuditReport";
-import { CheckinReport } from "./CheckinReport";
-import { RichMarkdown } from "./RichMarkdown";
+import type { ChatMessage } from "../shared/types";
+import { AuditReport } from "../features/schedule_audit/AuditReport";
+import { CheckinReport } from "../features/check_in_report/CheckinReport";
+import { RichMarkdown } from "../shared/RichMarkdown";
 import { ToolProgress } from "./ToolProgress";
-import { TrendReport } from "./TrendReport";
+import { TrendReport } from "../features/trend_analysis/TrendReport";
 
 interface ChatFeedProps {
   messages: ChatMessage[];

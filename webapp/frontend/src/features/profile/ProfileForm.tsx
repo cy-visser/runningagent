@@ -8,7 +8,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import type { ProfileUpdatePayload, RunnerProfile } from "../types";
+import type { ProfileUpdatePayload, RunnerProfile } from "../../shared/types";
 
 interface ProfileFormProps {
   profile: RunnerProfile;

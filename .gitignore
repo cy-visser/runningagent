@@ -41,6 +41,4 @@ deployment_metadata.json*
 
 # Frontend dependencies
 node_modules/
-
-
-
+*.tsbuildinfo

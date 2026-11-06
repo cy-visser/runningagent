@@ -1,8 +1,8 @@
 import { Suspense, lazy } from "react";
 import { CalendarCheck } from "lucide-react";
-import { formatShortDate } from "../lib/format";
-import type { AuditReportData } from "../types";
-import { RichMarkdown, StatusPill } from "./RichMarkdown";
+import { formatShortDate } from "../../shared/format";
+import type { AuditReportData } from "../../shared/types";
+import { RichMarkdown, StatusPill } from "../../shared/RichMarkdown";
 
 const AuditCharts = lazy(() => import("./AuditCharts"));
 

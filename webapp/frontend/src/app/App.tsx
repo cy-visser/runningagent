@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
-import { ConnectTrainingPeaksDialog } from "./components/ConnectTrainingPeaksDialog";
-import { Dashboard } from "./components/Dashboard";
-import { ProfilePanel } from "./components/ProfilePanel";
-import { TopBar } from "./components/TopBar";
+import { ConnectTrainingPeaksDialog } from "../features/profile/ConnectTrainingPeaksDialog";
+import { Dashboard } from "./Dashboard";
+import { ProfilePanel } from "../features/profile/ProfilePanel";
+import { TopBar } from "./TopBar";
 import {
   createNewSession,
   fetchMe,
   onSessionExpired,
   streamChat,
-} from "./lib/api";
+} from "../shared/api";
 import type {
   ChatMessage,
   ConnectTpResponse,
   MeResponse,
   ProfileResponse,
-} from "./types";
+} from "../shared/types";
 
 const SESSION_IDLE_MS = 4 * 60 * 60 * 1000; // matches agent CONTEXT_WINDOW
 
@@ -57,7 +57,7 @@ export function App() {
       if (import.meta.env.VITE_DEMO_MODE === "true") {
         const demoView = new URLSearchParams(window.location.search).get("view");
         if (demoView === "checkin" || demoView === "trend") {
-          const mod = await import("./demo/mockApi");
+          const mod = await import("../demo/mockApi");
           const demoSess = await mod.demoFetchSession();
           setSessionId(demoSess.session_id);
           setMessages(demoSess.messages);

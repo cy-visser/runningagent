@@ -1,5 +1,5 @@
 import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
-import type { ToolChip } from "../types";
+import type { ToolChip } from "../shared/types";
 
 interface ToolProgressProps {
   thinking?: boolean;
