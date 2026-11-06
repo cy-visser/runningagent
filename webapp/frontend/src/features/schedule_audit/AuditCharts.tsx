@@ -1,465 +1,468 @@
-import { useId, useState } from "react";
 import {
-  Bar,
-  CartesianGrid,
-  Cell,
-  ComposedChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+  Activity,
+  Bike,
+  Check,
+  Dumbbell,
+  Footprints,
+  Zap,
+  type LucideIcon,
+} from "lucide-react";
 import { formatChartTickDate } from "../../shared/format";
 import type {
   AuditSession,
   AuditSessionCategory,
+  AuditVolumeReference,
   AuditWeek,
+  AuditWeekVolume,
 } from "../../shared/types";
 
 interface AuditChartsProps {
   weeks: AuditWeek[];
+  /** How the weekly km targets are derived; renders the caption under the header. */
+  volumeReference?: AuditVolumeReference | null;
+  /** ISO date (YYYY-MM-DD) treated as "today"; defaults to the local date. */
+  today?: string;
 }
 
-const CATEGORY_META: Record<
-  AuditSessionCategory,
-  { label: string; color: string; dotClass: string }
-> = {
+function signedPct(value?: number | null): string | null {
+  return value == null ? null : `${value > 0 ? "+" : ""}${Math.round(value)}%`;
+}
+
+/** Planned km within ±GAP_TOLERANCE_PCT of the target counts as on track. */
+const GAP_TOLERANCE_PCT = 10;
+
+type GapTone = "on" | "below" | "above";
+
+/** Neutral palette (amber/violet, not red/green): the target is a reference, the ramp is the coach's call. */
+const TONE_CLASSES: Record<GapTone, { text: string; fill: string }> = {
+  on: { text: "text-slate-600", fill: "bg-gradient-to-r from-orange-400 to-pink-500" },
+  below: { text: "text-amber-600", fill: "bg-amber-400" },
+  above: { text: "text-violet-600", fill: "bg-violet-500" },
+};
+
+export function gapTone(vsTargetPct?: number | null): GapTone {
+  if (vsTargetPct == null || Math.abs(vsTargetPct) <= GAP_TOLERANCE_PCT) return "on";
+  return vsTargetPct < 0 ? "below" : "above";
+}
+
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+}
+
+/** One-line explanation of where the weekly km targets come from. */
+export function volumeCaption(ref: AuditVolumeReference): string {
+  const block = ref.goal_label ? `${ref.goal_label} block target` : "block target";
+  const ramp =
+    ref.start_km != null
+      ? `Weekly km targets ramp from your recent level (${Math.round(ref.start_km)} km/wk) to the ${ref.block_target_km} km/wk ${block}`
+      : `Weekly km targets build to the ${ref.block_target_km} km/wk ${block}`;
+  let basis = "";
+  if (ref.ns_goal) {
+    basis = ref.own_block
+      ? ` (your ${ref.ns_goal} peak)`
+      : ref.ns_peak_km
+        ? ` (${Math.round((ref.block_target_km / ref.ns_peak_km) * 100)}% of your ${ref.ns_peak_km} km/wk ${ref.ns_goal} peak)`
+        : "";
+  }
+  return (
+    `${ramp}${basis}. Every ${ordinal(ref.recovery_every_weeks)} week is a recovery week. ` +
+    "Targets are a reference, not a limit."
+  );
+}
+
+/** Planned week's weekly running-km target (shared north-star rule). Facts only: the ramp is the coach's call. */
+function VolumeTarget({ volume, vsPriorPct }: { volume: AuditWeekVolume; vsPriorPct?: number | null }) {
+  const tone = gapTone(volume.vs_path_pct);
+  const gap = signedPct(volume.vs_path_pct);
+  const vsPrior = signedPct(vsPriorPct);
+  const phase = volume.phase === "build" ? null : volume.phase;
+  const title = [
+    `Weekly running-km target${phase ? ` (${phase} week)` : ""}`,
+    gap && `planned ${gap} vs target`,
+    vsPrior && `${vsPrior} vs prior week`,
+    `block target ${volume.block_target_km} km`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <span
+      className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs tabular-nums text-slate-500"
+      title={title}
+      data-testid="volume-target"
+      data-tone={tone}
+    >
+      <span className="h-1.5 w-1.5 rounded-full border border-slate-500" />
+      <span>Target {volume.target_km} km</span>
+      {gap && <span className={`font-semibold ${TONE_CLASSES[tone].text}`}>{gap}</span>}
+      {phase && (
+        <span className="rounded bg-slate-100 px-1 text-[0.6875rem] font-semibold text-slate-600">
+          {phase}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Weekly km bar: with a target, planned km vs target (tick); otherwise relative to the biggest week. */
+function VolumeBar({ km, maxKm, volume }: { km: number; maxKm: number; volume?: AuditWeekVolume | null }) {
+  if (!volume) {
+    const pct = Math.max(4, Math.round((km / maxKm) * 100));
+    return (
+      <span className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <span
+          className={`block h-full rounded-full ${TONE_CLASSES.on.fill}`}
+          style={{ width: `${pct}%` }}
+        />
+      </span>
+    );
+  }
+  // The larger of planned and target fills 85% of the bar, so an overshoot stays visible.
+  const scale = Math.max(km, volume.target_km, 1) / 0.85;
+  const fillPct = Math.max(km > 0 ? 4 : 0, Math.round((km / scale) * 100));
+  const tickPct = Math.round((volume.target_km / scale) * 100);
+  return (
+    <span className="relative block h-1.5 w-full rounded-full bg-slate-100">
+      <span
+        className={`block h-full rounded-full ${TONE_CLASSES[gapTone(volume.vs_path_pct)].fill}`}
+        style={{ width: `${fillPct}%` }}
+      />
+      <span
+        data-testid="volume-tick"
+        className="absolute -top-0.5 h-2.5 w-0.5 -translate-x-1/2 rounded-full bg-slate-700"
+        style={{ left: `${tickPct}%` }}
+        aria-hidden="true"
+      />
+    </span>
+  );
+}
+
+interface CategoryMeta {
+  label: string;
+  icon: LucideIcon;
+  /** Completed session: solid fill. */
+  solid: string;
+  /** Planned session: light tint + coloured outline. */
+  planned: string;
+  swatch: string;
+}
+
+const CATEGORY_META: Record<AuditSessionCategory, CategoryMeta> = {
   easy: {
     label: "Easy run",
-    color: "#38BDF8",
-    dotClass: "bg-sky-400",
+    icon: Footprints,
+    solid: "bg-sky-400 border-sky-400 text-white",
+    planned: "bg-sky-50 border-sky-300 text-sky-950",
+    swatch: "bg-sky-400",
   },
   quality: {
     label: "Quality run",
-    color: "#F97316",
-    dotClass: "bg-orange-500",
+    icon: Zap,
+    solid: "bg-orange-500 border-orange-500 text-white",
+    planned: "bg-orange-50 border-orange-300 text-orange-950",
+    swatch: "bg-orange-500",
   },
   bike: {
     label: "Bike",
-    color: "#8B5CF6",
-    dotClass: "bg-violet-500",
+    icon: Bike,
+    solid: "bg-violet-500 border-violet-500 text-white",
+    planned: "bg-violet-50 border-violet-300 text-violet-950",
+    swatch: "bg-violet-500",
   },
   strength: {
     label: "Strength",
-    color: "#10B981",
-    dotClass: "bg-emerald-500",
+    icon: Dumbbell,
+    solid: "bg-emerald-500 border-emerald-500 text-white",
+    planned: "bg-emerald-50 border-emerald-300 text-emerald-950",
+    swatch: "bg-emerald-500",
   },
   other: {
     label: "Other",
-    color: "#94A3B8",
-    dotClass: "bg-slate-400",
+    icon: Activity,
+    solid: "bg-slate-400 border-slate-400 text-white",
+    planned: "bg-slate-50 border-slate-300 text-slate-900",
+    swatch: "bg-slate-400",
   },
 };
 
-const DEFAULT_XT_MINUTES = 30;
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
-function formatDayShort(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const clean = iso.slice(0, 10);
-  const parts = clean.split("-").map(Number);
-  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return clean;
+const GRID_COLS =
+  "grid grid-cols-[3.75rem_repeat(7,minmax(5.5rem,1fr))_6rem] gap-1.5";
+
+function parseIso(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const parts = iso.slice(0, 10).split("-").map(Number);
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
   const [y, m, d] = parts;
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  return new Date(Date.UTC(y, m - 1, d));
+}
+
+function toIso(dt: Date): string {
+  return dt.toISOString().slice(0, 10);
+}
+
+/** 0 = Monday … 6 = Sunday. */
+function weekdayIndex(dt: Date): number {
+  return (dt.getUTCDay() + 6) % 7;
+}
+
+function localTodayIso(): string {
+  const now = new Date();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${m}-${d}`;
 }
 
 function isRun(s: AuditSession): boolean {
   return s.category === "easy" || s.category === "quality";
 }
 
-interface HoveredSegment {
-  weekIdx: number;
-  session: AuditSession;
+/** Monday of the week, from `week` or (fallback) the first dated session. */
+function weekStart(w: AuditWeek): Date | null {
+  const fromWeek = parseIso(w.week);
+  if (fromWeek) {
+    return new Date(fromWeek.getTime() - weekdayIndex(fromWeek) * 86_400_000);
+  }
+  const first = w.sessions.map((s) => parseIso(s.date)).find(Boolean);
+  if (!first) return null;
+  return new Date(first.getTime() - weekdayIndex(first) * 86_400_000);
 }
 
-interface ChartRow {
-  label: string;
-  week: AuditWeek;
-  runs: AuditSession[];
-  xts: AuditSession[];
-  [key: string]: unknown;
+function measureFor(s: AuditSession): string {
+  if (isRun(s) && s.km > 0) return `${s.km.toFixed(s.km % 1 ? 1 : 0)} km`;
+  if (s.minutes > 0) return `${s.minutes} min`;
+  if (s.km > 0) return `${s.km.toFixed(1)} km`;
+  return s.sport;
 }
 
-export default function AuditCharts({ weeks }: AuditChartsProps) {
-  const uid = useId().replace(/:/g, "");
-  const [hovered, setHovered] = useState<HoveredSegment | null>(null);
-
+export default function AuditCharts({ weeks, volumeReference, today }: AuditChartsProps) {
   if (weeks.length === 0) return null;
 
-  let maxRuns = 0;
-  let maxXts = 0;
-
-  const rows: ChartRow[] = weeks.map((w) => {
-    const runs = w.sessions.filter(isRun);
-    const xts = w.sessions.filter((s) => !isRun(s));
-    if (runs.length > maxRuns) maxRuns = runs.length;
-    if (xts.length > maxXts) maxXts = xts.length;
-
-    const row: ChartRow = {
-      label: formatChartTickDate(w.week) || w.date_range || "",
-      week: w,
-      runs,
-      xts,
-    };
-    runs.forEach((r, idx) => {
-      row[`run_${idx}`] = r.km;
-    });
-    xts.forEach((x, idx) => {
-      row[`xt_${idx}`] = x.minutes > 0 ? x.minutes : DEFAULT_XT_MINUTES;
-    });
-    return row;
-  });
-
-  const runIndices = Array.from({ length: maxRuns }, (_, i) => i);
-  const xtIndices = Array.from({ length: maxXts }, (_, i) => i);
-  const hasXt = maxXts > 0;
-
-  const patternId = (cat: AuditSessionCategory) => `hatch-${uid}-${cat}`;
-  const fillFor = (s: AuditSession | undefined): string => {
-    if (!s) return "transparent";
-    const meta = CATEGORY_META[s.category] || CATEGORY_META.other;
-    return s.completed ? meta.color : `url(#${patternId(s.category)})`;
-  };
-  const strokeFor = (s: AuditSession | undefined): string => {
-    if (!s) return "transparent";
-    return "#FFFFFF";
-  };
-
-  const annotatedWeeks = weeks.filter(
-    (w) => w.long_run || (w.notes && w.notes.length > 0),
-  );
+  const todayIso = today ?? localTodayIso();
+  const maxKm = Math.max(1, ...weeks.map((w) => w.km));
+  const hasTargets = weeks.some((w) => w.volume);
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-card space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h4 className="font-display text-sm font-bold text-slate-900">
-            Weekly Breakdown · Runs &amp; Cross-Training
+        <div className="max-w-xl">
+          <h4 className="font-display text-base font-bold text-slate-900">
+            Weekly Schedule
           </h4>
-          <p className="text-[11px] text-slate-500">
-            Each stacked segment is one session · hover a segment for details
+          <p className="text-xs text-slate-500">
+            Every scheduled session for the audit period
           </p>
+          {volumeReference && hasTargets && (
+            <p className="mt-1 text-xs text-slate-500" data-testid="volume-caption">
+              {volumeCaption(volumeReference)}
+            </p>
+          )}
         </div>
 
         {/* Legend */}
-        <div className="flex flex-wrap items-center gap-3 text-[11px] font-medium text-slate-600">
+        <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-600">
           {(["easy", "quality", "bike", "strength"] as const).map((cat) => (
             <span key={cat} className="inline-flex items-center gap-1.5">
               <span
-                className={`h-2.5 w-2.5 rounded-xs ${CATEGORY_META[cat].dotClass}`}
+                className={`h-2.5 w-2.5 rounded-xs ${CATEGORY_META[cat].swatch}`}
               />
               {CATEGORY_META[cat].label}
             </span>
           ))}
           <span className="inline-flex items-center gap-1.5 text-slate-500">
-            <span
-              aria-hidden="true"
-              className="h-2.5 w-2.5 rounded-xs border border-slate-400"
-              style={{
-                backgroundImage:
-                  "repeating-linear-gradient(135deg, #94A3B8 0 2px, transparent 2px 4px)",
-              }}
-            />
+            <span className="h-2.5 w-2.5 rounded-xs bg-slate-500" />
+            Completed
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-slate-500">
+            <span className="h-2.5 w-2.5 rounded-xs border border-slate-400 bg-slate-50" />
             Planned
           </span>
+          {hasTargets && (
+            <span className="inline-flex items-center gap-1.5 text-slate-500">
+              <span className="h-2.5 w-0.5 rounded-full bg-slate-700" />
+              Weekly km target
+            </span>
+          )}
         </div>
       </div>
 
-      <div
-        className="h-72 w-full"
-        onMouseLeave={() => setHovered(null)}
-      >
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart
-            data={rows}
-            barGap={3}
-            margin={{ top: 8, right: hasXt ? 4 : 12, left: -12, bottom: 0 }}
-          >
-            <defs>
-              {(Object.keys(CATEGORY_META) as AuditSessionCategory[]).map(
-                (cat) => {
-                  const color = CATEGORY_META[cat].color;
-                  return (
-                    <pattern
-                      key={cat}
-                      id={patternId(cat)}
-                      width="6"
-                      height="6"
-                      patternUnits="userSpaceOnUse"
-                      patternTransform="rotate(45)"
-                    >
-                      <rect
-                        width="6"
-                        height="6"
-                        fill={color}
-                        fillOpacity={0.35}
-                      />
-                      <line
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="6"
-                        stroke={color}
-                        strokeWidth="2.5"
-                        strokeOpacity={0.85}
-                      />
-                    </pattern>
-                  );
-                },
-              )}
-            </defs>
-
-            <CartesianGrid
-              stroke="#F1F5F9"
-              strokeDasharray="3 3"
-              vertical={false}
-            />
-            <XAxis
-              dataKey="label"
-              tick={{ fontSize: 11, fill: "#64748B" }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <YAxis
-              yAxisId="km"
-              unit=" km"
-              tick={{ fontSize: 11, fill: "#64748B" }}
-              axisLine={false}
-              tickLine={false}
-            />
-            {hasXt && (
-              <YAxis
-                yAxisId="min"
-                orientation="right"
-                unit="m"
-                tick={{ fontSize: 11, fill: "#8B5CF6" }}
-                axisLine={false}
-                tickLine={false}
-              />
-            )}
-
-            <Tooltip
-              cursor={{ fill: "rgba(241, 245, 249, 0.7)" }}
-              content={(props) => (
-                <AuditTooltip
-                  active={props.active}
-                  payload={props.payload as Array<{ payload?: ChartRow }> | undefined}
-                  hovered={hovered}
-                />
-              )}
-            />
-
-            {runIndices.map((idx) => (
-              <Bar
-                key={`run_${idx}`}
-                yAxisId="km"
-                dataKey={`run_${idx}`}
-                stackId="runs"
-                maxBarSize={38}
-                radius={idx === maxRuns - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
-                isAnimationActive={false}
-                onMouseLeave={() => setHovered(null)}
-              >
-                {rows.map((row, wIdx) => {
-                  const s = row.runs[idx];
-                  return (
-                    <Cell
-                      key={`run-cell-${wIdx}-${idx}`}
-                      fill={fillFor(s)}
-                      stroke={strokeFor(s)}
-                      strokeWidth={s ? 1.5 : 0}
-                      onMouseEnter={() => {
-                        if (s) setHovered({ weekIdx: wIdx, session: s });
-                      }}
-                    />
-                  );
-                })}
-              </Bar>
-            ))}
-
-            {xtIndices.map((idx) => (
-              <Bar
-                key={`xt_${idx}`}
-                yAxisId="min"
-                dataKey={`xt_${idx}`}
-                stackId="xt"
-                maxBarSize={14}
-                radius={idx === maxXts - 1 ? [3, 3, 0, 0] : [0, 0, 0, 0]}
-                isAnimationActive={false}
-                onMouseLeave={() => setHovered(null)}
-              >
-                {rows.map((row, wIdx) => {
-                  const s = row.xts[idx];
-                  return (
-                    <Cell
-                      key={`xt-cell-${wIdx}-${idx}`}
-                      fill={fillFor(s)}
-                      stroke={strokeFor(s)}
-                      strokeWidth={s ? 1.5 : 0}
-                      onMouseEnter={() => {
-                        if (s) setHovered({ weekIdx: wIdx, session: s });
-                      }}
-                    />
-                  );
-                })}
-              </Bar>
-            ))}
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Long-run targets & calendar notes per week */}
-      {annotatedWeeks.length > 0 && (
-        <div className="border-t border-slate-100 pt-3 space-y-1.5">
-          {annotatedWeeks.map((w, idx) => (
+      <div className="overflow-x-auto -mx-1 px-1">
+        <div className="min-w-[48.75rem] space-y-1.5" role="table" aria-label="Weekly schedule">
+          {/* Header */}
+          <div className={GRID_COLS} role="row">
             <div
-              key={`${w.week || idx}`}
-              className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-slate-600"
+              role="columnheader"
+              className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-400"
             >
-              <span className="font-display font-bold text-slate-800">
-                {w.date_range || formatChartTickDate(w.week)}:
-              </span>
-              {w.long_run && (
-                <span
-                  className={
-                    w.long_run.includes("⚠")
-                      ? "rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-medium text-amber-800"
-                      : "text-slate-600"
-                  }
-                >
-                  🏃 {w.long_run}
-                </span>
-              )}
-              {w.notes.map((n, nIdx) => (
-                <span
-                  key={nIdx}
-                  className="rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[11px] text-slate-700"
-                >
-                  📝 {n}
-                </span>
-              ))}
+              Week
             </div>
+            {WEEKDAYS.map((d) => (
+              <div
+                key={d}
+                role="columnheader"
+                className="text-center text-xs font-semibold uppercase tracking-wide text-slate-400"
+              >
+                {d}
+              </div>
+            ))}
+            <div
+              role="columnheader"
+              className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-400"
+            >
+              Total
+            </div>
+          </div>
+
+          {weeks.map((w, wIdx) => (
+            <WeekRow
+              key={w.week ?? wIdx}
+              week={w}
+              todayIso={todayIso}
+              maxKm={maxKm}
+            />
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-function AuditTooltip({
-  active,
-  payload,
-  hovered,
+function WeekRow({
+  week,
+  todayIso,
+  maxKm,
 }: {
-  active?: boolean;
-  payload?: Array<{ payload?: ChartRow }>;
-  hovered: HoveredSegment | null;
+  week: AuditWeek;
+  todayIso: string;
+  maxKm: number;
 }) {
-  if (!active || !payload || payload.length === 0) return null;
-  const row = payload[0]?.payload;
-  if (!row) return null;
-  const w = row.week;
-  const activeSession =
-    hovered && row.week.sessions.includes(hovered.session)
-      ? hovered.session
-      : null;
-
-  return (
-    <div className="max-w-xs rounded-xl border border-slate-200 bg-white p-3 text-xs shadow-lg space-y-2">
-      {activeSession ? (
-        <SessionDetail session={activeSession} />
-      ) : (
-        <WeekSessionList week={w} />
-      )}
-
-      <div className="border-t border-slate-100 pt-1.5 text-[11px] text-slate-500">
-        <div className="font-semibold text-slate-700">
-          {w.date_range || row.label}: {w.km.toFixed(1)} km · TSS{" "}
-          {Math.round(w.tss)}
-        </div>
-        <div>
-          {w.easy + w.quality} runs ({w.easy} easy, {w.quality} quality)
-          {w.bike > 0 ? ` · ${w.bike} bike` : ""}
-          {w.strength > 0 ? ` · ${w.strength} strength` : ""}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SessionDetail({ session }: { session: AuditSession }) {
-  const meta = CATEGORY_META[session.category] || CATEGORY_META.other;
-  const runSession = isRun(session);
-  const volumeParts: string[] = [];
-  if (session.km > 0) volumeParts.push(`${session.km.toFixed(1)} km`);
-  if (!runSession && session.minutes > 0) {
-    volumeParts.push(`${session.minutes} min`);
-  } else if (runSession && session.minutes > 0) {
-    volumeParts.push(`${session.minutes} min`);
+  const start = weekStart(week);
+  const byDay: AuditSession[][] = WEEKDAYS.map(() => []);
+  for (const s of week.sessions) {
+    const dt = parseIso(s.date);
+    if (dt) byDay[weekdayIndex(dt)].push(s);
   }
-  if (session.tss > 0) volumeParts.push(`TSS ${Math.round(session.tss)}`);
+
+  // Long run = the longest easy run of the week.
+  const longRun = week.sessions
+    .filter((s) => s.category === "easy" && s.km > 0)
+    .reduce<AuditSession | null>(
+      (best, s) => (!best || s.km > best.km ? s : best),
+      null,
+    );
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
-          <span className={`h-2 w-2 rounded-full ${meta.dotClass}`} />
-          {meta.label}
-        </span>
-        <span
-          className={`rounded-full px-1.5 py-0.2 text-[10px] font-semibold ${
-            session.completed
-              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-              : "bg-slate-100 text-slate-600 border border-slate-200"
-          }`}
-        >
-          {session.completed ? "Completed" : "Planned"}
-        </span>
+    <div className={GRID_COLS} role="row">
+      <div
+        role="rowheader"
+        className="flex items-center px-1 font-display text-sm font-bold text-slate-800"
+      >
+        {formatChartTickDate(week.week) || week.date_range || ""}
       </div>
-      <div className="font-display font-bold text-slate-900">
-        {session.title}
-      </div>
-      <div className="text-[11px] text-slate-600">
-        {formatDayShort(session.date)}
-        {volumeParts.length > 0 ? ` · ${volumeParts.join(" · ")}` : ""}
-      </div>
-    </div>
-  );
-}
 
-function WeekSessionList({ week }: { week: AuditWeek }) {
-  if (week.sessions.length === 0) {
-    return <div className="text-slate-500">No sessions scheduled</div>;
-  }
-  return (
-    <div className="space-y-1">
-      {week.sessions.map((s, idx) => {
-        const meta = CATEGORY_META[s.category] || CATEGORY_META.other;
-        const measure =
-          s.km > 0
-            ? `${s.km.toFixed(1)} km`
-            : s.minutes > 0
-              ? `${s.minutes} min`
-              : s.sport;
+      {WEEKDAYS.map((_, dIdx) => {
+        const dayIso = start
+          ? toIso(new Date(start.getTime() + dIdx * 86_400_000))
+          : null;
+        const isToday = dayIso === todayIso;
+        const sessions = byDay[dIdx];
         return (
-          <div key={idx} className="flex items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-1.5 truncate text-slate-800">
-              <span
-                className={`h-2 w-2 shrink-0 rounded-full ${meta.dotClass}`}
-              />
-              <span className="font-medium truncate">{s.title}</span>
-            </span>
-            <span className="shrink-0 tabular-nums text-[11px] text-slate-500">
-              {formatDayShort(s.date).split(",")[0]} · {measure}
-            </span>
-          </div>
+            <div
+              key={dIdx}
+              role="cell"
+              data-today={isToday || undefined}
+              className={`flex min-h-16 flex-col gap-1 rounded-xl p-1 ${
+                isToday
+                  ? "ring-2 ring-orange-400 bg-orange-50/60"
+                  : "bg-slate-50/70"
+              }`}
+            >
+              {isToday && (
+                <span className="px-1 text-xs font-semibold uppercase tracking-wide text-orange-600">
+                  Today
+                </span>
+              )}
+              {sessions.length === 0 ? (
+                <span className="m-auto text-xs font-medium text-slate-300">
+                  Rest
+                </span>
+              ) : (
+                sessions.map((s, sIdx) => (
+                  <SessionCard
+                    key={sIdx}
+                    session={s}
+                    isLongRun={s === longRun}
+                  />
+                ))
+              )}
+            </div>
         );
       })}
+
+      <div
+        role="cell"
+        className="flex flex-col justify-center gap-1 px-1"
+      >
+        <span className="font-display text-base font-bold tabular-nums text-slate-900">
+          {week.km.toFixed(1)} km
+        </span>
+        <VolumeBar km={week.km} maxKm={maxKm} volume={week.volume} />
+        <span className="text-xs tabular-nums text-slate-500">
+          TSS {Math.round(week.tss)}
+        </span>
+        {week.volume ? <VolumeTarget volume={week.volume} vsPriorPct={week.vs_prior_pct} /> : null}
+      </div>
+    </div>
+  );
+}
+
+function SessionCard({
+  session,
+  isLongRun,
+}: {
+  session: AuditSession;
+  isLongRun: boolean;
+}) {
+  const meta = CATEGORY_META[session.category] || CATEGORY_META.other;
+  const Icon = meta.icon;
+  const status = session.completed ? "Completed" : "Planned";
+  const tooltip = `${session.title} · ${measureFor(session)}${
+    session.tss > 0 ? ` · TSS ${Math.round(session.tss)}` : ""
+  } · ${status}`;
+
+  return (
+    <div
+      title={tooltip}
+      aria-label={tooltip}
+      className={`rounded-lg border px-1.5 py-1 shadow-2xs ${
+        session.completed ? meta.solid : meta.planned
+      }`}
+    >
+      <div className="flex items-start gap-1">
+        <Icon className="mt-[1px] h-3 w-3 shrink-0 opacity-80" />
+        <span className="line-clamp-3 text-xs font-semibold leading-tight">
+          {session.title}
+        </span>
+      </div>
+      <div className="mt-0.5 flex items-center justify-between gap-1 text-xs tabular-nums">
+        <span className="inline-flex items-center gap-0.5 opacity-90">
+          {measureFor(session)}
+          {session.completed && <Check className="h-2.5 w-2.5" />}
+        </span>
+        {isLongRun && (
+          <span
+            className={`rounded px-1 text-[0.6875rem] font-bold ${
+              session.completed
+                ? "bg-white/25 text-white"
+                : "bg-white text-sky-700 border border-sky-200"
+            }`}
+          >
+            LR
+          </span>
+        )}
+      </div>
     </div>
   );
 }

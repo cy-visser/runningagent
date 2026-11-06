@@ -5,6 +5,7 @@ from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
 from google.adk.plugins.auto_tracing_plugin import AutoTracingPlugin
 
 from .coach.coaching.coaching_agent import coaching_node
+from .coach.coaching.quick_actions import QuickActionPlugin
 from .coach.model_config import ONBOARDING_MODEL, build_model
 from .coach.onboarding.onboarding_agent import onboarding_node
 from .coach.profile_router import (
@@ -39,11 +40,16 @@ root_agent = Workflow(
 app = App(
     name="running_coach",
     root_agent=root_agent,
-    plugins=[AutoTracingPlugin()],
+    # QuickActionPlugin: web quick actions arrive as a message part (Agent Runtime drops state_delta).
+    plugins=[AutoTracingPlugin(), QuickActionPlugin()],
     # Compact session history; a Workflow root needs an explicit summarizer model.
+    # Token threshold first (prompt >= 30k tokens, keep the last 10 raw events), else every
+    # 5 runner messages with a 2-invocation overlap.
     events_compaction_config=EventsCompactionConfig(
-        compaction_interval=10,
+        compaction_interval=5,
         overlap_size=2,
+        token_threshold=30_000,
+        event_retention_size=10,
         summarizer=LlmEventSummarizer(llm=build_model(ONBOARDING_MODEL)),
     ),
 )

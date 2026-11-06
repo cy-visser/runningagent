@@ -3,11 +3,10 @@ from typing import Optional
 from ....shared.goal_distance import DEFAULT_PEAK_CTL, DEFAULT_PEAK_RANGE
 from ....shared.hr_pace_fit import LT_FIT_WEEKS
 from ....shared.units import fmt_clock
-from .goal_trajectory import TAPER_WEEKS, ramp_status
+from ....shared.goal_projection.goal_trajectory import TAPER_WEEKS, ramp_status
 from .lt_paces import lt_verdict
-from .race_projection import format_drivers_table, format_projection_row
+from ....shared.goal_projection.race_projection import format_drivers_table, format_projection_row
 
-PROGRESS_BAR_SEGMENTS = 10
 # Typical race-day form (TSB) after a good taper; shown in the CTL row during the taper.
 RACE_DAY_TSB_TARGET = (5, 15)
 
@@ -39,7 +38,7 @@ def format_lt_rows(lt: Optional[dict]) -> str:
 def format_fitness_pmc(
     fitness_data: Optional[dict], race_projection: Optional[dict] = None, lt: Optional[dict] = None,
 ) -> str:
-    """Renders the CTL + LT1/LT2 + goal-race projection table for LLM trajectory reasoning.
+    """Renders the CTL + LT1/LT2 + goal-race projection evidence for LLM trajectory reasoning (never shown verbatim).
 
     ATL/TSB are not displayed as table rows; they are kept as an analysis-only
     line so recovery reasoning (TSB vs HRV/RHR) remains possible.
@@ -65,8 +64,6 @@ def format_fitness_pmc(
     # fitness banked before the taper (static for the whole taper).
     progress_ctl = round(pre_taper_ctl, 1) if in_taper and pre_taper_ctl is not None else ctl_end
     pct = min(100, max(0, int((progress_ctl / target_peak) * 100))) if target_peak > 0 else 100
-    filled = pct // PROGRESS_BAR_SEGMENTS
-    bar = "█" * filled + "░" * (PROGRESS_BAR_SEGMENTS - filled)
 
     if in_taper:
         lo, hi = RACE_DAY_TSB_TARGET
@@ -92,7 +89,7 @@ def format_fitness_pmc(
     return (
         "| Metric | Current Value | Target / Reference | Progress & Trajectory |\n"
         "|---|---|---|---|\n"
-        f"| **CTL (Fitness)** | `{ctl_end}` | Target: `{target_peak}`{range_str}{weeks_str} | `[{bar}]` **{pct}%**{ramp_str} |\n"
+        f"| **CTL (Fitness)** | `{ctl_end}` | Target: `{target_peak}`{range_str}{weeks_str} | **{pct}%** of target{ramp_str} |\n"
         f"{format_lt_rows(lt)}"
         f"{projection_row}"
         f"{drivers_str}"

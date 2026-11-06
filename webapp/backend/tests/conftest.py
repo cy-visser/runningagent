@@ -93,6 +93,7 @@ class FakeAgentClient:
         session_id: str,
         auth_email: str,
         message: str,
+        quick_action: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         self.calls.append(
             {
@@ -100,6 +101,7 @@ class FakeAgentClient:
                 "session_id": session_id,
                 "auth_email": auth_email,
                 "message": message,
+                "quick_action": quick_action,
             }
         )
         yield {"author": "coaching_agent", "partial": True, "content": {"parts": [{"text": "Coach "}]}}

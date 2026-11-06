@@ -85,7 +85,7 @@ export function ConnectTrainingPeaksDialog({
                   ? "TrainingPeaks Connection"
                   : "Connect TrainingPeaks"}
               </h2>
-              <p className="text-xs text-slate-600">
+              <p className="text-sm text-slate-600">
                 Encrypted with Cloud KMS and bound exclusively to your profile
               </p>
             </div>
@@ -103,7 +103,7 @@ export function ConnectTrainingPeaksDialog({
 
         <form onSubmit={handleSubmit} className="space-y-4 p-6">
           {tpStatus.connected && !successInfo && (
-            <div className="flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-xs text-emerald-900">
+            <div className="flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-900">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
                 <div>
@@ -117,14 +117,14 @@ export function ConnectTrainingPeaksDialog({
                   )}
                 </div>
               </div>
-              <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200">
+              <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
                 Active
               </span>
             </div>
           )}
 
           {successInfo && (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 text-sm text-emerald-900">
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3.5 text-base text-emerald-900">
               <div className="flex items-center gap-2 font-semibold">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 <span>
@@ -132,13 +132,13 @@ export function ConnectTrainingPeaksDialog({
                   {successInfo.tp.tp_name ? ` (${successInfo.tp.tp_name})` : ""}!
                 </span>
               </div>
-              <p className="mt-1 text-xs text-emerald-700">
+              <p className="mt-1 text-sm text-emerald-700">
                 Your credential is encrypted in Firestore via Cloud KMS.
               </p>
             </div>
           )}
 
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-xs text-slate-600 space-y-1.5">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-600 space-y-1.5">
             <p className="font-semibold text-slate-800">
               How to copy your <code className="rounded bg-white px-1.5 py-0.5 text-orange-700 border border-slate-200">Production_tpAuth</code> cookie:
             </p>
@@ -165,7 +165,7 @@ export function ConnectTrainingPeaksDialog({
             <div className="mb-1.5 flex items-center justify-between">
               <label
                 htmlFor="tp-cookie-input"
-                className="text-xs font-semibold text-slate-700"
+                className="text-sm font-semibold text-slate-700"
               >
                 {tpStatus.connected
                   ? "Replace Production_tpAuth cookie"
@@ -174,7 +174,7 @@ export function ConnectTrainingPeaksDialog({
               <button
                 type="button"
                 onClick={() => setReveal((v) => !v)}
-                className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 cursor-pointer"
+                className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-800 cursor-pointer"
               >
                 {reveal ? (
                   <>
@@ -195,16 +195,16 @@ export function ConnectTrainingPeaksDialog({
               placeholder="Paste Production_tpAuth value…"
               autoComplete="off"
               spellCheck={false}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 font-mono text-xs text-slate-900 placeholder:text-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/30"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 font-mono text-sm text-slate-900 placeholder:text-slate-400 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/30"
             />
-            <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-500">
+            <p className="mt-1.5 flex items-center gap-1 text-xs text-slate-500">
               <Lock className="h-3 w-3 text-slate-400" />
               Validated live against TrainingPeaks before KMS envelope encryption.
             </p>
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs text-rose-800">
+            <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-800">
               <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
@@ -214,14 +214,14 @@ export function ConnectTrainingPeaksDialog({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 cursor-pointer"
             >
               {successInfo ? "Done" : "Cancel"}
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="inline-flex items-center gap-2 rounded-xl bg-sunset bg-sunset-hover px-5 py-2 text-xs font-semibold text-white shadow-sunset transition disabled:opacity-60 cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-xl bg-sunset bg-sunset-hover px-5 py-2 text-sm font-semibold text-white shadow-sunset transition disabled:opacity-60 cursor-pointer"
             >
               {submitting ? (
                 <>

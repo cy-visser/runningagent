@@ -6,6 +6,12 @@
 }
 
 @layer base {
+  /* Scale the whole rem-based UI proportionally above the 16" MBP reference width
+     (1728 CSS px). ≤1728px: unchanged 16px. Capped at 24px (1.5×) for ultrawides. */
+  html {
+    font-size: clamp(16px, calc(100vw / 108), 24px);
+  }
+
   html,
   body {
     background-color: #ffffff;

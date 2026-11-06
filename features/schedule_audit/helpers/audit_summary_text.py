@@ -3,7 +3,7 @@
 from typing import Optional
 
 from ....shared.weekly_buckets import format_week_line
-from .long_run_annotations import format_week_long_run
+from .long_run_annotations import format_week_long_run, format_week_volume
 
 
 def format_schedule_audit_summary(weeks_data: list[dict], goal_context: Optional[str] = None) -> str:
@@ -17,6 +17,9 @@ def format_schedule_audit_summary(weeks_data: list[dict], goal_context: Optional
         long_run = format_week_long_run(w)
         if long_run:
             lines.append(f"    - 🏃 {long_run}")
+        volume = format_week_volume(w)
+        if volume:
+            lines.append(f"    - 📈 {volume}")
         for s in w.get("sessions", []):
             lines.append(f"    - {s}")
         for note in w.get("notes", []):

@@ -13,6 +13,7 @@ import google.auth
 from google.auth.transport import requests as google_requests
 import httpx
 
+from .quick_actions import QUICK_ACTION_PART_PREFIX, QUICK_ACTION_STATE_KEY
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ class AgentRuntimeClient:
         session_id: str,
         auth_email: str,
         message: str,
+        quick_action: Optional[dict[str, Any]] = None,
     ) -> AsyncIterator[dict[str, Any]]:
         base, need_token = resolve_agent_api_base(self._settings)
         headers = {
@@ -107,13 +109,21 @@ class AgentRuntimeClient:
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
         }
+        state_delta: dict[str, Any] = {AUTH_EMAIL_STATE_KEY: auth_email}
+        parts: list[dict[str, Any]] = [{"text": message}]
+        if quick_action:
+            # Agent Runtime's /api/run_sse drops `state_delta`, so the action travels as an extra message
+            # part; the agent's QuickActionPlugin strips it before persisting and moves it to per-turn
+            # `temp:` state. The state_delta copy serves local ADK servers. Typed chat sends no action.
+            parts.append({"text": QUICK_ACTION_PART_PREFIX + json.dumps(quick_action, separators=(",", ":"))})
+            state_delta[QUICK_ACTION_STATE_KEY] = quick_action
         payload = {
             "app_name": self._settings.agent_app_name,
             "user_id": adk_user_id,
             "session_id": session_id,
             "streaming": True,
-            "state_delta": {AUTH_EMAIL_STATE_KEY: auth_email},
-            "new_message": {"role": "user", "parts": [{"text": message}]},
+            "state_delta": state_delta,
+            "new_message": {"role": "user", "parts": parts},
         }
         async with self._http.stream(
             "POST",

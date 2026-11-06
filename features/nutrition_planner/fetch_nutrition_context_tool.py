@@ -7,7 +7,6 @@ from google.adk.tools import FunctionTool, ToolContext
 
 from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import get_today_date, iso_date
-from ...shared.goal_plan import current_goal
 from ...shared.runner_weather import fetch_weather_text
 from .helpers.nutrition_context_text import format_nutrition_context_summary
 
@@ -16,7 +15,8 @@ async def fetch_nutrition_context(
     tool_context: ToolContext,
     days_forward: int = 3,
 ) -> str:
-    """Runner biometrics, upcoming training and the weather forecast for fueling and hydration guidance.
+    """Upcoming training and the weather forecast for fueling and hydration guidance (biometrics and
+    goal are in the runner profile).
 
     Args:
         days_forward: Days ahead to plan (default 3).
@@ -32,8 +32,6 @@ async def fetch_nutrition_context(
     )
 
     return format_nutrition_context_summary(
-        profile=profile,
-        goal=current_goal(profile, today_date),
         upcoming_workouts=upcoming,
         weather_forecast=weather_str,
         days_forward=days_forward,

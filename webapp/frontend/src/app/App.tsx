@@ -15,6 +15,7 @@ import type {
   ConnectTpResponse,
   MeResponse,
   ProfileResponse,
+  QuickAction,
 } from "../shared/types";
 
 const SESSION_IDLE_MS = 4 * 60 * 60 * 1000; // matches agent CONTEXT_WINDOW
@@ -56,7 +57,7 @@ export function App() {
       lastActivityRef.current = 0;
       if (import.meta.env.VITE_DEMO_MODE === "true") {
         const demoView = new URLSearchParams(window.location.search).get("view");
-        if (demoView === "checkin" || demoView === "trend") {
+        if (demoView === "checkin" || demoView === "trend" || demoView === "audit") {
           const mod = await import("../demo/mockApi");
           const demoSess = await mod.demoFetchSession();
           setSessionId(demoSess.session_id);
@@ -97,7 +98,11 @@ export function App() {
     }
   };
 
-  const handleSendPrompt = async (prompt: string, newConversation = false) => {
+  const handleSendPrompt = async (
+    prompt: string,
+    newConversation = false,
+    action?: QuickAction,
+  ) => {
     if (streaming || !me) return;
     const idle =
       lastActivityRef.current > 0 &&
@@ -132,7 +137,11 @@ export function App() {
 
     try {
       await streamChat(
-        { message: prompt, sessionId: targetSessionId },
+        {
+          message: prompt,
+          sessionId: targetSessionId,
+          ...(action ? { action } : {}),
+        },
         {
           onSession: (sid) => {
             if (sid) setSessionId(sid);
@@ -260,7 +269,7 @@ export function App() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-white text-slate-600">
         <Loader2 className="h-7 w-7 animate-spin text-orange-500 mb-3" />
-        <p className="font-display text-sm font-semibold text-slate-800">
+        <p className="font-display text-base font-semibold text-slate-800">
           Loading AI Running Coach…
         </p>
       </div>
@@ -272,14 +281,14 @@ export function App() {
       <div className="flex min-h-screen items-center justify-center bg-white p-6">
         <div className="max-w-md rounded-3xl border border-rose-200 bg-rose-50/60 p-6 text-center space-y-3">
           <AlertCircle className="mx-auto h-8 w-8 text-rose-600" />
-          <h1 className="font-display text-base font-bold text-slate-900">
+          <h1 className="font-display text-lg font-bold text-slate-900">
             Could not load your coaching workspace
           </h1>
-          <p className="text-xs text-slate-600">{bootError}</p>
+          <p className="text-sm text-slate-600">{bootError}</p>
           <button
             type="button"
             onClick={() => void loadInitialState()}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-sunset px-4 py-2 text-xs font-semibold text-white shadow-sunset cursor-pointer"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-sunset px-4 py-2 text-sm font-semibold text-white shadow-sunset cursor-pointer"
           >
             <RefreshCw className="h-3.5 w-3.5" /> Retry
           </button>
@@ -291,7 +300,7 @@ export function App() {
   return (
     <div className="min-h-screen bg-white text-slate-900">
       {sessionExpiredBanner && (
-        <div className="bg-sunset px-4 py-2 text-center text-xs font-semibold text-white">
+        <div className="bg-sunset px-4 py-2 text-center text-sm font-semibold text-white">
           Your sign-in session expired — refreshing authentication…
         </div>
       )}

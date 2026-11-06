@@ -9,7 +9,13 @@ from ..integrations.trainingpeaks import credentials
 from ..shared.runner_identity import normalize_email
 from ..shared.session_state import AUTH_EMAIL_STATE_KEY
 from .onboarding.profile_creation import onboarding_prefill
-from .profile_lookup import activate_profile, find_profile_by_email, needs_onboarding
+from .profile_lookup import (
+    PROFILE_UNAVAILABLE_MESSAGE,
+    activate_profile,
+    caller_email,
+    find_profile_by_email,
+    needs_onboarding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +25,10 @@ ROUTE_NOT_LINKED = "NOT_LINKED"
 ROUTE_TP_NOT_CONNECTED = "TP_NOT_CONNECTED"
 ROUTE_UNAVAILABLE = "PROFILE_UNAVAILABLE"
 
-PROFILE_UNAVAILABLE_MESSAGE = (
-    "I couldn't load your runner profile from Firestore just now, so I've paused rather than "
-    "starting onboarding. Please send your message again in a moment."
-)
-
 
 def _caller_email(ctx: Context) -> Optional[str]:
     """Resolves the caller's email from the web app (`user:auth_email`) or local dev."""
-    return normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY)) or config.dev_runner_email()
+    return caller_email(ctx.state)
 
 
 def _not_linked_message(email: Optional[str]) -> str:

@@ -49,7 +49,7 @@ export function StatusPill({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ${PILL_STYLES[tone]}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-sm font-semibold whitespace-nowrap ${PILL_STYLES[tone]}`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${PILL_DOT[tone]}`} />
       <span>{label}</span>
@@ -81,7 +81,7 @@ export function RichMarkdown({ content }: RichMarkdownProps) {
   const segments = splitReportPlaceholders(content);
 
   return (
-    <div className="space-y-3 text-sm leading-relaxed text-slate-700">
+    <div className="space-y-3 text-base leading-relaxed text-slate-700">
       {segments.map((seg, idx) => {
         if (seg.type === "placeholder") {
           return (
@@ -107,12 +107,12 @@ export function RichMarkdown({ content }: RichMarkdownProps) {
                 </h1>
               ),
               h2: ({ children }) => (
-                <h2 className="font-display text-base font-bold text-slate-900 mt-4 mb-2 first:mt-0">
+                <h2 className="font-display text-lg font-bold text-slate-900 mt-4 mb-2 first:mt-0">
                   {children}
                 </h2>
               ),
               h3: ({ children }) => (
-                <h3 className="font-display text-sm font-bold text-slate-900 mt-4 mb-1.5 first:mt-0">
+                <h3 className="font-display text-base font-bold text-slate-900 mt-4 mb-1.5 first:mt-0">
                   {children}
                 </h3>
               ),
@@ -140,19 +140,19 @@ export function RichMarkdown({ content }: RichMarkdownProps) {
                 </strong>
               ),
               blockquote: ({ children }) => (
-                <blockquote className="my-3 rounded-r-xl border-l-3 border-orange-400 bg-orange-50/50 py-2 px-3.5 text-xs text-slate-700">
+                <blockquote className="my-3 rounded-r-xl border-l-3 border-orange-400 bg-orange-50/50 py-2 px-3.5 text-sm text-slate-700">
                   {children}
                 </blockquote>
               ),
               table: ({ children }) => (
                 <div className="my-3 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-2xs">
-                  <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                  <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
                     {children}
                   </table>
                 </div>
               ),
               thead: ({ children }) => (
-                <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-500">
                   {children}
                 </thead>
               ),
@@ -202,13 +202,13 @@ export function RichMarkdown({ content }: RichMarkdownProps) {
                     return <SunsetProgressBar percent={bar.percent} />;
                   }
                   return (
-                    <code className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-xs text-slate-800">
+                    <code className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-sm text-slate-800">
                       {children}
                     </code>
                   );
                 }
                 return (
-                  <pre className="my-2 overflow-x-auto rounded-xl border border-slate-200 bg-slate-900 p-3 font-mono text-xs text-slate-100">
+                  <pre className="my-2 overflow-x-auto rounded-xl border border-slate-200 bg-slate-900 p-3 font-mono text-sm text-slate-100">
                     <code>{children}</code>
                   </pre>
                 );

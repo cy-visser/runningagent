@@ -1,14 +1,25 @@
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from google.adk import Context
 
-from ..integrations import firestore, open_meteo
-from ..shared.session_state import sync_profile_to_state
+from ..integrations import config, firestore, open_meteo
+from ..shared.runner_identity import normalize_email
+from ..shared.session_state import AUTH_EMAIL_STATE_KEY, sync_profile_to_state
 from .onboarding.profile_creation import onboarding_prefill
 
 logger = logging.getLogger(__name__)
+
+PROFILE_UNAVAILABLE_MESSAGE = (
+    "I couldn't load your runner profile from Firestore just now, so I've paused rather than "
+    "starting onboarding. Please send your message again in a moment."
+)
+
+
+def caller_email(state: Any) -> Optional[str]:
+    """Resolves the caller's email from the web app (`user:auth_email`) or local dev."""
+    return normalize_email(state.get(AUTH_EMAIL_STATE_KEY)) or config.dev_runner_email()
 
 
 def needs_onboarding(profile: Optional[dict]) -> bool:

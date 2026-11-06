@@ -6,28 +6,17 @@ from ....shared.dates import format_display_date
 
 
 def format_nutrition_context_summary(
-    profile: dict,
     upcoming_workouts: list[dict],
     weather_forecast: Optional[str] = None,
     days_forward: int = 3,
-    goal: Optional[dict] = None,
 ) -> str:
-    """Formats athlete biometrics, upcoming training demands, and forecasted climate for nutrition planning.
+    """Formats upcoming training demands and the forecast for nutrition planning.
 
-    goal: the current goal (shared.goal_plan.current_goal); defaults to the profile's single-goal fields.
+    Weight, age and goal are not repeated: they are in RUNNER PROFILE in the coach instruction.
     """
-    lines = ["### Athlete Nutrition & Fueling Context\n"]
-    goal = goal or {"training_goal": profile.get("training_goal"), "timeline": profile.get("timeline")}
+    lines = ["### Athlete Nutrition & Fueling Context (biometrics and goal: see RUNNER PROFILE)\n"]
 
-    lines.append("**1. Runner Biometrics & Target:**")
-    weight = profile.get("weight") or "Not recorded"
-    age = profile.get("age") or "Not recorded"
-    goal_text = goal.get("training_goal") or "Not set"
-    timeline = goal.get("timeline") or "Not set"
-    lines.append(f"- Weight: {weight} | Age: {age}")
-    lines.append(f"- Training Goal: {goal_text} (Target Date: {timeline})\n")
-
-    lines.append(f"**2. Upcoming Training Sessions (Next {days_forward} Days):**")
+    lines.append(f"**1. Upcoming Training Sessions (Next {days_forward} Days):**")
     if upcoming_workouts:
         for w in upcoming_workouts:
             sport = w.get("sport", "Run")
@@ -43,6 +32,6 @@ def format_nutrition_context_summary(
     lines.append("")
 
     if weather_forecast:
-        lines.append(f"**3. Local Climate & Weather Forecast:**\n{weather_forecast}\n")
+        lines.append(f"**2. Local Climate & Weather Forecast:**\n{weather_forecast}\n")
 
     return "\n".join(lines)

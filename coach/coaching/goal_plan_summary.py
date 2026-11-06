@@ -1,13 +1,13 @@
-"""Goal-plan summary table shared by the coach instruction and the check-in report."""
+"""Goal-plan summary block for the coach instruction (sent once per model call; tools do not repeat it)."""
 
 from datetime import date
 from typing import Optional
 
-from .dates import get_today_date
-from .goal_distance import resolve_target_peak_ctl
-from .goal_plan import KIND_NORTH_STAR, KIND_SUB_GOAL, blocks, current_goal, north_star, race_day
-from .race_equivalents import format_gap, goal_target_s, north_star_equivalent
-from .units import as_float, format_seconds_hms
+from ...shared.dates import get_today_date
+from ...shared.goal_distance import resolve_target_peak_ctl
+from ...shared.goal_plan import KIND_NORTH_STAR, KIND_SUB_GOAL, blocks, current_goal, north_star, race_day
+from ...shared.race_equivalents import format_gap, goal_target_s, north_star_equivalent
+from ...shared.units import as_float, format_seconds_hms
 
 
 def _equivalent_cell(time_s: Optional[float], goal: Optional[str], ns_goal: Optional[str]) -> str:

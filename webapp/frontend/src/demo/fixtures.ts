@@ -4,6 +4,7 @@ import type {
   MeResponse,
   ProfileResponse,
   TrendReportData,
+  TrendWeekPoint,
 } from "../shared/types";
 
 export const DEMO_ME_READY: MeResponse = {
@@ -135,6 +136,13 @@ export const DEMO_CHECKIN_DATA: CheckinReportData = {
     confidence: "High",
     stale: false,
     readiness: "on_track",
+    drivers: [
+      { driver: "Threshold anchor", evidence: "3 × 3 km @ 3:58/km (24 Oct), LTHR 168 confirmed", implied: "4:03/km (×1.02)" },
+      { driver: "Goal-pace work", evidence: "2 × 5 km @ 4:04/km at 91% LTHR (18 Oct)", implied: "4:03/km" },
+      { driver: "Durability", evidence: "Longest 24 km, long-run Pa:Hr 3.1% -> strong", implied: "ratio 1.0" },
+      { driver: "Load", evidence: "CTL 61 → ~74 race day, TSB -5", implied: "race-day -1.8%" },
+      { driver: "Health", evidence: "HRV +4% vs 28d, RHR -1 bpm", implied: "🟢 readiness" },
+    ],
   },
   weeks: [
     {
@@ -202,18 +210,7 @@ export const DEMO_CHECKIN_DATA: CheckinReportData = {
   },
 };
 
-export const DEMO_CHECKIN_MARKDOWN = `### Check-In Overview
-
-Your post-10K transition into the **Sub-1:26 Half Marathon** build is right in the sweet spot, with 18.4 weeks to race day.
-
-### 📊 Metrics Progress
-
-| Metric | Current | Target | Status |
-| :--- | :--- | :--- | :--- |
-| **CTL** | 61.4 \`[████████░░]\` 83% | 74 | 🟢 Safe ramp (+0.78/wk) |
-| **Projected HM** | 1:25:24 | 1:26:00 | 🟢 On track (-0:36) |
-
-### 🎯 Goal Trajectory Status
+export const DEMO_CHECKIN_MARKDOWN = `### 🎯 Goal Trajectory Status
 
 🟢 On Track. Chronic Training Load has climbed to **61.4 CTL**, requiring only **+0.78 CTL/wk** over the next 18.4 weeks, well inside the safe ramp. The projected **1:25:24** leaves a 36 s buffer at target CTL.
 
@@ -230,10 +227,38 @@ The 80/20 balance held at 4 easy / 2 quality sessions and easy runs stayed clean
 1. **Hold Sunday's progressive long run at 22 km** with the final 5 km at 4:08–4:12/km (marathon-to-HM bridge effort).
 2. **Protect recovery ceiling**: keep easy days below 141 bpm so HRV stays at or above 66 ms.`;
 
+// Implied finish times from weekly LT2 pace (same math as the backend): km * pace / threshold->race ratio.
+const HM_FACTOR = 21.0975 / 0.97;
+const MARATHON_FACTOR = 42.195 / 0.91;
+function withImplied(weeks: TrendWeekPoint[]): TrendWeekPoint[] {
+  return weeks.map((w) => ({
+    ...w,
+    implied_goal_s: w.lt2_pace_s ? Math.round(w.lt2_pace_s * HM_FACTOR) : null,
+    implied_ns_s: w.lt2_pace_s ? Math.round(w.lt2_pace_s * MARATHON_FACTOR) : null,
+  }));
+}
+
+// Required-ramp CTL path for the demo half-marathon block: 61.4 -> 65 at +0.3/wk.
+const DEMO_CTL_PLAN = Array.from({ length: 13 }, (_, i) => {
+  const d = new Date(Date.UTC(2026, 9, 26 + 7 * i));
+  return { week: d.toISOString().slice(0, 10), ctl: Math.min(65, Math.round((61.4 + 0.3 * i) * 10) / 10) };
+});
+
+// Weekly-volume path for the demo half block: 70.5 -> 94 km/wk by 2027-02-15 with every 4th build week a
+// recovery week at 80%, then an 80% / 60% taper.
+const DEMO_VOLUME_PLAN = Array.from({ length: 18 }, (_, i) => {
+  const d = new Date(Date.UTC(2026, 10, 2 + 7 * i));
+  const taper = i === 16 ? 0.8 : i === 17 ? 0.6 : null;
+  const ramp = 70.5 + (23.5 * (i + 1)) / 16;
+  const recovery = !taper && (i + 1) % 4 === 0 && i + 1 < 16;
+  const km = taper ? Math.round(94 * taper) : Math.floor((recovery ? 0.8 : 1) * ramp + 0.5);
+  return { week: d.toISOString().slice(0, 10), km, phase: taper ? "taper" : recovery ? "recovery" : "build" };
+});
+
 export const DEMO_TREND_DATA: TrendReportData = {
   version: 1,
   window: { start: "2026-05-11", end: "2026-11-05" },
-  weeks: [
+  weeks: withImplied([
     { week: "2026-05-18", complete: true, km: 48.0, tss: 305, runs: 5, quality: 1, long_km: 16, ctl: 43.2, tsb: 1.4, hrv: 61, rhr: 49, sleep_h: 7.3, lt1_pace_s: 318, lt2_pace_s: 262, key_decoupling: 5.4 },
     { week: "2026-06-01", complete: true, km: 52.5, tss: 332, runs: 5, quality: 2, long_km: 18, ctl: 45.1, tsb: -1.8, hrv: 62, rhr: 48, sleep_h: 7.4, lt1_pace_s: 316, lt2_pace_s: 261, key_decoupling: 4.9 },
     { week: "2026-06-15", complete: true, km: 56.2, tss: 355, runs: 5, quality: 2, long_km: 19, ctl: 47.0, tsb: -2.4, hrv: 63, rhr: 48, sleep_h: 7.5, lt1_pace_s: 314, lt2_pace_s: 259, key_decoupling: 4.5 },
@@ -247,7 +272,7 @@ export const DEMO_TREND_DATA: TrendReportData = {
     { week: "2026-10-05", complete: true, km: 68.2, tss: 438, runs: 6, quality: 2, long_km: 22, ctl: 58.0, tsb: -2.1, hrv: 67, rhr: 46, sleep_h: 7.7, lt1_pace_s: 304, lt2_pace_s: 251, key_decoupling: 2.8 },
     { week: "2026-10-19", complete: true, km: 69.8, tss: 446, runs: 6, quality: 2, long_km: 23, ctl: 59.4, tsb: -4.3, hrv: 67, rhr: 46, sleep_h: 7.6, lt1_pace_s: 302, lt2_pace_s: 249, key_decoupling: 2.7 },
     { week: "2026-10-26", complete: true, km: 73.5, tss: 472, runs: 6, quality: 2, long_km: 24, ctl: 61.4, tsb: -4.8, hrv: 68, rhr: 46, sleep_h: 7.8, lt1_pace_s: 300, lt2_pace_s: 248, key_decoupling: 2.5 },
-  ],
+  ]),
   progress: [
     {
       label: "Chronic Load (CTL)",
@@ -306,26 +331,88 @@ export const DEMO_TREND_DATA: TrendReportData = {
     max_km: 73.5,
     current_km: 73.5,
     targets: [
-      { target: 70, status: "proven", build_weeks: 0 },
-      { target: 80, status: "next_tier", build_weeks: 4 },
-      { target: 90, status: "stretch", build_weeks: 9 },
+      { target: 50, status: "proven", gap_km: 0 },
+      { target: 60, status: "proven", gap_km: 0 },
+      { target: 70, status: "proven", gap_km: 0 },
+      { target: 80, status: "within reach", gap_km: 6.5 },
+      { target: 100, status: "untested", gap_km: 26.5 },
     ],
   },
   key_run_label: "long run / race-pace blocks",
+  goal: {
+    training_goal: "Sub-1:26 Half Marathon",
+    label: "Half Marathon",
+    kind: "sub_goal",
+    race_date: "2027-03-14",
+    weeks_to_race: 18.4,
+    before_start: false,
+    goal_s: 5160,
+    projection: {
+      today_s: 5262,
+      race_day_s: 5225,
+      goal_s: 5160,
+      gap_s: 65,
+      range_s: [5170, 5340],
+      confidence: "Medium",
+      stale: false,
+    },
+    ctl: {
+      current: 61.4,
+      target_peak: 65,
+      range: [58, 70],
+      required_ramp: 0.3,
+      phase: "build",
+      plan: DEMO_CTL_PLAN,
+    },
+    volume: {
+      block_target_km: 94,
+      ns_peak_km: 110,
+      baseline_km: 70.5,
+      this_week_km: 72,
+      first_km: 72,
+      first_week: "2026-11-02",
+      peak_week: "2027-02-15",
+      maintain: false,
+      own_block: false,
+      plan: DEMO_VOLUME_PLAN,
+    },
+  },
+  north_star: {
+    training_goal: "Sub-2:58 Marathon",
+    label: "Marathon",
+    race_name: "NN Marathon Rotterdam",
+    race_date: "2027-04-11",
+    weeks_to_race: 22.4,
+    target_s: 10680,
+    equivalent_s: 10893,
+    gap_s: 213,
+    ctl_range: [70, 85],
+    milestones: [
+      { training_goal: "Sub-39:30 10K", race_date: "2026-10-18", status: "done", target_equiv_s: 10902, result_equiv_s: 10819 },
+      { training_goal: "Sub-1:26 Half Marathon", race_date: "2027-03-14", status: "active", target_equiv_s: 10758, result_equiv_s: null },
+    ],
+  },
+  paces: [
+    { name: "Easy (Z2 128-145 bpm)", pace: "4:55–5:30/km" },
+    { name: "Marathon", pace: "4:32/km" },
+    { name: "Threshold", pace: "4:08/km" },
+    { name: "VO2max", pace: "3:52/km" },
+  ],
 };
 
-export const DEMO_TREND_MARKDOWN = `### 6-Month Structural Progression
+export const DEMO_TREND_MARKDOWN = `### 🎯 Next Block: Top 3
+1. **Build from 70 to 94 km/wk by 15 Feb along the volume path (72 km this week, +1–2 km per week).**
+   Why: Weekly volume reference 94 km block target by 2027-02-15 (85% of the 110 km/week Sub-2:58 peak); 70 km/wk is proven (streak 3, 75% tolerated) and 80 km is "within reach, +6.5 km/week above current".
+2. **Step the long run from 24 to 26 km over the next 3 weeks and put 2×5 km at 4:05/km inside it every 10 days.**
+   Why: The last 4 long runs were 22–24 km at about a third of the week, so a gradual step fits the 70 → 94 km/wk build; the projection is +1:05 behind goal.
+3. **Run threshold reps at 4:05/km instead of 4:08/km.**
+   Why: Threshold verdict "room to go faster (~3 s/km)": 100% pace hit at 89% LTHR with 2.5% Pa:Hr.
 
-Over the past 26 weeks you have lifted your **proven weekly volume ceiling to 70 km/wk** while simultaneously improving aerobic speed-per-heartbeat (**EF 1.48 → 1.68**, +13.5%) and cutting 22–24 km long-run cardiac drift down to **2.5%**.
-
-| Dimension | 6-Month Shift | Readiness for Rotterdam Sub-2:58 |
-| :--- | :--- | :--- |
-| **Volume Durability** | 48 km/wk → **73.5 km/wk** | 🟢 Proven through 70 km/wk; 4-week bridge to 80 km/wk |
-| **Aerobic Economy** | Easy pace 5:02/km → **4:39/km** @ 138 bpm | 🟢 Strong sub-LT1 engine expansion |
-| **Threshold & 10K Speed** | **39:12 10K** PR in October | 🟢 Speed reserve comfortably supports 4:13/km marathon pace |
-
-### Strategic Recommendation for Winter Block
-- Consolidate **70–75 km/wk** for two more weeks before a recovery cutback week (~56 km), then step into an **80–84 km/wk** peak marathon block in January.`;
+### 🧭 North Star
+1. **Keep one 26–28 km easy long run every third week from January.**
+   Why: Current projection's north-star equivalent 3:01:33 (gap +3:33 slower) and the half-marathon long-run band stays below marathon-specific volume.
+2. **Arrive at the north-star block start (2027-01-04) with CTL ≥ 65.**
+   Why: North-star peak-CTL range 70–85 leaves 14 weeks of build from there.`;
 
 export const DEMO_AUDIT_DATA: AuditReportData = {
   version: 1,
@@ -340,7 +427,7 @@ export const DEMO_AUDIT_DATA: AuditReportData = {
       quality: 2,
       bike: 1,
       strength: 1,
-      long_run: "Long run: 24.0 km (target 21–24 km · build) ✓",
+      long_run: "Long run: 24 km (1:52, 33% of the week's running km) | 14 wk to Marathon",
       notes: [],
       sessions: [
         { date: "2026-10-26", sport: "Strength", title: "Lower-body & Achilles Eccentrics", category: "strength", km: 0, minutes: 40, tss: 25, completed: true },
@@ -361,7 +448,8 @@ export const DEMO_AUDIT_DATA: AuditReportData = {
       quality: 2,
       bike: 1,
       strength: 1,
-      long_run: "Long run: 22.0 km (target 21–24 km · build) ✓",
+      long_run: "Long run: 22 km (1:43, 30% of the week's running km) | 13 wk to Marathon",
+      volume: { target_km: 72, block_target_km: 94, phase: "build", vs_path_pct: 1 },
       notes: ["Nov 06: Keep Friday strides strictly on flat tarmac"],
       sessions: [
         { date: "2026-11-03", sport: "Run", title: "12 km w/ 5×1 km @ 3:48/km", category: "quality", km: 12.0, minutes: 55, tss: 86, completed: true },
@@ -382,7 +470,8 @@ export const DEMO_AUDIT_DATA: AuditReportData = {
       quality: 2,
       bike: 1,
       strength: 1,
-      long_run: "Long run: 24.0 km (target 21–24 km · build) ✓",
+      long_run: "Long run: 24 km (1:52, 32% of the week's running km) | 12 wk to Marathon",
+      volume: { target_km: 73, block_target_km: 94, phase: "build", vs_path_pct: -2 },
       notes: [],
       sessions: [
         { date: "2026-11-09", sport: "Strength", title: "Strength & Soleus Load", category: "strength", km: 0, minutes: 40, tss: 24, completed: false },
@@ -403,7 +492,8 @@ export const DEMO_AUDIT_DATA: AuditReportData = {
       quality: 1,
       bike: 1,
       strength: 1,
-      long_run: "Long run: 18.0 km (target 16–19 km · cutback) ✓",
+      long_run: "Long run: 18 km (1:24, 30% of the week's running km) | 11 wk to Marathon",
+      volume: { target_km: 75, block_target_km: 94, phase: "build", vs_path_pct: -15 },
       notes: ["Nov 18: Lisbon work trip (warm, hilly)"],
       sessions: [
         { date: "2026-11-17", sport: "Run", title: "11 km w/ 6×3 min @ LT2", category: "quality", km: 11.0, minutes: 52, tss: 78, completed: false },
@@ -415,15 +505,26 @@ export const DEMO_AUDIT_DATA: AuditReportData = {
       ],
     },
   ],
+  volume_reference: {
+    goal: "Sub-1:26 Half Marathon",
+    goal_label: "Half Marathon",
+    ns_goal: "Sub-2:58 Marathon",
+    own_block: false,
+    block_target_km: 94,
+    ns_peak_km: 110,
+    start_km: 70.5,
+    peak_week: "2027-02-15",
+    recovery_every_weeks: 4,
+  },
 };
 
-export const DEMO_AUDIT_MARKDOWN = `### Schedule Evaluation
+export const DEMO_AUDIT_MARKDOWN = `### Assessment
 
 - **🟢 Polarisation & Spacing:** Every build week holds a clean **2 quality / 3–4 easy** split with at least 48h between Tuesday VO2/reps and Thursday threshold work, plus one bike flush and one strength session.
 - **🟢 Progression & Cutback:** Volume stays within a safe **+6% ramp** into Nov 9–15 (**76.0 km**) followed by a well-timed **-24% absorption week** (58.0 km) aligned with the Lisbon work trip.
 - **🟡 Travel & Achilles Watch (Nov 16–22):** Lisbon hills increase Achilles tendon load — stick to the flat Tagus riverfront path for the Nov 18 easy run.
 
-### Recommended Adjustments
+### Recommendations
 - **Sub goal (Sub-1:26 HM):** Keep Nov 12's 15 km HM-pace alternations capped at LTHR (168 bpm); do not chase pace if windy.
-- **North star (Sub-2:58 Marathon):** Long runs sit squarely in the **22–24 km** build target window, protecting aerobic durability ahead of the January marathon block.`;
+- **North star (Sub-2:58 Marathon):** Long runs have built steadily from 18 to 24 km; hold 24 km with one step to 26 km before the cutback, protecting aerobic durability ahead of the January marathon block.`;
 

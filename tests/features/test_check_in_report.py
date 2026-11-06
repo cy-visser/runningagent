@@ -18,15 +18,21 @@ def test_check_in_report_populates_sections_tables_and_web_payload(runner):
     assert "**1. Fitness PMC Trends, Goal Race Projection & Trajectory" in out
     assert "**3. Weekly Totals (completed, pre-computed; do not recompute):**" in out
     assert "### North Star Progress" in out
-    assert "London Marathon 2028" in out
     assert "Slight calf tightness" in out
+    # The goal-plan table is in the coach instruction; the check-in references it instead of repeating it.
+    assert "see GOAL PLAN in your instructions" in out
+    assert "| Sub goal | Block | Status |" not in out
+    assert "north-star equivalent" in out
+    assert "█" not in out
 
-    tables = ctx.state.get("checkin_tables")
-    assert tables and "| Metric | Current Value | Target / Reference | Progress & Trajectory |" in tables
-    assert "**CTL (Fitness)**" in tables
+    # Metrics are rendered by the web app from the payload; nothing is spliced into the coach's text.
+    assert ctx.state.get("checkin_tables") is None
 
     report = json.loads(json.dumps(ctx.state.get("checkin_report_data")))
     assert report["version"] == 1
     assert report["ctl"]["current"] > 0
     assert report["projection"]["goal_label"] == "10K"
+    drivers = report["projection"]["drivers"]
+    assert [d["driver"] for d in drivers][-2:] == ["Load", "Health"]
+    assert all({"driver", "evidence", "implied"} == set(d) for d in drivers)
     assert len(report["weeks"]) >= 2

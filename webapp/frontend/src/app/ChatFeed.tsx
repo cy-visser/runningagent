@@ -48,7 +48,7 @@ export function ChatFeed({ messages }: ChatFeedProps) {
               ref={isLast ? latestTurnRef : undefined}
               className="flex justify-end scroll-mt-20"
             >
-              <div className="max-w-2xl rounded-2xl rounded-br-sm bg-slate-900 px-4 py-3 text-sm font-medium text-white shadow-xs">
+              <div className="max-w-2xl rounded-2xl rounded-br-sm bg-slate-900 px-4 py-3 text-base font-medium text-white shadow-xs">
                 {msg.text}
               </div>
             </div>
@@ -70,12 +70,12 @@ export function ChatFeed({ messages }: ChatFeedProps) {
               <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sunset text-white shadow-2xs">
                 <Activity className="h-3.5 w-3.5" />
               </span>
-              <span className="font-display text-xs font-bold text-slate-800">
+              <span className="font-display text-sm font-bold text-slate-800">
                 AI Running Coach
               </span>
               {msg.streaming && (
-                <span className="text-[11px] font-medium text-orange-600 animate-pulse">
-                  Live…
+                <span className="text-xs font-medium text-orange-600 animate-pulse">
+                  Running…
                 </span>
               )}
             </div>
@@ -83,7 +83,7 @@ export function ChatFeed({ messages }: ChatFeedProps) {
             <ToolProgress thinking={msg.thinking} tools={msg.tools} />
 
             {msg.error && (
-              <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+              <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
                 <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
                 <span>{msg.error}</span>
               </div>

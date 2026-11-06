@@ -9,7 +9,7 @@ from ....shared.web_report_payload import (
     iso_or_none as _iso,
     round_or_none as _opt_round,
 )
-from .goal_trajectory import MAX_RAMP_PER_WEEK, SAFE_RAMP_PER_WEEK
+from ....shared.goal_projection.goal_trajectory import MAX_RAMP_PER_WEEK, SAFE_RAMP_PER_WEEK
 
 CHECKIN_REPORT_STATE_KEY = "checkin_report_data"
 
@@ -126,6 +126,11 @@ def checkin_report_data(
             "confidence": proj.get("confidence"),
             "stale": bool(proj.get("stale")),
             "readiness": proj.get("readiness"),
+            "drivers": [
+                {"driver": str(d[0]), "evidence": str(d[1]), "implied": str(d[2])}
+                for d in (proj.get("drivers") or [])
+                if isinstance(d, (list, tuple)) and len(d) == 3
+            ],
         }
     elif proj_wrap.get("goal_label"):
         projection_payload = {
@@ -138,6 +143,7 @@ def checkin_report_data(
             "confidence": None,
             "stale": False,
             "readiness": None,
+            "drivers": [],
         }
 
     weeks_payload = [

@@ -1,24 +1,19 @@
 """Model callbacks for the coaching agent.
 
 - Thinking: low reasoning for the confirmation that follows a write tool, default otherwise.
-- Splicing: replaces table placeholders with the tables from `fetch_checkin_data` / `fetch_trend_data`.
+- History: reasoning and thought signatures of completed turns are dropped before each call.
+
+(Report metrics and tables are rendered by the web app from the `*_report_data` payloads; the
+coach's text is never spliced.)
 """
 
-from typing import Any, Optional
+from typing import Optional
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
-from ...features.check_in_report.fetch_checkin_data_tool import (
-    CHECKIN_PLACEHOLDER,
-    CHECKIN_TABLES_STATE_KEY,
-)
-from ...features.trend_analysis.fetch_trend_data_tool import (
-    TREND_PLACEHOLDER,
-    TREND_TABLES_STATE_KEY,
-)
 from ...features.workout_creator.create_note_tool import create_note_tool
 from ...features.workout_creator.create_workout_tool import create_workout_tool
 from ..onboarding.request_new_goal_tool import request_new_goal_tool
@@ -37,59 +32,73 @@ WRITE_TOOLS = frozenset({
 CONFIRMATION_THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW)
 
 
-def _last_function_response_names(llm_request: LlmRequest) -> set[str]:
-    """Tool names answered by the request's final content (empty if it isn't a tool response)."""
+def _last_function_responses(llm_request: LlmRequest) -> list[types.FunctionResponse]:
+    """Tool responses in the request's final content (empty if it isn't a tool response)."""
     if not llm_request.contents:
-        return set()
+        return []
     parts = llm_request.contents[-1].parts or []
-    return {
-        p.function_response.name
-        for p in parts
-        if p.function_response and p.function_response.name
-    }
+    return [p.function_response for p in parts if p.function_response and p.function_response.name]
+
+
+def _wrote(response: types.FunctionResponse) -> bool:
+    """False when a write tool stopped before writing (`needs_confirmation` / `needs_workout_id`)."""
+    return '"action": "needs_' not in str((response.response or {}).get("result") or "")
 
 
 def apply_thinking_policy(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-    """before_model_callback: low thinking right after write tools, default otherwise."""
-    names = _last_function_response_names(llm_request)
-    if names and names <= WRITE_TOOLS:
+    """before_model_callback: low thinking right after successful writes, default otherwise."""
+    responses = _last_function_responses(llm_request)
+    if responses and all(r.name in WRITE_TOOLS and _wrote(r) for r in responses):
         llm_request.config = llm_request.config or types.GenerateContentConfig()
         llm_request.config.thinking_config = CONFIRMATION_THINKING
     return None  # never short-circuits the model call
 
 
 # ------------------------------------------------------------------------------
-# Table splicing
+# Stale reasoning in history
 # ------------------------------------------------------------------------------
-# Placeholder written by the model -> state key holding the pre-rendered tables.
-SPLICES = {
-    CHECKIN_PLACEHOLDER: CHECKIN_TABLES_STATE_KEY,
-    TREND_PLACEHOLDER: TREND_TABLES_STATE_KEY,
-}
+# Every Gemini 3 model turn carries a `thought_signature` (encrypted reasoning) that ADK replays
+# on every later call and that is billed as input tokens (~35% of a typical coach request).
+# Gemini only validates signatures of the CURRENT turn (the tool loop since the last runner
+# message), so those of completed turns, and any thought parts, are dropped.
 
 
-def expand_placeholders(text: str, state: Any) -> str:
-    """Replaces each placeholder with its pre-rendered tables (left as-is when no tables)."""
-    for placeholder, key in SPLICES.items():
-        tables = state.get(key)
-        if text and tables and placeholder in text:
-            text = text.replace(placeholder, tables.strip())
-    return text
+def _is_runner_message(content: types.Content) -> bool:
+    """A user content that is not just tool responses (i.e. a real runner message)."""
+    return content.role == "user" and any(not p.function_response for p in content.parts or [])
 
 
-def splice_tables(
-    callback_context: CallbackContext, llm_response: LlmResponse
+def _has_payload(part: types.Part) -> bool:
+    return bool(
+        part.text
+        or part.function_call
+        or part.function_response
+        or part.inline_data
+        or part.file_data
+        or part.executable_code
+        or part.code_execution_result
+    )
+
+
+def strip_stale_thoughts(
+    callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-    """after_model_callback: swaps table placeholders for the tables the data tools rendered."""
-    content = llm_response.content
-    if not content or not content.parts or llm_response.partial:
-        return None
-    spliced = False
-    for part in content.parts:
-        if part.text and not part.thought:
-            new_text = expand_placeholders(part.text, callback_context.state)
-            spliced = spliced or new_text != part.text
-            part.text = new_text
-    return llm_response if spliced else None
+    """before_model_callback: drop thoughts and thought signatures of completed turns."""
+    contents = llm_request.contents or []
+    cut = max((i for i, c in enumerate(contents) if _is_runner_message(c)), default=0)
+    kept = []
+    for i, content in enumerate(contents):
+        if i < cut and content.role == "model":
+            parts = [
+                p.model_copy(update={"thought_signature": None})
+                for p in content.parts or []
+                if not p.thought and _has_payload(p)
+            ]
+            if not parts:
+                continue
+            content = content.model_copy(update={"parts": parts})
+        kept.append(content)
+    llm_request.contents = kept
+    return None  # never short-circuits the model call

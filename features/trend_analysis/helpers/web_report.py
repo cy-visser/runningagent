@@ -8,6 +8,7 @@ from ....shared.web_report_payload import (
     iso_or_none as _iso,
     round_or_none as _opt_round,
 )
+from .goal_progress import implied_time_s
 
 TREND_REPORT_STATE_KEY = "trend_report_data"
 
@@ -20,8 +21,13 @@ def trend_report_data(
     levels: Optional[list[dict[str, Any]]],
     outlook: Optional[dict[str, Any]],
     key_run_label: Optional[str] = None,
+    goal_progress: Optional[dict[str, Any]] = None,
+    paces: Optional[list[tuple[str, str]]] = None,
 ) -> dict[str, Any]:
     """Structured long-horizon trend payload (`trend_report_data`) stored in session state."""
+    gp = goal_progress or {}
+    goal_label = (gp.get("goal") or {}).get("label")
+    ns_label = (gp.get("north_star") or {}).get("label")
     weeks_payload = [
         {
             "week": _iso(r.get("week")),
@@ -42,6 +48,9 @@ def trend_report_data(
             "lt2_pace_s": _opt_round(r.get("lt2_pace_s"), 0),
             "lt2_extrapolated": bool(r.get("lt2_extrapolated")),
             "key_decoupling": _opt_round(r.get("key_decoupling"), 1),
+            # Finish times implied by the week's LT2 pace (threshold-based proxy for the race-time chart).
+            "implied_goal_s": _opt_round(implied_time_s(r.get("lt2_pace_s"), goal_label), 0),
+            "implied_ns_s": _opt_round(implied_time_s(r.get("lt2_pace_s"), ns_label), 0) if ns_label else None,
         }
         for r in (rows or [])
     ]
@@ -82,7 +91,7 @@ def trend_report_data(
             {
                 "target": int(t.get("target") or 0),
                 "status": t.get("status"),
-                "build_weeks": int(t.get("build_weeks") or 0),
+                "gap_km": _opt_round(t.get("gap_km"), 1) or 0.0,
             }
             for t in (out_raw.get("targets") or [])
         ],
@@ -96,4 +105,7 @@ def trend_report_data(
         "levels": levels_payload,
         "outlook": outlook_payload,
         "key_run_label": key_run_label,
+        "goal": gp.get("goal"),
+        "north_star": gp.get("north_star"),
+        "paces": [{"name": name, "pace": pace} for name, pace in (paces or [])],
     }

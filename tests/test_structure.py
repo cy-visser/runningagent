@@ -9,6 +9,11 @@ import re
 from google.adk.tools import FunctionTool
 
 from running_coach.coach.coaching.coaching_agent import coaching_agent_tools
+from running_coach.coach.coaching.quick_actions import (
+    QUICK_ACTION_PART_PREFIX,
+    QUICK_ACTION_STATE_KEY,
+    QUICK_ACTIONS,
+)
 from running_coach.coach.coaching.skill_toolset import SKILL_FEATURES, skill_toolset
 from running_coach.features.check_in_report.helpers.web_report import (
     CHECKIN_REPORT_STATE_KEY,
@@ -274,3 +279,10 @@ def test_architecture_rules_and_cross_stack_contract():
 
     bff_auth_key = _eval_dict_literal(agent_client_py, "AUTH_EMAIL_STATE_KEY")
     assert bff_auth_key == AUTH_EMAIL_STATE_KEY
+
+    # Quick actions: the BFF forwards exactly the skills the agent can dispatch, under the same key.
+    bff_quick_actions_py = WEB_BACKEND_APP_DIR / "quick_actions.py"
+    assert _eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_STATE_KEY") == QUICK_ACTION_STATE_KEY
+    assert _eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_PART_PREFIX") == QUICK_ACTION_PART_PREFIX
+    assert set(_eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_SKILLS")) == set(QUICK_ACTIONS)
+    assert set(QUICK_ACTIONS) <= loaded_skill_names

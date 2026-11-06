@@ -8,6 +8,7 @@ from google.adk.tools import ToolContext
 from google.adk.tools.skill_toolset import SkillToolset
 
 from ...integrations import package_paths
+from .quick_actions import is_quick_action_report
 
 # Feature folders that ship a SKILL.md, in catalog order (order is part of the prompt).
 SKILL_FEATURES = (
@@ -53,6 +54,9 @@ class CompactSkillToolset(SkillToolset):
         self._tools = [t for t in self._tools if t.name == "load_skill"]
 
     async def process_llm_request(self, *, tool_context: ToolContext, llm_request: Any) -> None:
+        # A web quick action's report call already holds its skill and cannot call tools.
+        if is_quick_action_report(tool_context.state, tool_context.invocation_id):
+            return
         llm_request.append_instructions(
             [_SKILL_INSTRUCTION, format_skills_as_xml(self._list_skills())]
         )

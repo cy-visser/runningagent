@@ -14,14 +14,90 @@ import {
   UserCheck,
 } from "lucide-react";
 import { formatShortDate, greetingForHour } from "../shared/format";
-import type { ChatMessage, MeResponse } from "../shared/types";
+import type {
+  ChatMessage,
+  MeResponse,
+  ProfileSummary,
+  QuickAction,
+} from "../shared/types";
 import { ChatFeed } from "./ChatFeed";
+
+/** Maximum audit horizon (in ISO weeks, starting Monday of the current week) when a goal race is set. */
+export const AUDIT_MAX_WEEKS = 4;
+
+export interface AuditAction {
+  title: string;
+  subtitle: string;
+  /** Shown as the runner's message in the feed. */
+  prompt: string;
+  /** Structured action: the agent runs the audit with these dates, no LLM routing. */
+  action: QuickAction;
+}
+
+const DEFAULT_AUDIT_SUBTITLE =
+  "Cross-check planned workouts, calendar notes, 80/20 intensity balance & safe ramp rate";
+
+/** Local-date YYYY-MM-DD (not UTC, so late-evening users don't get tomorrow). */
+function localIsoDate(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function addDays(d: Date, days: number): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + days);
+}
+
+/**
+ * Audit CTA config. With an upcoming goal race the audit runs from Monday of the current week
+ * until race day (capped at AUDIT_MAX_WEEKS weeks); otherwise it audits the current week.
+ */
+export function auditScheduleAction(
+  summary: ProfileSummary | null | undefined,
+  now: Date = new Date(),
+): AuditAction {
+  const today = localIsoDate(now);
+  const race = summary?.active_date?.slice(0, 10);
+  if (!race || !/^\d{4}-\d{2}-\d{2}$/.test(race) || race < today) {
+    return {
+      title: "Audit Schedule – Current Week",
+      subtitle: DEFAULT_AUDIT_SUBTITLE,
+      prompt: "Audit my schedule for this week",
+      action: { skill: "schedule-audit" },
+    };
+  }
+
+  const monday = addDays(now, -((now.getDay() + 6) % 7));
+  const start = localIsoDate(monday);
+  const capEnd = localIsoDate(addDays(monday, AUDIT_MAX_WEEKS * 7 - 1));
+  const capped = race > capEnd;
+  const end = capped ? capEnd : race;
+  const goal = summary?.active_goal?.trim();
+  const goalText = goal ? ` (${goal})` : "";
+  const action: QuickAction = { skill: "schedule-audit", start_date: start, end_date: end };
+
+  if (capped) {
+    return {
+      title: `Audit Schedule – Next ${AUDIT_MAX_WEEKS} Weeks`,
+      subtitle: `${formatShortDate(start)} → ${formatShortDate(end)} · toward ${goal || "race day"} on ${formatShortDate(race)}`,
+      prompt:
+        `Audit my schedule for the next ${AUDIT_MAX_WEEKS} weeks, from ${start} to ${end}, ` +
+        `building toward my race on ${race}${goalText}.`,
+      action,
+    };
+  }
+  return {
+    title: "Audit Schedule – Until Race Day",
+    subtitle: `${formatShortDate(start)} → ${formatShortDate(race)}${goal ? ` · ${goal}` : ""}`,
+    prompt: `Audit my schedule from ${start} until my race on ${race}${goalText}.`,
+    action,
+  };
+}
 
 interface DashboardProps {
   me: MeResponse;
   messages: ChatMessage[];
   streaming: boolean;
-  onSendPrompt: (prompt: string, newConversation?: boolean) => void;
+  onSendPrompt: (prompt: string, newConversation?: boolean, action?: QuickAction) => void;
   onViewProfile: () => void;
   onOpenTrainingPeaks: () => void;
 }
@@ -40,7 +116,9 @@ export function Dashboard({
   const firstName =
     me.summary?.firstname || me.display_name.split(" ")[0] || "Runner";
   const canSend = me.tp.connected && !streaming;
-  const startNewConversation = (prompt: string) => onSendPrompt(prompt, true);
+  const startNewConversation = (prompt: string, action?: QuickAction) =>
+    onSendPrompt(prompt, true, action);
+  const audit = auditScheduleAction(me.summary);
 
   const handleComposerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,7 +152,7 @@ export function Dashboard({
       <section className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-rose-700">
+            <p className="text-sm font-semibold uppercase tracking-wider text-rose-700">
               {isReady ? "Daily Coaching Hub" : "Welcome to AI Running Coach"}
             </p>
             <h1 className="mt-1 font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
@@ -90,7 +168,7 @@ export function Dashboard({
                 <button
                   type="button"
                   onClick={onViewProfile}
-                  className="inline-flex items-center gap-2 rounded-full border border-rose-300 bg-rose-100 px-3.5 py-1.5 text-xs font-semibold text-rose-950 transition hover:border-rose-400 hover:bg-rose-200/80 cursor-pointer"
+                  className="inline-flex items-center gap-2 rounded-full border border-rose-300 bg-rose-100 px-3.5 py-1.5 text-sm font-semibold text-rose-950 transition hover:border-rose-400 hover:bg-rose-200/80 cursor-pointer"
                 >
                   <Target className="h-3.5 w-3.5 text-rose-700" />
                   <span>{me.summary.active_goal}</span>
@@ -107,7 +185,7 @@ export function Dashboard({
                 <button
                   type="button"
                   onClick={onViewProfile}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-violet-300 bg-violet-100 px-3.5 py-1.5 text-xs font-semibold text-violet-950 transition hover:border-violet-400 hover:bg-violet-200/80 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-violet-300 bg-violet-100 px-3.5 py-1.5 text-sm font-semibold text-violet-950 transition hover:border-violet-400 hover:bg-violet-200/80 cursor-pointer"
                 >
                   <Compass className="h-3.5 w-3.5 text-violet-700" />
                   <span>North Star: {me.summary.north_star.goal}</span>
@@ -137,7 +215,7 @@ export function Dashboard({
                   <h2 className="font-display text-lg font-bold text-slate-900">
                     Onboarding
                   </h2>
-                  <p className="text-xs text-slate-700">
+                  <p className="text-sm text-slate-700">
                     Link your TrainingPeaks telemetry and build your personalised
                     race plan in two minutes
                   </p>
@@ -155,23 +233,23 @@ export function Dashboard({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                    <span className="text-sm font-bold uppercase tracking-wider text-slate-600">
                       Step 1
                     </span>
                     {me.tp.connected ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
                         <CheckCircle2 className="h-3 w-3" /> Connected
                       </span>
                     ) : (
-                      <span className="rounded-full bg-sunset px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                      <span className="rounded-full bg-sunset px-2.5 py-0.5 text-xs font-semibold text-white">
                         Required
                       </span>
                     )}
                   </div>
-                  <p className="mt-2 font-display text-sm font-bold text-slate-900">
+                  <p className="mt-2 font-display text-base font-bold text-slate-900">
                     Connect TrainingPeaks
                   </p>
-                  <p className="mt-1 text-xs text-slate-600">
+                  <p className="mt-1 text-sm text-slate-600">
                     Upload your <code>Production_tpAuth</code> cookie so your
                     coach can inspect workouts, HR zones, and CTL/ATL.
                   </p>
@@ -185,17 +263,17 @@ export function Dashboard({
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                    <span className="text-sm font-bold uppercase tracking-wider text-slate-600">
                       Step 2
                     </span>
-                    <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-medium text-slate-700 border border-slate-300">
+                    <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-slate-700 border border-slate-300">
                       Interactive Chat
                     </span>
                   </div>
-                  <p className="mt-2 font-display text-sm font-bold text-slate-900">
+                  <p className="mt-2 font-display text-base font-bold text-slate-900">
                     Build Runner Profile & Race Goal
                   </p>
-                  <p className="mt-1 text-xs text-slate-600">
+                  <p className="mt-1 text-sm text-slate-600">
                     Set your target race, stepping-stone sub-goals, injury
                     watchpoints, and shoe rotation with your AI Coach.
                   </p>
@@ -209,12 +287,12 @@ export function Dashboard({
                 className="flex w-full items-center justify-between rounded-2xl bg-sunset bg-sunset-hover px-6 py-4 text-left text-white shadow-sunset transition disabled:opacity-60 cursor-pointer"
               >
                 <div>
-                  <p className="font-display text-base font-bold">
+                  <p className="font-display text-lg font-bold">
                     {me.tp.connected
                       ? "Start Onboarding Interview"
                       : "Start Onboarding — Connect TrainingPeaks"}
                   </p>
-                  <p className="text-xs text-white/90 mt-0.5">
+                  <p className="text-sm text-white/90 mt-0.5">
                     {me.tp.connected
                       ? "TrainingPeaks is linked! Click to launch your profile & goal setup."
                       : "Step 1 of 2 · Validate and encrypt your TrainingPeaks session."}
@@ -240,10 +318,10 @@ export function Dashboard({
                   <UserCheck className="h-5 w-5" />
                 </span>
                 <div>
-                  <h2 className="font-display text-base font-bold text-slate-900">
+                  <h2 className="font-display text-lg font-bold text-slate-900">
                     Profile
                   </h2>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
                     View & edit biometrics, race goals, injuries, and shoe
                     rotation
                   </p>
@@ -256,7 +334,13 @@ export function Dashboard({
             <button
               type="button"
               disabled={!canSend}
-              onClick={() => startNewConversation("Analyze today's run")}
+              onClick={() =>
+                startNewConversation("Analyze today's run", {
+                  skill: "workout-analysis",
+                  date_str: "today",
+                  sport: "run",
+                })
+              }
               className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-rose-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
             >
               <div className="flex items-start gap-3.5">
@@ -264,10 +348,10 @@ export function Dashboard({
                   <Activity className="h-5 w-5" />
                 </span>
                 <div>
-                  <h2 className="font-display text-base font-bold text-slate-900">
+                  <h2 className="font-display text-lg font-bold text-slate-900">
                     Analyze Today&apos;s Run
                   </h2>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
                     Deep-dive pace, HR zones, splits, aerobic decoupling &
                     execution
                   </p>
@@ -280,7 +364,9 @@ export function Dashboard({
             <button
               type="button"
               disabled={!canSend}
-              onClick={() => startNewConversation("Checking in")}
+              onClick={() =>
+                startNewConversation("Checking in", { skill: "check-in-report" })
+              }
               className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-indigo-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
             >
               <div className="flex items-start gap-3.5">
@@ -288,10 +374,10 @@ export function Dashboard({
                   <ClipboardCheck className="h-5 w-5" />
                 </span>
                 <div>
-                  <h2 className="font-display text-base font-bold text-slate-900">
+                  <h2 className="font-display text-lg font-bold text-slate-900">
                     Check-In Report
                   </h2>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
                     14-day training load, CTL trajectory, recovery & race
                     projection
                   </p>
@@ -305,7 +391,10 @@ export function Dashboard({
               type="button"
               disabled={!canSend}
               onClick={() =>
-                startNewConversation("Trend analysis for the past 6 months")
+                startNewConversation("Trend analysis for the past 6 months", {
+                  skill: "trend-analysis",
+                  weeks: 26,
+                })
               }
               className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-violet-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
             >
@@ -314,10 +403,10 @@ export function Dashboard({
                   <TrendingUp className="h-5 w-5" />
                 </span>
                 <div>
-                  <h2 className="font-display text-base font-bold text-slate-900">
+                  <h2 className="font-display text-lg font-bold text-slate-900">
                     Trend Analysis
                   </h2>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
                     Last 6 months · progress, load capacity, pacing
                   </p>
                 </div>
@@ -326,13 +415,11 @@ export function Dashboard({
             </button>
           </div>
 
-          {/* Full-Width Sunset CTA: Audit Schedule – Current Week */}
+          {/* Full-Width Sunset CTA: Audit Schedule (current week, or this week → race day, max 8 weeks) */}
           <button
             type="button"
             disabled={!canSend}
-            onClick={() =>
-              startNewConversation("Audit my schedule for this week")
-            }
+            onClick={() => startNewConversation(audit.prompt, audit.action)}
             className="group flex w-full items-center justify-between gap-4 rounded-2xl bg-sunset bg-sunset-hover px-6 py-4 text-left text-white shadow-sunset transition disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
           >
             <div className="flex items-center gap-4">
@@ -340,13 +427,10 @@ export function Dashboard({
                 <CalendarCheck className="h-5 w-5 text-white" />
               </span>
               <div>
-                <p className="font-display text-base font-bold tracking-tight">
-                  Audit Schedule – Current Week
+                <p className="font-display text-lg font-bold tracking-tight">
+                  {audit.title}
                 </p>
-                <p className="text-xs text-white/90 mt-0.5">
-                  Cross-check planned workouts, calendar notes, 80/20 intensity
-                  balance & safe ramp rate
-                </p>
+                <p className="text-sm text-white/90 mt-0.5">{audit.subtitle}</p>
               </div>
             </div>
             <ArrowRight className="h-5 w-5 shrink-0 transition group-hover:translate-x-1" />
@@ -364,7 +448,7 @@ export function Dashboard({
             <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-sunset text-white shadow-2xs">
               <Activity className="h-3.5 w-3.5" />
             </span>
-            <span className="font-display text-xs font-bold text-slate-800">
+            <span className="font-display text-sm font-bold text-slate-800">
               AI Running Coach
             </span>
           </div>
@@ -385,7 +469,7 @@ export function Dashboard({
                   ? "Ask your running coach anything — fueling, workout adjustments, race strategy…"
                   : "Connect TrainingPeaks above to start chatting with your coach…"
               }
-              className="flex-1 resize-none border-0 bg-transparent px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:cursor-not-allowed"
+              className="flex-1 resize-none border-0 bg-transparent px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:cursor-not-allowed"
             />
             <button
               type="submit"

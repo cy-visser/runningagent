@@ -80,6 +80,13 @@ describe("check-in report feature", () => {
     expect(screen.getByText("61.4")).toBeInTheDocument();
     expect(screen.getByText("0:36 ahead of goal")).toBeInTheDocument();
 
+    // Projection drivers come from the payload; the coach text holds only the judgement sections.
+    expect(screen.getByText("Projection Drivers")).toBeInTheDocument();
+    expect(screen.getByText("Threshold anchor")).toBeInTheDocument();
+    expect(screen.getByText("ratio 1.0")).toBeInTheDocument();
+    expect(screen.queryByText(/Check-In Overview/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Metrics Progress/i)).not.toBeInTheDocument();
+
     const goalToggle = screen.getByRole("button", {
       name: /Goal Trajectory Status/i,
     });

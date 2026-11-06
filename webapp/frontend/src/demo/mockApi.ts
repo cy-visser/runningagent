@@ -162,6 +162,22 @@ export async function demoFetchSession(): Promise<SessionResponse> {
         report: { kind: "trend", data: DEMO_TREND_DATA },
       },
     );
+  } else if (preset === "audit") {
+    messages.push(
+      {
+        id: "u-3",
+        role: "user",
+        text: "Audit my schedule for this week",
+        kind: "chat",
+      },
+      {
+        id: "a-3",
+        role: "assistant",
+        text: DEMO_AUDIT_MARKDOWN,
+        kind: "audit",
+        report: { kind: "audit", data: DEMO_AUDIT_DATA },
+      },
+    );
   }
   return {
     session_id: "demo-session-1",
@@ -177,7 +193,7 @@ export async function demoCreateNewSession(): Promise<SessionResponse> {
 }
 
 export async function demoStreamChat(
-  params: { message: string; sessionId?: string | null },
+  params: { message: string; sessionId?: string | null; action?: unknown },
   handlers: ChatStreamHandlers,
 ): Promise<void> {
   const sid = params.sessionId || "demo-session-1";

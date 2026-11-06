@@ -69,7 +69,7 @@ running_coach/
 ├── shared/                          # domain helpers used by 2+ features/coach
 │   ├── dates  units  sports  session_state  runner_identity  parallel_fetch  tp_payloads
 │   ├── goal_plan  goal_distance  race_equivalents  goal_plan_summary  progress_verdicts
-│   ├── weekly_buckets  calendar_notes  long_run_rule  health_metrics  athlete_settings  hr_pace_fit
+│   ├── weekly_buckets  calendar_notes  long_run_facts  north_star_targets  health_metrics  athlete_settings  hr_pace_fit
 │   ├── analysis_summary  workout_status  workout_structure  runner_weather  web_report_payload
 │   └── training_log/                # record_builder, record_writer, telemetry_file
 ├── integrations/                    # external I/O only

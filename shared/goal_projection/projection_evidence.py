@@ -5,20 +5,20 @@ from typing import Any, Optional
 
 from google.adk.tools import ToolContext
 
-from ....integrations import firestore
-from ....integrations.trainingpeaks import tp_calls
-from ....shared.analysis_summary import (
+from ...integrations import firestore
+from ...integrations.trainingpeaks import tp_calls
+from ..analysis_summary import (
     ANALYSIS_SCHEMA_VERSION,
     is_complete_summary,
     summarize_analysis,
 )
-from ....shared.athlete_settings import extract_thresholds
-from ....shared.dates import parse_date
-from ....shared.goal_distance import DISTANCE_PROFILES, parse_target_time_minutes
-from ....shared.goal_plan import current_goal, goal_race_dates
-from ....shared.parallel_fetch import result_or_none
-from ....shared.runner_identity import profile_user_id
-from ....shared.sports import RUN_SPORTS, is_quality_title, is_race_title
+from ..athlete_settings import extract_thresholds
+from ..dates import parse_date
+from ..goal_distance import DISTANCE_PROFILES, parse_target_time_minutes
+from ..goal_plan import current_goal, goal_race_dates
+from ..parallel_fetch import result_or_none
+from ..runner_identity import profile_user_id
+from ..sports import RUN_SPORTS, is_quality_title, is_race_title
 
 logger = logging.getLogger(__name__)
 

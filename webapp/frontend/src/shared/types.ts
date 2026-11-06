@@ -132,6 +132,12 @@ export interface CheckinWeekItem {
   in_progress?: boolean;
 }
 
+export interface CheckinDriver {
+  driver: string;
+  evidence: string;
+  implied: string;
+}
+
 export interface CheckinProjection {
   goal_label?: string | null;
   today_s?: number | null;
@@ -142,6 +148,8 @@ export interface CheckinProjection {
   confidence?: string | null;
   stale: boolean;
   readiness?: string | null;
+  /** Evidence behind the projection (threshold, goal-pace work, durability, load, health). */
+  drivers?: CheckinDriver[];
 }
 
 export interface CheckinRecoveryPoint {
@@ -210,6 +218,9 @@ export interface TrendWeekPoint {
   lt2_pace_s?: number | null;
   lt2_extrapolated?: boolean;
   key_decoupling?: number | null;
+  /** Finish time implied by the week's LT2 pace for the goal / north-star distance (s). */
+  implied_goal_s?: number | null;
+  implied_ns_s?: number | null;
 }
 
 export interface TrendProgressItem {
@@ -236,7 +247,78 @@ export interface TrendLevelItem {
 export interface TrendTargetItem {
   target: number;
   status?: string | null;
-  build_weeks: number;
+  /** km/week above the current level (0 when already there). */
+  gap_km: number;
+}
+
+export interface TrendProjection {
+  today_s?: number | null;
+  race_day_s?: number | null;
+  goal_s?: number | null;
+  gap_s?: number | null;
+  range_s?: [number, number] | null;
+  confidence?: string | null;
+  stale?: boolean;
+}
+
+export interface TrendGoal {
+  training_goal?: string | null;
+  label?: string | null;
+  kind?: "single" | "sub_goal" | "north_star" | string | null;
+  race_date?: string | null;
+  weeks_to_race?: number | null;
+  before_start?: boolean;
+  goal_s?: number | null;
+  projection?: TrendProjection | null;
+  ctl: {
+    current?: number | null;
+    target_peak: number;
+    range: [number, number];
+    required_ramp?: number | null;
+    phase?: string | null;
+    plan: { week: string; ctl: number }[];
+  };
+  volume?: TrendVolume | null;
+}
+
+/** Weekly running-volume targets of the current block (same per-week numbers as the schedule audit). */
+export interface TrendVolume {
+  block_target_km: number;
+  ns_peak_km: number;
+  baseline_km?: number | null;
+  this_week_km?: number | null;
+  first_km?: number | null;
+  first_week?: string | null;
+  peak_week?: string | null;
+  maintain: boolean;
+  own_block: boolean;
+  plan: { week: string; km: number; phase: string }[];
+}
+
+export interface TrendMilestone {
+  training_goal: string;
+  race_date?: string | null;
+  status: "done" | "active" | "upcoming" | string;
+  target_equiv_s?: number | null;
+  result_equiv_s?: number | null;
+}
+
+export interface TrendNorthStar {
+  training_goal: string;
+  label?: string | null;
+  race_name?: string | null;
+  race_date?: string | null;
+  weeks_to_race?: number | null;
+  target_s?: number | null;
+  equivalent_s?: number | null;
+  gap_s?: number | null;
+  ctl_range: [number, number];
+  milestones: TrendMilestone[];
+}
+
+export interface TrendPaceRow {
+  name: string;
+  pace: string;
 }
 
 export interface TrendReportData {
@@ -252,6 +334,9 @@ export interface TrendReportData {
     targets: TrendTargetItem[];
   };
   key_run_label?: string | null;
+  goal?: TrendGoal | null;
+  north_star?: TrendNorthStar | null;
+  paces?: TrendPaceRow[];
 }
 
 export type AuditSessionCategory =
@@ -282,14 +367,41 @@ export interface AuditWeek {
   bike: number;
   strength: number;
   long_run?: string | null;
+  /** Running km change vs the previous week (fact; no coded limit). */
+  vs_prior_pct?: number | null;
+  volume?: AuditWeekVolume | null;
   notes: string[];
   sessions: AuditSession[];
+}
+
+/** Planned week's running-volume reference path (null: completed, transition or race week). */
+export interface AuditWeekVolume {
+  target_km: number;
+  block_target_km: number;
+  phase: string;
+  /** Planned km vs the path value (fact; the coach judges whether it matters). */
+  vs_path_pct?: number | null;
+}
+
+/** How the weekly km targets are derived (block of the first targeted week); drives the calendar caption. */
+export interface AuditVolumeReference {
+  goal?: string | null;
+  goal_label?: string | null;
+  ns_goal?: string | null;
+  own_block: boolean;
+  block_target_km: number;
+  ns_peak_km?: number | null;
+  /** Starting level of the path: recent 4-week average, or the previous block's target. */
+  start_km?: number | null;
+  peak_week?: string | null;
+  recovery_every_weeks: number;
 }
 
 export interface AuditReportData {
   version: number;
   window: { start: string | null; end: string | null };
   weeks: AuditWeek[];
+  volume_reference?: AuditVolumeReference | null;
 }
 
 export type ReportEnvelope =
@@ -302,6 +414,16 @@ export interface ToolChip {
   label: string;
   state: "start" | "done";
 }
+
+/**
+ * Structured dashboard feature action (mirrors `webapp/backend/app/quick_actions.py`).
+ * The agent runs the skill + data tool directly; only typed chat goes through LLM routing.
+ */
+export type QuickAction =
+  | { skill: "check-in-report" }
+  | { skill: "trend-analysis"; weeks?: number }
+  | { skill: "schedule-audit"; start_date?: string; end_date?: string }
+  | { skill: "workout-analysis"; date_str?: string; sport?: "run" | "bike" };
 
 export interface ChatMessage {
   id: string;

@@ -2,10 +2,10 @@ from datetime import timedelta
 import logging
 from typing import Any, Optional
 
-from ....shared.dates import get_today_date, parse_date
-from ....shared.goal_distance import goal_distance_key, resolve_target_peak_ctl
-from ....shared.goal_plan import current_goal
-from ....shared.tp_payloads import parse_mcp_response
+from ..dates import get_today_date, parse_date
+from ..goal_distance import goal_distance_key, resolve_target_peak_ctl
+from ..goal_plan import current_goal
+from ..tp_payloads import parse_mcp_response
 
 logger = logging.getLogger(__name__)
 

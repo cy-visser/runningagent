@@ -18,6 +18,7 @@ from .auth import AuthenticatedUser, current_user, derive_initials
 from .events import TurnEventTranslator, format_sse
 from .profile_model import ProfileUpdatePayload, profile_state_for, summarize_profile
 from .profiles import ProfileStore
+from .quick_actions import QuickAction
 from .settings import Settings, load_settings, validate_startup_settings
 from .trainingpeaks import (
     ConnectConflictError,
@@ -49,6 +50,8 @@ class ConnectTpRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=8000)
     session_id: Optional[str] = Field(default=None, max_length=200)
+    # Set only by dashboard feature buttons; typed chat keeps full LLM routing and tool calling.
+    action: Optional[QuickAction] = None
 
 
 def create_app(
@@ -222,6 +225,7 @@ def create_app(
                         session_id=session_id,
                         auth_email=user.email,
                         message=body.message.strip(),
+                        quick_action=body.action.to_state() if body.action else None,
                     ):
                         for ev_name, payload in translator.feed(adk_ev):
                             await queue.put(format_sse(ev_name, payload))

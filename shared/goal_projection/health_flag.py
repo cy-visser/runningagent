@@ -1,9 +1,9 @@
 from datetime import date, timedelta
 from typing import Any, Optional
 
-from ....shared.dates import parse_date
-from ....shared.sports import is_race_title
-from ....shared.health_metrics import HEALTH_BASELINE_DAYS
+from ..dates import parse_date
+from ..sports import is_race_title
+from ..health_metrics import HEALTH_BASELINE_DAYS
 from .projection_evidence import _num, completed_runs
 
 # Detraining correction: time x (CTL_then / CTL_now) ** K, capped. Heuristic;

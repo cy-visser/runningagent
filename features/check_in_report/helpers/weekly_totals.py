@@ -3,8 +3,6 @@ from typing import Optional
 
 from ....shared.weekly_buckets import format_week_line
 
-VOLUME_GROWTH_LIMIT_PCT = 10.0
-
 
 def annotate_week_progression(weeks: list[dict], window_start: date, window_end: date) -> list[dict]:
     """Marks weeks only partly inside the window and adds running-volume growth vs the prior week.
@@ -37,9 +35,7 @@ def _week_progression(w: dict) -> str:
     elif w.get("partial"):
         out += " | Partial week (only partly in window): no growth comparison"
     elif w.get("growth_pct") is not None:
-        growth = w["growth_pct"]
-        flag = f" ⚠️ > {VOLUME_GROWTH_LIMIT_PCT:g}%" if growth > VOLUME_GROWTH_LIMIT_PCT else ""
-        out += f" | Volume vs prior week: {growth:+.1f}%{flag}"
+        out += f" | Volume vs prior week: {w['growth_pct']:+.1f}%"
     return out
 
 

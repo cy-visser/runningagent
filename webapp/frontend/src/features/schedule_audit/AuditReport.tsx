@@ -32,15 +32,15 @@ export function AuditReport({ data, markdown }: AuditReportProps) {
             </span>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-display text-base font-bold text-slate-900">
+                <h3 className="font-display text-lg font-bold text-slate-900">
                   Schedule Audit
                 </h3>
-                <span className="rounded-full bg-white/90 px-2.5 py-0.5 text-[11px] font-semibold text-orange-800 border border-orange-200">
+                <span className="rounded-full bg-white/90 px-2.5 py-0.5 text-xs font-semibold text-orange-800 border border-orange-200">
                   {data.weeks.length}{" "}
                   {data.weeks.length === 1 ? "week" : "weeks"}
                 </span>
               </div>
-              <p className="text-xs text-slate-700 mt-0.5">
+              <p className="text-sm text-slate-700 mt-0.5">
                 {formatShortDate(data.window.start)} –{" "}
                 {formatShortDate(data.window.end)}
               </p>
@@ -52,20 +52,20 @@ export function AuditReport({ data, markdown }: AuditReportProps) {
               tone="slate"
               label={`${totalEasy} easy · ${totalQuality} quality`}
             />
-            <span className="rounded-full bg-white/90 px-3 py-0.5 text-xs font-semibold text-slate-800 border border-slate-200 tabular-nums">
+            <span className="rounded-full bg-white/90 px-3 py-0.5 text-sm font-semibold text-slate-800 border border-slate-200 tabular-nums">
               {totalKm.toFixed(1)} km total
             </span>
           </div>
         </div>
       </div>
 
-      {/* Stacked-bar weekly chart */}
+      {/* Weekly schedule calendar */}
       <Suspense
         fallback={
-          <div className="h-80 rounded-2xl border border-slate-200 animate-shimmer" />
+          <div className="h-96 rounded-2xl border border-slate-200 animate-shimmer" />
         }
       >
-        <AuditCharts weeks={data.weeks} />
+        <AuditCharts weeks={data.weeks} volumeReference={data.volume_reference} />
       </Suspense>
 
       {/* Coaching Evaluation */}

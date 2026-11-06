@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional, Union
 
 DateLike = Union[str, date, datetime, None]
@@ -26,6 +26,11 @@ def get_today_str(with_weekday: bool = False) -> str:
 def iso_date(day: Any) -> str:
     """Formats a date/datetime as YYYY-MM-DD."""
     return day.strftime(ISO_DATE_FMT)
+
+
+def monday_of(day: date) -> date:
+    """Monday of the ISO week containing `day`."""
+    return day - timedelta(days=day.weekday())
 
 
 def parse_iso_timestamp(timestamp_input: DateLike) -> Optional[datetime]:

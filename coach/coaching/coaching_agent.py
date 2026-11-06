@@ -19,7 +19,9 @@ from ...features.workout_creator.create_workout_tool import create_workout_tool
 from ..model_config import COACH_MODEL, build_model
 from ..onboarding.request_new_goal_tool import request_new_goal_tool
 from .instruction import build_coach_instruction
-from .model_callbacks import apply_thinking_policy, splice_tables
+from .model_callbacks import apply_thinking_policy, strip_stale_thoughts
+from .profile_context import ensure_profile_context
+from .quick_actions import dispatch_quick_action
 from .skill_toolset import skill_toolset
 
 coaching_agent_tools = [
@@ -41,10 +43,16 @@ coaching_agent = Agent(
     description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
     instruction=build_coach_instruction,
     tools=coaching_agent_tools,
-    # Deterministic no-workout reply; full reasoning except on post-write confirmations;
-    # check-in / trend tables spliced in verbatim.
-    before_model_callback=[no_workout_reply, apply_thinking_policy],
-    after_model_callback=splice_tables,
+    # Runner profile injected exactly once per model call (reloaded if missing); web quick actions
+    # dispatch their skill + data tool without a routing LLM call; deterministic no-workout reply;
+    # full reasoning except on post-write confirmations; reasoning of completed turns is not replayed.
+    before_model_callback=[
+        ensure_profile_context,
+        dispatch_quick_action,
+        no_workout_reply,
+        apply_thinking_policy,
+        strip_stale_thoughts,
+    ],
     mode="chat",
 )
 

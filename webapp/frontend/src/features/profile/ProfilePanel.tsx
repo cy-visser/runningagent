@@ -125,7 +125,7 @@ export function ProfilePanel({
           }}
         >
           <div className="flex items-center gap-3.5">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sunset font-display text-base font-bold text-white shadow-sm">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sunset font-display text-lg font-bold text-white shadow-sm">
               {initials}
             </span>
             <div>
@@ -135,7 +135,7 @@ export function ProfilePanel({
               >
                 {fullName}
               </h2>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mt-0.5">
+              <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 mt-0.5">
                 <span className="inline-flex items-center gap-1">
                   <ShieldCheck className="h-3.5 w-3.5 text-orange-500" />
                   {profile?.email || email}
@@ -154,7 +154,7 @@ export function ProfilePanel({
               <button
                 type="button"
                 onClick={() => setMode("edit")}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-sunset bg-sunset-hover px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-sunset bg-sunset-hover px-3.5 py-1.5 text-sm font-semibold text-white shadow-xs transition cursor-pointer"
               >
                 <Pencil className="h-3.5 w-3.5" />
                 Edit
@@ -176,12 +176,12 @@ export function ProfilePanel({
           {loading && (
             <div className="flex flex-col items-center justify-center py-20 text-slate-500">
               <Loader2 className="h-6 w-6 animate-spin text-orange-500 mb-2" />
-              <p className="text-xs font-medium">Loading runner profile…</p>
+              <p className="text-sm font-medium">Loading runner profile…</p>
             </div>
           )}
 
           {!loading && error && mode === "view" && (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-800">
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
               {error}
             </div>
           )}
@@ -213,10 +213,10 @@ export function ProfilePanel({
                     key={stat.label}
                     className="rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3"
                   >
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+                    <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
                       {stat.label}
                     </p>
-                    <p className="mt-1 font-display text-base font-bold text-slate-900 tabular-nums">
+                    <p className="mt-1 font-display text-lg font-bold text-slate-900 tabular-nums">
                       {stat.value}
                     </p>
                   </div>
@@ -225,7 +225,7 @@ export function ProfilePanel({
 
               {/* Goal Roadmap */}
               <div className="space-y-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
                   {profile.goal_type === "plan" && profile.north_star
                     ? "Goal Plan Roadmap"
                     : "Active Training Goal"}
@@ -267,28 +267,28 @@ export function ProfilePanel({
                                   }`}
                                 />
                                 <div>
-                                  <p className="text-sm font-bold text-slate-900">
+                                  <p className="text-base font-bold text-slate-900">
                                     {sg.goal}
                                   </p>
                                   {sg.race_name && (
-                                    <p className="text-xs text-slate-600">
+                                    <p className="text-sm text-slate-600">
                                       {sg.race_name}
                                     </p>
                                   )}
                                 </div>
                               </div>
                               {isActive && (
-                                <span className="rounded-full bg-sunset px-2.5 py-0.5 text-[11px] font-semibold text-white">
+                                <span className="rounded-full bg-sunset px-2.5 py-0.5 text-xs font-semibold text-white">
                                   Active Block
                                 </span>
                               )}
                               {isCompleted && !isActive && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">
                                   <CheckCircle2 className="h-3 w-3" /> Completed
                                 </span>
                               )}
                             </div>
-                            <p className="mt-2 text-xs text-slate-500">
+                            <p className="mt-2 text-sm text-slate-500">
                               {formatShortDate(sg.start_date)} →{" "}
                               <strong className="text-slate-700">
                                 {formatShortDate(sg.race_date)}
@@ -298,7 +298,7 @@ export function ProfilePanel({
                                 : ""}
                             </p>
                             {sg.result && (
-                              <p className="mt-2 rounded-xl bg-white/90 px-3 py-1.5 text-xs font-medium text-emerald-800 border border-emerald-200/70">
+                              <p className="mt-2 rounded-xl bg-white/90 px-3 py-1.5 text-sm font-medium text-emerald-800 border border-emerald-200/70">
                                 Result: {sg.result}
                               </p>
                             )}
@@ -319,21 +319,21 @@ export function ProfilePanel({
                         <div className="flex items-center gap-2">
                           <Compass className="h-4 w-4 text-violet-700 shrink-0" />
                           <div>
-                            <p className="font-display text-sm font-bold text-slate-900">
+                            <p className="font-display text-base font-bold text-slate-900">
                               {profile.north_star.goal}
                             </p>
                             {profile.north_star.race_name && (
-                              <p className="text-xs text-slate-700">
+                              <p className="text-sm text-slate-700">
                                 {profile.north_star.race_name}
                               </p>
                             )}
                           </div>
                         </div>
-                        <span className="rounded-full bg-white/90 px-2.5 py-0.5 text-[11px] font-semibold text-violet-800 border border-violet-300">
+                        <span className="rounded-full bg-white/90 px-2.5 py-0.5 text-xs font-semibold text-violet-800 border border-violet-300">
                           North Star
                         </span>
                       </div>
-                      <p className="mt-2 text-xs text-slate-700">
+                      <p className="mt-2 text-sm text-slate-700">
                         Race day:{" "}
                         <strong>
                           {formatShortDate(profile.north_star.race_date)}
@@ -348,11 +348,11 @@ export function ProfilePanel({
                   <div className="rounded-2xl border border-rose-300 bg-rose-50/80 p-4">
                     <div className="flex items-center gap-2">
                       <Trophy className="h-4 w-4 text-rose-700" />
-                      <p className="font-display text-sm font-bold text-slate-900">
+                      <p className="font-display text-base font-bold text-slate-900">
                         {profile.training_goal || "No active goal set"}
                       </p>
                     </div>
-                    <p className="mt-1.5 text-xs text-slate-600">
+                    <p className="mt-1.5 text-sm text-slate-600">
                       Target date:{" "}
                       <strong className="text-slate-800">
                         {formatShortDate(profile.timeline)}
@@ -367,7 +367,7 @@ export function ProfilePanel({
 
               {/* Context Cards */}
               <div className="space-y-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
                   Coaching Context
                 </h3>
 
@@ -399,11 +399,11 @@ export function ProfilePanel({
                       key={item.title}
                       className="rounded-2xl border border-slate-200 bg-white p-3.5"
                     >
-                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
                         <Icon className="h-3.5 w-3.5 text-rose-700" />
                         <span>{item.title}</span>
                       </div>
-                      <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                      <p className="mt-1 text-sm leading-relaxed text-slate-600">
                         {item.value || "Not specified yet"}
                       </p>
                     </div>
@@ -418,10 +418,10 @@ export function ProfilePanel({
                     <Link2 className="h-4 w-4" />
                   </span>
                   <div>
-                    <p className="text-xs font-semibold text-slate-900">
+                    <p className="text-sm font-semibold text-slate-900">
                       TrainingPeaks Telemetry
                     </p>
-                    <p className="text-[11px] text-slate-500">
+                    <p className="text-xs text-slate-500">
                       {data?.tp.connected
                         ? `Connected${data.tp.tp_athlete_id ? ` · Athlete #${data.tp.tp_athlete_id}` : ""}`
                         : "Not connected"}
@@ -431,7 +431,7 @@ export function ProfilePanel({
                 <button
                   type="button"
                   onClick={onOpenTrainingPeaks}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer"
                 >
                   {data?.tp.connected ? "Replace cookie" : "Connect"}
                 </button>

@@ -100,6 +100,7 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
         assert agent.calls[0]["session_id"] == "sess-new-1"
         assert agent.calls[0]["user_id"] == f"web_{EMAIL}"
         assert agent.calls[0]["auth_email"] == EMAIL
+        assert agent.calls[0]["quick_action"] is None  # typed chat: full LLM routing and tool calling
 
         chat2 = client.post(
             "/api/chat",
@@ -110,28 +111,53 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
         assert agent.created_sessions == 1
         assert agent.calls[1]["session_id"] == "sess-new-1"
 
-        # Another quick-action button click (no session_id) starts a brand-new session
+        # Another quick-action button click (no session_id) starts a brand-new session and forwards its action
         chat3 = client.post(
             "/api/chat",
-            json={"message": "Analyze today's run"},
+            json={"message": "Analyze today's run", "action": {"skill": "workout-analysis"}},
             headers=headers,
         )
         assert chat3.status_code == 200
         assert agent.created_sessions == 2
         assert agent.calls[2]["session_id"] == "sess-new-2"
+        assert agent.calls[2]["quick_action"] == {
+            "skill": "workout-analysis", "args": {"date_str": "today", "sport": "run"},
+        }
+
+        audit = client.post(
+            "/api/chat",
+            json={"message": "Audit my schedule", "action": {
+                "skill": "schedule-audit", "start_date": "2026-11-02", "end_date": "2026-12-27"}},
+            headers=headers,
+        )
+        assert audit.status_code == 200
+        assert agent.calls[3]["quick_action"] == {
+            "skill": "schedule-audit", "args": {"start_date": "2026-11-02", "end_date": "2026-12-27"},
+        }
+
+        # Only allowlisted skills with valid arguments are forwarded.
+        for bad in (
+            {"skill": "workout-creator"},
+            {"skill": "trend-analysis", "weeks": 500},
+            {"skill": "schedule-audit", "start_date": "next monday"},
+            {"skill": "check-in-report", "extra": "x"},
+        ):
+            rejected = client.post("/api/chat", json={"message": "x", "action": bad}, headers=headers)
+            assert rejected.status_code == 422, bad
+        assert len(agent.calls) == 4
 
         # Clicking "New conversation" creates a new session immediately
         new_sess = client.post("/api/session/new", headers=headers)
         assert new_sess.status_code == 200
-        assert new_sess.json()["session_id"] == "sess-new-3"
-        assert agent.created_sessions == 3
+        assert new_sess.json()["session_id"] == "sess-new-4"
+        assert agent.created_sessions == 4
 
         # Next message uses the session created by "New conversation"
         chat4 = client.post(
             "/api/chat",
-            json={"message": "Hello in new session", "session_id": "sess-new-3"},
+            json={"message": "Hello in new session", "session_id": "sess-new-4"},
             headers=headers,
         )
         assert chat4.status_code == 200
-        assert agent.created_sessions == 3
-        assert agent.calls[3]["session_id"] == "sess-new-3"
+        assert agent.created_sessions == 4
+        assert agent.calls[4]["session_id"] == "sess-new-4"

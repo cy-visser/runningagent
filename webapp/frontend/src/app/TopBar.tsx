@@ -36,10 +36,10 @@ export function TopBar({
               <Activity className="h-5 w-5" />
             </span>
             <div>
-              <span className="font-display text-base font-bold tracking-tight text-slate-900">
+              <span className="font-display text-lg font-bold tracking-tight text-slate-900">
                 AI Running Coach
               </span>
-              <span className="hidden md:inline-block ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-800 border border-slate-300">
+              <span className="hidden md:inline-block ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-800 border border-slate-300">
                 Performance Lab
               </span>
             </div>
@@ -49,7 +49,7 @@ export function TopBar({
             <button
               type="button"
               onClick={onViewProfile}
-              className="hidden lg:inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-100/85 px-3 py-1 text-xs font-semibold text-rose-950 transition hover:border-rose-400 hover:bg-rose-200/75 cursor-pointer"
+              className="hidden lg:inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-100/85 px-3 py-1 text-sm font-semibold text-rose-950 transition hover:border-rose-400 hover:bg-rose-200/75 cursor-pointer"
             >
               <Target className="h-3.5 w-3.5 text-rose-700" />
               <span>{activeGoal}</span>
@@ -67,7 +67,7 @@ export function TopBar({
             <button
               type="button"
               onClick={onNewSession}
-              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">New conversation</span>

@@ -1,3 +1,4 @@
+import { rem } from "../../shared/chartFont";
 import {
   Area,
   Bar,
@@ -42,14 +43,14 @@ export default function CheckinCharts({ pmc, weeks }: CheckinChartsProps) {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <h4 className="font-display text-sm font-bold text-slate-900">
+              <h4 className="font-display text-base font-bold text-slate-900">
                 Fitness · Fatigue · Form (PMC)
               </h4>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-xs text-slate-500">
                 90-day CTL progression vs acute load & freshness
               </p>
             </div>
-            <div className="flex items-center gap-3 text-[11px] font-medium text-slate-600">
+            <div className="flex items-center gap-3 text-xs font-medium text-slate-600">
               <span className="inline-flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-orange-500" /> CTL
               </span>
@@ -81,12 +82,12 @@ export default function CheckinCharts({ pmc, weeks }: CheckinChartsProps) {
                 />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 11, fill: "#64748B" }}
+                  tick={{ fontSize: rem(13), fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 11, fill: "#64748B" }}
+                  tick={{ fontSize: rem(13), fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -95,7 +96,7 @@ export default function CheckinCharts({ pmc, weeks }: CheckinChartsProps) {
                     borderRadius: 12,
                     border: "1px solid #E2E8F0",
                     boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
-                    fontSize: 12,
+                    fontSize: rem(14),
                   }}
                 />
                 <Area
@@ -136,14 +137,14 @@ export default function CheckinCharts({ pmc, weeks }: CheckinChartsProps) {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <h4 className="font-display text-sm font-bold text-slate-900">
+              <h4 className="font-display text-base font-bold text-slate-900">
                 Weekly Distance & Session Mix
               </h4>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-xs text-slate-500">
                 Recent weekly volume (km) · dashed bar = current week in progress
               </p>
             </div>
-            <span className="rounded-full bg-orange-50 px-2.5 py-0.5 text-[11px] font-semibold text-orange-700 border border-orange-200/70">
+            <span className="rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-semibold text-orange-700 border border-orange-200/70">
               km / wk
             </span>
           </div>
@@ -167,12 +168,12 @@ export default function CheckinCharts({ pmc, weeks }: CheckinChartsProps) {
                 />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 11, fill: "#64748B" }}
+                  tick={{ fontSize: rem(13), fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 11, fill: "#64748B" }}
+                  tick={{ fontSize: rem(13), fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -182,7 +183,7 @@ export default function CheckinCharts({ pmc, weeks }: CheckinChartsProps) {
                     borderRadius: 12,
                     border: "1px solid #E2E8F0",
                     boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
-                    fontSize: 12,
+                    fontSize: rem(14),
                   }}
                   formatter={(value: number, _name: string, props) => {
                     const row = props?.payload as CheckinWeekItem | undefined;

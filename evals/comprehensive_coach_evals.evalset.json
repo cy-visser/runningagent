@@ -311,7 +311,7 @@
             "tool_input": {}
           }
         ],
-        "reference": "I audited your 5K block on two levels: the Sub-21 5K and your Sub-3:20 London Marathon north star. Each week's long run is checked against the computed long-run target: 25-30% of the week's running km with a 16 km floor to protect your marathon base, capped at 110 minutes, dropping to 12-16 km in the last two weeks before the race. Weeks flagged below the north-star floor should get a longer easy long run. Sub goal: keep the quality sessions spaced. North star: hold weekly volume so CTL keeps moving toward the north-star range."
+        "reference": "I audited your 5K block on two levels: the Sub-21 5K and your Sub-3:20 London Marathon north star. There is no fixed long-run target: starting from your recent long runs, I recommend a gradual long-run progression per week that builds marathon durability without jumping, held back in recovery weeks and in the final weeks before the 5K, and kept proportionate to the weekly volume. Each week also has a weekly-volume target building toward the 65 km 5K-block target (65% of the 100 km/week north-star peak) at no more than +10% per week. Sub goal: keep the quality sessions spaced. North star: hold the weekly volume path so CTL keeps moving toward the north-star range."
       }
     ]
   }

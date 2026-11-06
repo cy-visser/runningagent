@@ -1,3 +1,4 @@
+import { rem } from "../../shared/chartFont";
 import {
   Bar,
   CartesianGrid,
@@ -35,14 +36,14 @@ export default function TrendCharts({ weeks, keyRunLabel }: TrendChartsProps) {
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
         <div className="mb-3 flex items-center justify-between">
           <div>
-            <h4 className="font-display text-sm font-bold text-slate-900">
+            <h4 className="font-display text-base font-bold text-slate-900">
               6-Month Weekly Volume & CTL
             </h4>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-xs text-slate-500">
               Weekly mileage (Sunset bars) vs Chronic Training Load
             </p>
           </div>
-          <div className="flex items-center gap-3 text-[11px] font-medium text-slate-600">
+          <div className="flex items-center gap-3 text-xs font-medium text-slate-600">
             <span className="inline-flex items-center gap-1">
               <span className="h-2 w-2 rounded-full bg-orange-500" /> km/wk
             </span>
@@ -71,20 +72,20 @@ export default function TrendCharts({ weeks, keyRunLabel }: TrendChartsProps) {
               />
               <XAxis
                 dataKey="label"
-                tick={{ fontSize: 11, fill: "#64748B" }}
+                tick={{ fontSize: rem(13), fill: "#64748B" }}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
                 yAxisId="km"
-                tick={{ fontSize: 11, fill: "#64748B" }}
+                tick={{ fontSize: rem(13), fill: "#64748B" }}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
                 yAxisId="ctl"
                 orientation="right"
-                tick={{ fontSize: 11, fill: "#7C3AED" }}
+                tick={{ fontSize: rem(13), fill: "#7C3AED" }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -93,7 +94,7 @@ export default function TrendCharts({ weeks, keyRunLabel }: TrendChartsProps) {
                   borderRadius: 12,
                   border: "1px solid #E2E8F0",
                   boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
-                  fontSize: 12,
+                  fontSize: rem(14),
                 }}
               />
               <Bar
@@ -125,14 +126,14 @@ export default function TrendCharts({ weeks, keyRunLabel }: TrendChartsProps) {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <h4 className="font-display text-sm font-bold text-slate-900">
+              <h4 className="font-display text-base font-bold text-slate-900">
                 Threshold Paces (LT1 / LT2)
               </h4>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-xs text-slate-500">
                 Pace at top of zone 2 &amp; at LTHR · rolling 4-week fit · faster = up
               </p>
             </div>
-            <div className="flex items-center gap-3 text-[11px] font-medium text-slate-600">
+            <div className="flex items-center gap-3 text-xs font-medium text-slate-600">
               <span className="inline-flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-sky-500" /> LT1
               </span>
@@ -155,7 +156,7 @@ export default function TrendCharts({ weeks, keyRunLabel }: TrendChartsProps) {
                 />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 11, fill: "#64748B" }}
+                  tick={{ fontSize: rem(13), fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -163,7 +164,7 @@ export default function TrendCharts({ weeks, keyRunLabel }: TrendChartsProps) {
                   reversed
                   domain={["dataMin - 5", "dataMax + 5"]}
                   tickFormatter={(v: number) => formatDuration(v)}
-                  tick={{ fontSize: 11, fill: "#64748B" }}
+                  tick={{ fontSize: rem(13), fill: "#64748B" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -172,7 +173,7 @@ export default function TrendCharts({ weeks, keyRunLabel }: TrendChartsProps) {
                     borderRadius: 12,
                     border: "1px solid #E2E8F0",
                     boxShadow: "0 8px 20px rgba(15,23,42,0.08)",
-                    fontSize: 12,
+                    fontSize: rem(14),
                   }}
                   formatter={(value: number, name: string, props) => {
                     const row = props?.payload as TrendWeekPoint | undefined;

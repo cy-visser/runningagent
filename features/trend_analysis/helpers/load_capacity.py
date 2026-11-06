@@ -12,8 +12,6 @@ LEVEL_STEP_KM = 10
 MIN_STREAK_WEEKS = 3
 MIN_TOLERATED_SHARE = 0.75
 WITHIN_REACH_FACTOR = 1.15
-BUILD_RATE = 1.10                   # max weekly growth while building
-CUTBACK_EVERY = 4                   # every 4th build week is a cutback (no growth)
 DEFAULT_TARGETS_KM = (50, 60, 70, 80, 100)
 
 
@@ -107,19 +105,11 @@ def volume_levels(rows: list[dict]) -> list[dict]:
     return levels
 
 
-def build_weeks(current_km: float, target_km: float) -> int:
-    """Weeks to grow from current to target at <= 10%/week with every 4th week a cutback."""
-    if current_km <= 0:
-        return -1
-    km, weeks = current_km, 0
-    while km < target_km:
-        weeks += 1
-        if weeks % CUTBACK_EVERY:
-            km *= BUILD_RATE
-    return weeks
-
-
 def capacity_outlook(rows: list[dict], levels: list[dict], targets=DEFAULT_TARGETS_KM) -> dict:
+    """Proven / reachable status per weekly-km target and the km gap from the current level.
+
+    No build-time estimate: how fast this runner can safely close the gap is the coach's judgement.
+    """
     complete = [r for r in rows if r["complete"]]
     proven = max((lv["level"] for lv in levels if lv["proven"]), default=None)
     max_km = max((r["km"] for r in complete), default=0.0)
@@ -135,8 +125,7 @@ def capacity_outlook(rows: list[dict], levels: list[dict], targets=DEFAULT_TARGE
             status = "untested"
         else:
             status = "run, not proven"
-        out.append({"target": t, "status": status,
-                    "build_weeks": 0 if current >= t else build_weeks(current, t)})
+        out.append({"target": t, "status": status, "gap_km": round(max(0.0, t - current), 1)})
     return {"proven_km": proven, "max_km": max_km, "current_km": current, "targets": out}
 
 
@@ -169,8 +158,8 @@ def format_outlook(outlook: dict, rho: Optional[float], n_pairs: int) -> str:
     lines = [f"Load capacity: proven {proven}; highest week {outlook['max_km']:.0f} km; "
              f"current (last 3 complete weeks) {outlook['current_km']:.0f} km/week."]
     for t in outlook["targets"]:
-        weeks = f", ~{t['build_weeks']} build weeks from current" if t["build_weeks"] > 0 else ""
-        lines.append(f"- {t['target']} km/week: {t['status']}{weeks}")
+        gap = f", +{t['gap_km']:.0f} km/week above current" if t["gap_km"] > 0 else ""
+        lines.append(f"- {t['target']} km/week: {t['status']}{gap}")
     lines.append(f"Load ratio (weekly TSS / prior 4-week mean) vs next-week HRV: "
                  f"{'rho ' + str(rho) if rho is not None else 'insufficient'} (n={n_pairs})")
     return "\n".join(lines)

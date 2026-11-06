@@ -17,20 +17,17 @@ from ...shared.runner_identity import profile_user_id
 from ...shared.weekly_buckets import build_week_buckets
 from ...shared.workout_status import partition_workouts_by_date
 from .helpers.checkin_summary_text import compile_checkin_summary
-from .helpers.goal_trajectory import summarize_fitness
-from .helpers.health_flag import health_readiness, recent_hard_effort
+from ...shared.goal_projection.goal_trajectory import summarize_fitness
+from ...shared.goal_projection.health_flag import health_readiness, recent_hard_effort
 from .helpers.lt_paces import checkin_lt_paces
-from .helpers.metrics_tables import format_fitness_pmc
 from .helpers.north_star_progress import north_star_progress
-from .helpers.projection_evidence import PROJECTION_WINDOW_DAYS
-from .helpers.race_projection import build_goal_projection
+from ...shared.goal_projection.projection_evidence import PROJECTION_WINDOW_DAYS
+from ...shared.goal_projection.race_projection import build_goal_projection
 from .helpers.run_weather import fetch_checkin_weather_map
 from .helpers.web_report import CHECKIN_REPORT_STATE_KEY, checkin_report_data
 from .helpers.weekly_totals import annotate_week_progression
 
 PROJECTION_LOOKBACK_DAYS = 90
-CHECKIN_PLACEHOLDER = "[[CHECKIN_METRICS]]"
-CHECKIN_TABLES_STATE_KEY = "checkin_tables"
 
 
 async def fetch_checkin_data(
@@ -136,9 +133,8 @@ async def fetch_checkin_data(
         zones[1]["max"] if len(zones) >= 2 else None,
     )
 
-    # Rendered once: the model reasons over it here, and the report gets it spliced in verbatim.
-    if fitness_data is not None:
-        tool_context.state[CHECKIN_TABLES_STATE_KEY] = format_fitness_pmc(fitness_data, race_projection, lt)
+    # The web report renders the metrics, projection drivers and charts from this payload; the
+    # coach reasons over the same numbers in the summary below and writes only the judgement.
     tool_context.state[CHECKIN_REPORT_STATE_KEY] = checkin_report_data(
         q_start, q_end, fitness_data, race_projection, weekly_totals, dated_metrics, lt_paces=lt,
     )

@@ -194,7 +194,7 @@ export function ProfileForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {displayError && (
-        <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800">
+        <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
           <span>{displayError}</span>
         </div>
@@ -203,34 +203,34 @@ export function ProfileForm({
       {/* Immutable Identity */}
       <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <span className="text-sm font-semibold uppercase tracking-wider text-slate-500">
             Account Identity
           </span>
-          <span className="inline-flex items-center gap-1 text-[11px] text-slate-500">
+          <span className="inline-flex items-center gap-1 text-xs text-slate-500">
             <Lock className="h-3 w-3" /> Read-only (IAM)
           </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">
+            <label className="block text-xs font-medium text-slate-500 mb-1">
               Runner Name
             </label>
             <input
               type="text"
               value={fullName}
               disabled
-              className="w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-medium text-slate-600 cursor-not-allowed"
+              className="w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 cursor-not-allowed"
             />
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">
+            <label className="block text-xs font-medium text-slate-500 mb-1">
               IAM Email
             </label>
             <input
               type="text"
               value={profile.email || email}
               disabled
-              className="w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-medium text-slate-600 cursor-not-allowed"
+              className="w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-medium text-slate-600 cursor-not-allowed"
             />
           </div>
         </div>
@@ -238,12 +238,12 @@ export function ProfileForm({
 
       {/* Biometrics & Location */}
       <div className="space-y-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
           Biometrics & Weather Location
         </h3>
         <div className="grid grid-cols-3 gap-3">
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
               Age
             </label>
             <input
@@ -251,11 +251,11 @@ export function ProfileForm({
               value={age}
               onChange={(e) => setAge(e.target.value)}
               placeholder="38"
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
               Height
             </label>
             <input
@@ -263,11 +263,11 @@ export function ProfileForm({
               value={height}
               onChange={(e) => setHeight(e.target.value)}
               placeholder="183 cm"
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
               Weight
             </label>
             <input
@@ -275,12 +275,12 @@ export function ProfileForm({
               value={weight}
               onChange={(e) => setWeight(e.target.value)}
               placeholder="73.5 kg"
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
             />
           </div>
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-700 mb-1">
             Training City / Location
           </label>
           <input
@@ -288,9 +288,9 @@ export function ProfileForm({
             value={location}
             onChange={(e) => setLocation(e.target.value)}
             placeholder="Amsterdam, Netherlands"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
           />
-          <p className="mt-1 text-[11px] text-slate-500">
+          <p className="mt-1 text-xs text-slate-500">
             Updating your city automatically refreshes weather forecast coordinates on your next check-in.
           </p>
         </div>
@@ -299,10 +299,10 @@ export function ProfileForm({
       {/* Goal Structure */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
             Goal Structure
           </h3>
-          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-0.5 text-xs">
+          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-0.5 text-sm">
             <button
               type="button"
               onClick={() => setGoalType("single")}
@@ -331,7 +331,7 @@ export function ProfileForm({
         {goalType === "single" ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
             <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Target Goal
               </label>
               <input
@@ -339,23 +339,23 @@ export function ProfileForm({
                 value={trainingGoal}
                 onChange={(e) => setTrainingGoal(e.target.value)}
                 placeholder="Sub-1:26 Half Marathon"
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Race Date
                 </label>
                 <input
                   type="date"
                   value={timeline}
                   onChange={(e) => setTimeline(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Taper Weeks
                 </label>
                 <input
@@ -366,7 +366,7 @@ export function ProfileForm({
                   value={singleTaper}
                   onChange={(e) => setSingleTaper(e.target.value)}
                   placeholder="2"
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
                 />
               </div>
             </div>
@@ -376,7 +376,7 @@ export function ProfileForm({
             {/* Stepping-Stone Sub-Goals */}
             <div className="space-y-2.5">
               <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                   <Flag className="h-3.5 w-3.5 text-orange-500" />
                   Stepping-Stone Sub-Goals
                 </span>
@@ -394,7 +394,7 @@ export function ProfileForm({
                       },
                     ])
                   }
-                  className="inline-flex items-center gap-1 rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700 hover:bg-orange-100 cursor-pointer"
+                  className="inline-flex items-center gap-1 rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-sm font-semibold text-orange-700 hover:bg-orange-100 cursor-pointer"
                 >
                   <Plus className="h-3.5 w-3.5" /> Add sub-goal
                 </button>
@@ -406,7 +406,7 @@ export function ProfileForm({
                   className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5 space-y-2.5"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-slate-600">
+                    <span className="text-xs font-semibold text-slate-600">
                       Block #{idx + 1}
                       {sg.savedResult ? " · Result saved" : ""}
                     </span>
@@ -416,7 +416,7 @@ export function ProfileForm({
                         onClick={() =>
                           setSubGoals((prev) => prev.filter((_, i) => i !== idx))
                         }
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-rose-600 hover:text-rose-800 cursor-pointer"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-800 cursor-pointer"
                       >
                         <Trash2 className="h-3 w-3" /> Remove
                       </button>
@@ -434,7 +434,7 @@ export function ProfileForm({
                         )
                       }
                       placeholder="Goal (e.g. Sub-1:26 Half Marathon)"
-                      className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
+                      className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-orange-500 focus:outline-none"
                     />
                     <input
                       type="text"
@@ -449,12 +449,12 @@ export function ProfileForm({
                         )
                       }
                       placeholder="Event name (optional)"
-                      className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
+                      className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-orange-500 focus:outline-none"
                     />
                   </div>
                   <div className="grid grid-cols-3 gap-2.5">
                     <div>
-                      <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                      <label className="block text-xs font-medium text-slate-500 mb-0.5">
                         Block Start
                       </label>
                       <input
@@ -469,11 +469,11 @@ export function ProfileForm({
                             ),
                           )
                         }
-                        className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                      <label className="block text-xs font-medium text-slate-500 mb-0.5">
                         Race Date
                       </label>
                       <input
@@ -488,11 +488,11 @@ export function ProfileForm({
                             ),
                           )
                         }
-                        className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                      <label className="block text-xs font-medium text-slate-500 mb-0.5">
                         Taper (wks)
                       </label>
                       <input
@@ -510,7 +510,7 @@ export function ProfileForm({
                             ),
                           )
                         }
-                        className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
                   </div>
@@ -520,7 +520,7 @@ export function ProfileForm({
 
             {/* North Star Goal */}
             <div className="rounded-2xl border border-violet-200 bg-violet-50/50 p-4 space-y-2.5">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-violet-900">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-violet-900">
                 <Compass className="h-4 w-4 text-violet-600" />
                 North Star Destination Race
               </div>
@@ -530,41 +530,41 @@ export function ProfileForm({
                   value={nsGoal}
                   onChange={(e) => setNsGoal(e.target.value)}
                   placeholder="Sub-2:58 Marathon"
-                  className="rounded-xl border border-violet-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-violet-500 focus:outline-none"
+                  className="rounded-xl border border-violet-200 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-violet-500 focus:outline-none"
                 />
                 <input
                   type="text"
                   value={nsRaceName}
                   onChange={(e) => setNsRaceName(e.target.value)}
                   placeholder="NN Marathon Rotterdam"
-                  className="rounded-xl border border-violet-200 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-violet-500 focus:outline-none"
+                  className="rounded-xl border border-violet-200 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-violet-500 focus:outline-none"
                 />
               </div>
               <div className="grid grid-cols-3 gap-2.5">
                 <div>
-                  <label className="block text-[10px] font-medium text-violet-700 mb-0.5">
+                  <label className="block text-xs font-medium text-violet-700 mb-0.5">
                     Block Start
                   </label>
                   <input
                     type="date"
                     value={nsStartDate}
                     onChange={(e) => setNsStartDate(e.target.value)}
-                    className="w-full rounded-xl border border-violet-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-violet-500 focus:outline-none"
+                    className="w-full rounded-xl border border-violet-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-violet-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-violet-700 mb-0.5">
+                  <label className="block text-xs font-medium text-violet-700 mb-0.5">
                     Race Date
                   </label>
                   <input
                     type="date"
                     value={nsRaceDate}
                     onChange={(e) => setNsRaceDate(e.target.value)}
-                    className="w-full rounded-xl border border-violet-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-violet-500 focus:outline-none"
+                    className="w-full rounded-xl border border-violet-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-violet-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-medium text-violet-700 mb-0.5">
+                  <label className="block text-xs font-medium text-violet-700 mb-0.5">
                     Taper (wks)
                   </label>
                   <input
@@ -574,7 +574,7 @@ export function ProfileForm({
                     max="6"
                     value={nsTaper}
                     onChange={(e) => setNsTaper(e.target.value)}
-                    className="w-full rounded-xl border border-violet-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 focus:border-violet-500 focus:outline-none"
+                    className="w-full rounded-xl border border-violet-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-violet-500 focus:outline-none"
                   />
                 </div>
               </div>
@@ -585,11 +585,11 @@ export function ProfileForm({
 
       {/* Coaching Context */}
       <div className="space-y-3">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
           Training Context & Gear
         </h3>
         <div>
-          <label className="block text-xs font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-700 mb-1">
             Recent Race Times / PRs
           </label>
           <textarea
@@ -597,11 +597,11 @@ export function ProfileForm({
             value={recentRaceTimes}
             onChange={(e) => setRecentRaceTimes(e.target.value)}
             placeholder="10K: 39:12 · HM: 1:27:48 · Marathon: 3:04:19"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-700 mb-1">
             Injuries & Biomechanical Watchpoints
           </label>
           <textarea
@@ -609,11 +609,11 @@ export function ProfileForm({
             value={injuries}
             onChange={(e) => setInjuries(e.target.value)}
             placeholder="Any current niggles, history, or movement notes…"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-700 mb-1">
             Strength & Cross-Training
           </label>
           <textarea
@@ -621,11 +621,11 @@ export function ProfileForm({
             value={crossTraining}
             onChange={(e) => setCrossTraining(e.target.value)}
             placeholder="2x/wk strength, cycling, swimming…"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700 mb-1">
+          <label className="block text-sm font-medium text-slate-700 mb-1">
             Shoe Rotation
           </label>
           <textarea
@@ -633,7 +633,7 @@ export function ProfileForm({
             value={shoeRotation}
             onChange={(e) => setShoeRotation(e.target.value)}
             placeholder="Daily trainer, tempo/interval shoe, carbon racer…"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
           />
         </div>
       </div>
@@ -643,14 +643,14 @@ export function ProfileForm({
           type="button"
           onClick={onCancel}
           disabled={saving}
-          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+          className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={saving}
-          className="inline-flex items-center gap-2 rounded-xl bg-sunset bg-sunset-hover px-5 py-2 text-xs font-semibold text-white shadow-sunset transition disabled:opacity-60 cursor-pointer"
+          className="inline-flex items-center gap-2 rounded-xl bg-sunset bg-sunset-hover px-5 py-2 text-sm font-semibold text-white shadow-sunset transition disabled:opacity-60 cursor-pointer"
         >
           {saving ? (
             <>

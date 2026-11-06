@@ -6,7 +6,6 @@ from ....shared.goal_plan import (
     current_goal,
     north_star,
 )
-from ....shared.goal_plan_summary import format_goal_plan
 from ....shared.race_equivalents import (
     format_gap,
     goal_target_s,
@@ -38,12 +37,21 @@ def format_projection_vs_north_star(
     )
 
 
+GOAL_PLAN_POINTER = (
+    "- Goal-plan table (sub goals, results, north-star equivalents and gaps): see GOAL PLAN in your "
+    "instructions; it is not repeated here."
+)
+
+
 def north_star_progress(profile: dict, race_projection: Optional[dict], today_date: Any) -> str:
-    """'North Star Progress' check-in section (goal plans only; reads saved results, never fills them)."""
-    plan = format_goal_plan(profile, today_date)
-    if not plan:
+    """'North Star Progress' check-in section (goal plans only; reads saved results, never fills them).
+
+    The goal-plan table itself is in the coach instruction on every call, so only the check-in's
+    own evidence (the current projection mapped onto the north star) is added here.
+    """
+    if not north_star(profile):
         return ""
-    lines = ["### North Star Progress", plan]
+    lines = ["### North Star Progress", GOAL_PLAN_POINTER]
     projection_line = format_projection_vs_north_star(profile, race_projection, today_date)
     if projection_line:
         lines.append(projection_line)

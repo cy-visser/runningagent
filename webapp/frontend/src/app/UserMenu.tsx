@@ -55,14 +55,14 @@ export function UserMenu({
         aria-expanded={open}
         className="flex items-center gap-2.5 rounded-full border border-slate-200 bg-white py-1 pl-1.5 pr-3 text-left shadow-xs transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-orange-400/50 cursor-pointer"
       >
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-sunset font-display text-xs font-bold tracking-tight text-white shadow-xs">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-sunset font-display text-sm font-bold tracking-tight text-white shadow-xs">
           {me.initials}
         </span>
         <span className="hidden sm:flex flex-col leading-tight">
-          <span className="text-xs font-semibold text-slate-900">
+          <span className="text-sm font-semibold text-slate-900">
             {me.display_name}
           </span>
-          <span className="text-[11px] text-slate-500">
+          <span className="text-xs text-slate-500">
             {me.tp.connected ? "TP Connected" : "Connect TP"}
           </span>
         </span>
@@ -78,15 +78,15 @@ export function UserMenu({
         >
           <div className="rounded-xl bg-slate-50 px-3.5 py-2.5 mb-1">
             <div className="flex items-center justify-between gap-2">
-              <p className="truncate text-sm font-semibold text-slate-900">
+              <p className="truncate text-base font-semibold text-slate-900">
                 {me.display_name}
               </p>
-              <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600 border border-slate-200">
+              <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-slate-600 border border-slate-200">
                 <ShieldCheck className="h-3 w-3 text-orange-500" />
                 IAM
               </span>
             </div>
-            <p className="truncate text-xs text-slate-500 mt-0.5">{me.email}</p>
+            <p className="truncate text-sm text-slate-500 mt-0.5">{me.email}</p>
           </div>
 
           <button
@@ -100,7 +100,7 @@ export function UserMenu({
                 onOpenTrainingPeaks();
               }
             }}
-            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-base text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
           >
             <User className="h-4 w-4 text-slate-500" />
             <span className="font-medium">View profile</span>
@@ -114,7 +114,7 @@ export function UserMenu({
               setOpen(false);
               onEditProfile();
             }}
-            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-base text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
           >
             <Pencil className="h-4 w-4 text-slate-500" />
             <span className="font-medium">Edit profile</span>
@@ -127,19 +127,19 @@ export function UserMenu({
               setOpen(false);
               onOpenTrainingPeaks();
             }}
-            className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
+            className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-base text-slate-700 transition hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
           >
             <span className="flex items-center gap-2.5">
               <Link2 className="h-4 w-4 text-slate-500" />
               <span className="font-medium">TrainingPeaks</span>
             </span>
             {me.tp.connected ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
                 <CheckCircle2 className="h-3 w-3" />
                 Active
               </span>
             ) : (
-              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-200">
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
                 Setup
               </span>
             )}
@@ -150,7 +150,7 @@ export function UserMenu({
           <a
             href="/_gcp_iap/clear_login_cookie"
             role="menuitem"
-            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-rose-600 transition hover:bg-rose-50"
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-base font-medium text-rose-600 transition hover:bg-rose-50"
           >
             <LogOut className="h-4 w-4" />
             <span>Sign out</span>

@@ -3,17 +3,34 @@ import re
 from statistics import mean, median
 from typing import Optional
 
+from ....shared.calendar_notes import truncate_note
 from ....shared.hr_pace_fit import (
     is_hot,
     is_run,
     lt_paces,
 )
-from ....shared.long_run_rule import SHORT_GOALS
 from ....shared.health_metrics import HEALTH_BASELINE_DAYS
 from ....shared.units import fmt_clock
 
+SHORT_GOALS = frozenset({"5K", "10K"})   # key run = tempo/threshold steps (longer goals: the long run)
 NIGGLE_RE = re.compile(r"\b(pain|painful|sore|soreness|niggle|tight|tightness|calf|achilles|knee|shin|injur\w*)\b",
                        re.IGNORECASE)
+
+# The coach sees weekly rows and comments for the most recent weeks only; progress, capacity,
+# pacing and patterns are computed over the full window, and the web charts show every week.
+LLM_RECENT_WEEKS = 8
+
+
+def llm_comments(rows: list[dict], recent_weeks: int = LLM_RECENT_WEEKS) -> list[str]:
+    """Athlete comments for the coach: every comment from the recent weeks plus older niggle
+    comments (injury context), each capped like a calendar note."""
+    cutoff = len(rows) - recent_weeks
+    return [
+        truncate_note(c)
+        for i, r in enumerate(rows)
+        for c in r["comments"]
+        if i >= cutoff or NIGGLE_RE.search(c)
+    ]
 
 # Key-run Pa:Hr: which sessions carry the goal-specific durability signal.
 KEY_BAND_PCT = (87.0, 102.0)                     # tempo/marathon + threshold bands (% threshold pace)

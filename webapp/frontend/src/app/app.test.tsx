@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App";
-import { Dashboard } from "./Dashboard";
+import { Dashboard, auditScheduleAction } from "./Dashboard";
 import { DEMO_ME_ONBOARDING, DEMO_ME_READY } from "../demo/fixtures";
 import * as api from "../shared/api";
 import { ApiError, fetchMe, onSessionExpired, parseSseFrame } from "../shared/api";
@@ -105,7 +105,7 @@ describe("app shell & conversation lifecycle", () => {
       screen.getByText(/Last 6 months · progress, load capacity, pacing/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Audit Schedule – Current Week"),
+      screen.getByText(auditScheduleAction(DEMO_ME_READY.summary).title),
     ).toBeInTheDocument();
 
     // Clicking Check-In starts a new conversation (sessionId: null -> sess-1)
@@ -114,7 +114,11 @@ describe("app shell & conversation lifecycle", () => {
       expect(screen.getByText("Reply sess-1")).toBeInTheDocument(),
     );
     expect(streamChatSpy).toHaveBeenLastCalledWith(
-      { message: "Checking in", sessionId: null },
+      {
+        message: "Checking in",
+        sessionId: null,
+        action: { skill: "check-in-report" },
+      },
       expect.any(Object),
     );
 
@@ -138,7 +142,11 @@ describe("app shell & conversation lifecycle", () => {
       expect(screen.getByText("Reply sess-2")).toBeInTheDocument(),
     );
     expect(streamChatSpy).toHaveBeenLastCalledWith(
-      { message: "Analyze today's run", sessionId: null },
+      {
+        message: "Analyze today's run",
+        sessionId: null,
+        action: { skill: "workout-analysis", date_str: "today", sport: "run" },
+      },
       expect.any(Object),
     );
     expect(screen.queryByText("What about Tuesday?")).not.toBeInTheDocument();
@@ -157,6 +165,7 @@ describe("app shell & conversation lifecycle", () => {
       {
         message: "Trend analysis for the past 6 months",
         sessionId: "fresh-1",
+        action: { skill: "trend-analysis", weeks: 26 },
       },
       expect.any(Object),
     );
@@ -171,5 +180,57 @@ describe("app shell & conversation lifecycle", () => {
       { message: "And my easy pace?", sessionId: "fresh-1" },
       expect.any(Object),
     );
+  });
+});
+
+describe("auditScheduleAction", () => {
+  // Friday 2026-11-06 (local) -> Monday 2026-11-02; 8-week cap ends Sunday 2026-12-27.
+  const now = new Date(2026, 10, 6, 12);
+  const summary = (active_date: string | null, active_goal = "Sub-1:26 Half Marathon") => ({
+    ...DEMO_ME_READY.summary!,
+    active_goal,
+    active_date,
+  });
+
+  it("falls back to the current-week audit without an upcoming race", () => {
+    for (const s of [null, summary(null), summary("TBD"), summary("2026-11-05")]) {
+      const action = auditScheduleAction(s, now);
+      expect(action.title).toBe("Audit Schedule – Current Week");
+      expect(action.prompt).toBe("Audit my schedule for this week");
+      expect(action.action).toEqual({ skill: "schedule-audit" });
+    }
+  });
+
+  it("audits from Monday of the current week until race day within 4 weeks", () => {
+    const action = auditScheduleAction(summary("2026-11-22"), now);
+    expect(action.title).toBe("Audit Schedule – Until Race Day");
+    expect(action.action).toEqual({
+      skill: "schedule-audit",
+      start_date: "2026-11-02",
+      end_date: "2026-11-22",
+    });
+    // Dates travel as structured arguments, never as instructions for the LLM.
+    expect(action.prompt).not.toContain("start_date=");
+    expect(action.prompt).toContain("Sub-1:26 Half Marathon");
+    expect(action.subtitle).toContain("Sub-1:26 Half Marathon");
+
+    // Race today and race exactly on the cap boundary are both uncapped.
+    expect(auditScheduleAction(summary("2026-11-06"), now).action).toMatchObject({
+      end_date: "2026-11-06",
+    });
+    expect(auditScheduleAction(summary("2026-11-29"), now).title).toBe(
+      "Audit Schedule – Until Race Day",
+    );
+  });
+
+  it("caps the window at 4 weeks for distant races", () => {
+    const action = auditScheduleAction(summary("2027-03-14"), now);
+    expect(action.title).toBe("Audit Schedule – Next 4 Weeks");
+    expect(action.action).toEqual({
+      skill: "schedule-audit",
+      start_date: "2026-11-02",
+      end_date: "2026-11-29",
+    });
+    expect(action.prompt).toContain("race on 2027-03-14");
   });
 });

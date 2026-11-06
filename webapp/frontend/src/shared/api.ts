@@ -5,6 +5,7 @@ import type {
   MessageKind,
   ProfileResponse,
   ProfileUpdatePayload,
+  QuickAction,
   ReportEnvelope,
   SessionResponse,
   ToolChip,
@@ -163,7 +164,12 @@ export function parseSseFrame(
 }
 
 export async function streamChat(
-  params: { message: string; sessionId?: string | null; signal?: AbortSignal },
+  params: {
+    message: string;
+    sessionId?: string | null;
+    action?: QuickAction;
+    signal?: AbortSignal;
+  },
   handlers: ChatStreamHandlers,
 ): Promise<void> {
   if (isDemoMode()) {
@@ -182,6 +188,8 @@ export async function streamChat(
     body: JSON.stringify({
       message: params.message,
       session_id: params.sessionId ?? null,
+      // Feature buttons only: the agent dispatches the skill without LLM routing.
+      ...(params.action ? { action: params.action } : {}),
     }),
   });
 

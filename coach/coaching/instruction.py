@@ -12,16 +12,18 @@ from ...shared.goal_plan import (
     north_star,
     sub_goals_missing_result,
 )
-from ...shared.goal_plan_summary import format_goal_plan
+from .goal_plan_summary import format_goal_plan
+from .quick_actions import is_quick_action_report
 
 _COACH_ROLE = (
     "You are an expert running coach and exercise physiologist. Your coaching is analytical, direct, "
     "and grounded strictly in sports science and physiological data."
 )
 
-# Static coaching rules; `build_coach_instruction` adds the profile-based header and, for goal
-# plans only, `_GOAL_PLAN_LENS`. Sent on every model call, so keep them tight: task-specific
-# analysis guidance belongs in the skills.
+# Static coaching rules. Everything derived from the runner's profile (summary, goal plan,
+# `_GOAL_PLAN_LENS`, notices) is built by `build_profile_context` and injected exactly once per
+# model call by the `ensure_profile_context` callback. Sent on every model call, so keep them
+# tight: task-specific analysis guidance belongs in the skills.
 _ROUTING_RULES = """
     SKILL ROUTING: in the SAME step, call `load_skill` AND the skill's data tool in parallel
     (e.g. load_skill("check-in-report") + fetch_checkin_data()), then follow the skill's protocol exactly
@@ -35,7 +37,7 @@ _ROUTING_RULES = """
                                       -> trend-analysis        -> fetch_trend_data
     - Review / audit the plan         -> schedule-audit        -> fetch_schedule_audit_data
     - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
-    - Create/change workouts or notes -> workout-creator       -> fetch_schedule_audit_data, then create_workout / create_note
+    - Create/change workouts or notes -> workout-creator       -> create_workout / create_note (writes immediately; reports load warnings)
     Do not reload a skill whose instructions are already in this conversation; just call its data tool.
     New goal (the runner accepts setting one) -> request_new_goal. Ad-hoc weather -> get_weather.
 
@@ -87,6 +89,16 @@ _CONTRACT_RULES = """
 """
 
 
+# Delimiters of the profile block in the system instruction; `ensure_profile_context` replaces
+# an existing block instead of appending a second one.
+PROFILE_CONTEXT_START = "<runner_profile>"
+PROFILE_CONTEXT_END = "</runner_profile>"
+
+
+def _present(value: Any) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
 def _goal_line(profile: dict, today: Optional[date]) -> str:
     """Goal line: the single goal, or the current block plus the north star for a plan."""
     goal = current_goal(profile, today)
@@ -101,20 +113,48 @@ def _goal_line(profile: dict, today: Optional[date]) -> str:
     )
 
 
+def _block_line(profile: dict, today: Optional[date]) -> str:
+    """Current block details: race name, start date and taper override ('' when none are set)."""
+    goal = current_goal(profile, today)
+    parts = []
+    if _present(goal.get("race_name")):
+        parts.append(f"Race: {goal['race_name']}")
+    if _present(goal.get("goal_set_date")):
+        parts.append(f"Block start: {goal['goal_set_date']}")
+    if _present(goal.get("taper_weeks")):
+        parts.append(f"Taper override: {goal['taper_weeks']} weeks")
+    return f"Current Block: {', '.join(parts)}" if parts else ""
+
+
 def format_profile_summary(profile: dict, today: Optional[date] = None) -> str:
-    """Formats a slim, token-efficient markdown summary of the runner's profile."""
+    """Formats a token-efficient summary of every coaching-relevant profile field.
+
+    Empty fields are omitted. Identity plumbing (email, coordinates, onboarding flags) is left out.
+    """
     if not profile:
         return ""
-    return (
-        f"Name: {profile.get('firstname')} {profile.get('lastname')} (Age: {profile.get('age')})\n"
-        f"Location: {profile.get('location')}\n"
-        f"Stats: Height: {profile.get('height')}, Weight: {profile.get('weight')}\n"
-        f"{_goal_line(profile, today)}\n"
-        f"Recent Races: {profile.get('recent_race_times')}\n"
-        f"Injuries: {profile.get('injuries')}\n"
-        f"Cross-Training: {profile.get('cross_training_strength')}\n"
-        f"Shoe Rotation: {profile.get('shoe_rotation')}"
+    name = " ".join(str(profile[k]).strip() for k in ("firstname", "lastname") if _present(profile.get(k)))
+    age = f" (Age: {profile['age']})" if _present(profile.get("age")) else ""
+    stats = ", ".join(
+        f"{label}: {profile[key]}" for label, key in (("Height", "height"), ("Weight", "weight"))
+        if _present(profile.get(key))
     )
+    lines = [
+        f"Name: {name}{age}" if name or age else "",
+        f"Location: {profile['location']}" if _present(profile.get("location")) else "",
+        f"Stats: {stats}" if stats else "",
+        _goal_line(profile, today),
+        _block_line(profile, today),
+    ]
+    for label, key in (
+        ("Recent Races", "recent_race_times"),
+        ("Injuries", "injuries"),
+        ("Cross-Training", "cross_training_strength"),
+        ("Shoe Rotation", "shoe_rotation"),
+    ):
+        if _present(profile.get(key)):
+            lines.append(f"{label}: {profile[key]}")
+    return "\n".join(line for line in lines if line)
 
 
 def final_race_notice(race_date: str) -> str:
@@ -152,24 +192,27 @@ def goal_notice(profile: dict, today: Any = None) -> str:
     return ""
 
 
-def build_coach_instruction(ctx: ReadonlyContext) -> str:
-    """InstructionProvider: the coach instruction, derived from `user_profile` on every model call.
+def build_profile_context(profile: dict, today: Optional[date] = None) -> str:
+    """The delimited profile block: summary, goal plan (+ lens) and date-driven notices.
 
-    State only holds the stored profile; the date, profile summary, goal plan and notices
-    are computed here so nothing is duplicated in session state.
+    Computed from the stored profile on every model call, so nothing is duplicated in session
+    state or history. Injected only by `ensure_profile_context`.
     """
-    profile = ctx.state.get("user_profile") or {}
-    today = get_today_date()
-    sections = [
-        _COACH_ROLE,
-        f"Today's date is {get_today_str(with_weekday=True)}.",
-        f"RUNNER PROFILE:\n{format_profile_summary(profile, today)}",
-    ]
+    today = today or get_today_date()
+    sections = [f"RUNNER PROFILE:\n{format_profile_summary(profile, today)}"]
     goal_plan = format_goal_plan(profile, today)
     if goal_plan:
-        sections.append(goal_plan)
+        sections.extend([goal_plan, _GOAL_PLAN_LENS.strip("\n")])
     notice = goal_notice(profile, today)
     if notice:
         sections.append(notice)
-    rules = _ROUTING_RULES + (_GOAL_PLAN_LENS if goal_plan else "") + _CONTRACT_RULES
-    return "\n\n".join(sections) + "\n" + rules
+    return f"{PROFILE_CONTEXT_START}\n" + "\n\n".join(sections) + f"\n{PROFILE_CONTEXT_END}"
+
+
+def build_coach_instruction(ctx: ReadonlyContext) -> str:
+    """InstructionProvider: role, date and rules. The profile block is added by `ensure_profile_context`."""
+    sections = [_COACH_ROLE, f"Today's date is {get_today_str(with_weekday=True)}."]
+    # A web quick action's report call already holds its skill and data and cannot call tools,
+    # so the routing rules are omitted there (typed chat turns always get them).
+    routing = "" if is_quick_action_report(ctx.state, getattr(ctx, "invocation_id", None)) else _ROUTING_RULES
+    return "\n\n".join(sections) + "\n" + routing + _CONTRACT_RULES

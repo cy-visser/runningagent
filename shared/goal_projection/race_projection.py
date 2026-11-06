@@ -3,11 +3,11 @@ from typing import Any, Optional
 
 from google.adk.tools import ToolContext
 
-from ....shared.athlete_settings import extract_thresholds
-from ....shared.dates import parse_date
-from ....shared.goal_distance import DISTANCE_PROFILES, parse_target_time_minutes
-from ....shared.goal_plan import current_goal, goal_race_dates
-from ....shared.hr_pace_fit import (
+from ..athlete_settings import extract_thresholds
+from ..dates import parse_date
+from ..goal_distance import DISTANCE_PROFILES, parse_target_time_minutes
+from ..goal_plan import current_goal, goal_race_dates
+from ..hr_pace_fit import (
     MAX_EXTRAPOLATION,
     THRESHOLD_AGREEMENT,
     evidence_date,
@@ -16,9 +16,9 @@ from ....shared.hr_pace_fit import (
     steady_lap_points,
     threshold_lap_stats,
 )
-from ....shared.race_equivalents import riegel_predict
-from ....shared.runner_identity import profile_user_id
-from ....shared.units import format_seconds_hms
+from ..race_equivalents import riegel_predict
+from ..runner_identity import profile_user_id
+from ..units import format_seconds_hms
 from .goal_trajectory import SAFE_RAMP_PER_WEEK
 from .health_flag import (
     _fmt_day,
