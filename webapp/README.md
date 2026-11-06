@@ -1,12 +1,12 @@
 # AI Running Coach — Cloud Run Web App (`webapp/`)
 
-This directory contains the standalone web UI and FastAPI BFF for the **AI Running Coach**, deployed to **Cloud Run** behind **Identity-Aware Proxy (IAP)** and backed by the same **Vertex AI Agent Runtime** engine used by Gemini Enterprise.
+This directory contains the web UI and FastAPI BFF for the **AI Running Coach**, deployed to **Cloud Run** behind **Identity-Aware Proxy (IAP)** and backed by **Vertex AI Agent Runtime**.
 
 ---
 
 ## Architecture
 
-- **Frontend (`frontend/`)**: React 19 + TypeScript + Vite + Tailwind v4 + lazy-loaded Recharts (`@fontsource/space-grotesk` & `@fontsource/inter` self-hosted for strict CSP).
+- **Frontend (`frontend/`)**: React 19 + TypeScript + Vite + Tailwind v4 + lazy-loaded Recharts (`@fontsource/space-grotesk` & `@fontsource/inter` self-hosted for strict CSP), organized into `src/app/` (shell & conversation), `src/features/{check_in_report,trend_analysis,schedule_audit,profile}/`, and `src/shared/`.
 - **Backend (`backend/`)**: FastAPI + Uvicorn serving static SPA assets and `/api/*`:
   - Verifies Cloud Run Direct IAP ES256 JWT assertions (`X-Goog-IAP-JWT-Assertion`) against Google's public JWK keyset.
   - Reads and edits runner profiles in Firestore (`users/{runner_id}`), keeping `firstname`, `lastname`, and `email` immutable.
@@ -25,7 +25,7 @@ npm install
 npm run dev:demo
 ```
 
-Open `http://localhost:5173` (supports `?view=ready`, `?view=onboarding`, `?view=checkin`, `?view=trend`, and `?view=profile`).
+Open `http://localhost:5173` (supports `?view=ready`, `?view=onboarding`, `?view=checkin`, `?view=trend`, `?view=audit`, and `?view=profile`).
 
 ### 2. Full Local Stack (FastAPI Dev Mode + Vite Proxy)
 
@@ -50,10 +50,10 @@ npm run dev
 ## Tests
 
 ```bash
-# Backend unit tests
+# Backend behavioural tests (4 tests)
 cd backend && pytest tests/ -q
 
-# Frontend unit tests + TypeScript production build
+# Frontend co-located tests (5 tests) + TypeScript production build
 cd frontend && npm test -- --run && npm run build
 ```
 
@@ -65,7 +65,7 @@ From `running_coach/`:
 
 ```bash
 # Deploy Agent Runtime + Cloud Run Web App (IAP enabled)
-./deploy.sh --target web
+./deploy.sh
 
 # Or deploy Web App only (reusing existing Agent Runtime revision)
 ./webapp/deploy.sh

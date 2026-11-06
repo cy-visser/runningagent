@@ -2,17 +2,16 @@
 
 An AI Running Coach and Exercise Physiologist built using the Google ADK framework. The coach integrates directly with **TrainingPeaks** (to fetch workouts, physiological metrics, and calendar notes), **Open-Meteo** (for hourly weather correlation), and **Google Cloud Firestore** (for session state persistence, per-runner KMS-encrypted credentials, and a structured training log).
 
-When deployed, the shared **Vertex AI Agent Runtime** engine can be surfaced through either or both front ends:
-1. **Gemini Enterprise** (`--target ge`) — conversational A2A coaching inside Gemini Enterprise.
-2. **Cloud Run Web App** (`--target web`) — a dedicated React + FastAPI web application behind **Cloud Run Identity-Aware Proxy (IAP)** with interactive fitness charts, profile & goal-plan editing, and self-service TrainingPeaks onboarding.
+In production, the **Vertex AI Agent Runtime** engine is served through the **Cloud Run Web App** (`webapp/`) behind **Cloud Run Identity-Aware Proxy (IAP)** with interactive fitness charts, profile & goal-plan editing, and self-service TrainingPeaks onboarding.
 
 ---
 
 ## Features
-*   **Dual Front-End Support (`ge` | `web` | `both`)**: One ADK agent on Vertex AI Agent Runtime serves both Gemini Enterprise and the Cloud Run Web App.
+*   **Cloud Run Web App (`webapp/`)**: React + FastAPI web application behind Direct IAP backed by Vertex AI Agent Runtime.
+*   **Feature-Sliced Codebase**: Clear vertical slices (`features/<feature>/`) mapping each skill (`SKILL.md`) to its tool (`*_tool.py`), private helpers (`helpers/`), shared domain modules (`shared/`), and external integrations (`integrations/`), enforced by `tests/test_structure.py`.
 *   **Per-Runner KMS Credential Isolation**: Each runner links their own TrainingPeaks cookie in the Web App, encrypted with **Cloud KMS** (`AAD = b"users/{runner_id}"`) in `users/{runner_id}/private/trainingpeaks`.
-*   **Multi-Agent Orchestration**: Deterministic email-based routing between onboarding (profile & goal-plan creation) and coaching.
-*   **Interactive Visual Reports (Web App)**: Structured `checkin_report_data` and `trend_report_data` session state payloads render 90-day PMC charts, Sunset CTL progress rings, race-day projections, and 6-month load-capacity ladders alongside coaching prose.
+*   **Multi-Agent Orchestration (`coach/`)**: Deterministic email-based routing between onboarding (profile & goal-plan creation) and coaching.
+*   **Interactive Visual Reports**: Structured `checkin_report_data`, `trend_report_data`, and `audit_report_data` session state payloads render 90-day PMC charts, Sunset CTL progress rings, race-day projections, schedule-audit calendars, and 6-month load-capacity ladders alongside coaching prose.
 *   **Hourly Weather & Travel Context**: Correlates run splits with exact-hour Open-Meteo weather and scans calendar notes for travel.
 *   **Training Log & 6-Month Trend Analysis**: Stores deterministic workout records in `users/{id}/training_log` for long-horizon efficiency, decoupling, and weekly volume durability analysis.
 
@@ -60,16 +59,16 @@ PYTHONPATH=/app/agents/running_coach
 
 ## Testing
 
-Unit tests cover the agent (`tests/`), the web backend (`webapp/backend/tests/`), and the React frontend (`webapp/frontend/src/__tests__/`), requiring no live network access:
+Behavioural feature tests and architectural structure checks cover the agent (`tests/`), the web backend (`webapp/backend/tests/`), and the React frontend (`webapp/frontend/src/`), requiring no live network access:
 
 ```bash
-# Agent unit tests
+# Agent behavioural + structure tests (10 tests)
 python -m pytest tests/ -q
 
-# Web backend unit tests
-python -m pytest webapp/backend/tests/ -q
+# Web backend tests (4 tests)
+(cd webapp/backend && python -m pytest tests/ -q)
 
-# Web frontend unit tests + production bundle check
+# Web frontend tests (5 co-located tests) + production bundle check
 cd webapp/frontend && npm test -- --run && npm run build
 ```
 
@@ -98,7 +97,7 @@ terraform init
 terraform apply
 ```
 *Provisions:*
-*   **APIs**: Vertex AI, Discovery Engine, Cloud Run, Cloud Build, Artifact Registry, IAP, Cloud KMS, Firestore, Cloud Trace, Cloud Logging.
+*   **APIs**: Vertex AI, Cloud Run, Cloud Build, Artifact Registry, IAP, Cloud KMS, Firestore, Cloud Trace, Cloud Logging.
 *   **Service Accounts**:
     *   `running-coach-agent@...` (Agent Runtime — `roles/cloudkms.cryptoKeyDecrypter`, Firestore, Vertex AI, Trace/Logs).
     *   `running-coach-web@...` (Cloud Run Web App — `roles/cloudkms.cryptoKeyEncrypter`, Firestore, `aiplatform.user`).
@@ -106,7 +105,7 @@ terraform apply
 *   **Firestore Indexes & TTL**: `training_log` date index, `users.email` index, and `workout_analyses` TTL policy.
 *   **Traces Bucket**: `gs://traces_runningagent` for GenAI prompt/response completion logs.
 
-### Phase 2: Deploy Agent Runtime & Chosen Front End (`ge` | `web` | `both`)
+### Phase 2: Deploy Agent Runtime & Cloud Run Web App
 ```bash
 cd ..
 chmod +x deploy.sh
@@ -114,14 +113,8 @@ chmod +x deploy.sh
 # Dry-run preflight check:
 ./deploy.sh --dry-run
 
-# Deploy Agent Runtime + Cloud Run Web App (behind IAP) (default):
+# Deploy Agent Runtime + Cloud Run Web App (behind IAP):
 ./deploy.sh
-
-# Deploy Agent Runtime + Gemini Enterprise registration:
-./deploy.sh --target ge
-
-# Deploy Agent Runtime + BOTH Gemini Enterprise and Cloud Run Web App:
-./deploy.sh --target both
 ```
 
 Grant IAM users access to the Cloud Run Web App via IAP:

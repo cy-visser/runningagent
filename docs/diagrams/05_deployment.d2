@@ -23,17 +23,16 @@ tooling: "Deploy tooling" {
   style.fill: "#f8f9fa"
   style.stroke: "#bdc1c6"
   tf: "Terraform\n(APIs, SAs, KMS key,\nFirestore indexes, traces)" {class: tool}
-  deploy: "deploy.sh\n(--target ge | web | both)" {class: tool}
+  deploy: "deploy.sh\n([--dry-run])" {class: tool}
 }
 
 gcp: "Google Cloud project (europe-west4)" {
   style.fill: "#f8f9fa"
   style.stroke: "#bdc1c6"
 
-  ge: "Gemini Enterprise app\n\"Running Coach\"" {class: compute}
   webapp: "Cloud Run: running-coach-web\n(Direct IAP --no-allow-unauthenticated)" {class: web}
 
-  runtime: "Vertex AI Agent Runtime\n(container: adk api_server --a2a)" {
+  runtime: "Vertex AI Agent Runtime\n(container: adk api_server)" {
     class: compute
     agent: "Running Coach agent" {class: core}
     mcp: "tp-mcp pool\n(per-runner stdio)" {class: tool}
@@ -53,7 +52,6 @@ gcp: "Google Cloud project (europe-west4)" {
     gcs: "gs://traces_runningagent\n(prompt/response JSONL)" {class: data}
   }
 
-  ge -> runtime.agent: "A2A"
   webapp -> runtime.agent: "/run_sse"
   webapp -> web_sa: "runs as" {style.stroke-dash: 3}
   runtime -> agent_sa: "runs as" {style.stroke-dash: 3}
@@ -69,6 +67,5 @@ gcp: "Google Cloud project (europe-west4)" {
 dev -> tooling.tf
 dev -> tooling.deploy
 tooling.tf -> gcp: "provision"
-tooling.deploy -> gcp.runtime: "always deploy agent"
-tooling.deploy -> gcp.ge: "--target ge|both"
-tooling.deploy -> gcp.webapp: "--target web|both"
+tooling.deploy -> gcp.runtime: "1. deploy agent"
+tooling.deploy -> gcp.webapp: "2. deploy web app"

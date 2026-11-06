@@ -23,7 +23,6 @@ gcp: "Google Cloud (europe-west4)" {
   style.fill: "#f8f9fa"
   style.stroke: "#bdc1c6"
 
-  ge: "Gemini Enterprise app\n(Running Coach)" {class: compute}
   webapp: "Cloud Run Web App\n(running-coach-web + IAP)" {class: web}
   runtime: "Vertex AI Agent Runtime" {
     class: compute
@@ -33,7 +32,6 @@ gcp: "Google Cloud (europe-west4)" {
   gemini: "Gemini on Vertex AI" {class: ai}
   firestore: "Firestore Enterprise\n(profiles, KMS creds, sessions, log)" {class: data}
 
-  ge -> runtime.core: "A2A"
   webapp -> runtime.core: "HTTPS /run_sse"
   webapp -> firestore: "profiles + KMS ciphertext"
   webapp -> kms: "encrypt cookie"
@@ -50,7 +48,6 @@ external: "External services" {
   meteo: "Open-Meteo\n(geocoding, weather)" {class: ext}
 }
 
-runner -> gcp.ge: "chat"
 runner -> gcp.webapp: "HTTPS (IAP)"
 gcp.webapp -> external.tp: "validate cookie"
 gcp.runtime.core -> external.tp: "MCP (tp-mcp)"

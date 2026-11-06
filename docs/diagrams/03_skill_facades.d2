@@ -9,55 +9,42 @@ vars: {
 classes: {
   skill: {style.fill: "#f3e8fd"; style.stroke: "#8430ce"; style.border-radius: 6}
   facade: {style.fill: "#e8f0fe"; style.stroke: "#1a73e8"; style.border-radius: 6}
+  helper: {style.fill: "#ffffff"; style.stroke: "#5f6368"; style.border-radius: 6}
   ext: {style.fill: "#fce8e6"; style.stroke: "#c5221f"; style.border-radius: 6}
   data: {shape: cylinder; style.fill: "#fff8e1"; style.stroke: "#f9ab00"}
   ai: {style.fill: "#e6f4ea"; style.stroke: "#137333"; style.border-radius: 6; style.bold: true}
 }
 
-coach: "coaching_agent\n(Gemini flash)" {class: ai}
+coach: "coach/coaching/\ncoaching_agent" {class: ai}
 
-skills: "1. Skills (protocol + output format)" {
+features: "features/<feature>/ (skill + tool + private helpers)" {
   style.fill: "#f8f9fa"
   style.stroke: "#bdc1c6"
-  wa: "workout-analysis" {class: skill}
-  bwa: "bike-workout-analysis" {class: skill}
-  ci: "check-in-report" {class: skill}
-  ta: "trend-analysis" {class: skill}
-  sa: "schedule-audit" {class: skill}
-  np: "nutrition-planner" {class: skill}
-  wc: "workout-creator" {class: skill}
+
+  ci: "check_in_report/\ncheck-in-report/SKILL.md\nfetch_checkin_data_tool.py + helpers/" {class: facade}
+  ta: "trend_analysis/\ntrend-analysis/SKILL.md\nfetch_trend_data_tool.py + helpers/" {class: facade}
+  wa: "workout_analysis/\nworkout-analysis + bike-workout-analysis\nanalyze_workout_tool.py + helpers/" {class: facade}
+  sa: "schedule_audit/\nschedule-audit/SKILL.md\nfetch_schedule_audit_data_tool.py + helpers/" {class: facade}
+  np: "nutrition_planner/\nnutrition-planner/SKILL.md\nfetch_nutrition_context_tool.py + helpers/" {class: facade}
+  wc: "workout_creator/\nworkout-creator/SKILL.md\ncreate_workout_tool.py + create_note_tool.py" {class: facade}
+  wl: "weather_lookup/\nget_weather_tool.py" {class: facade}
 }
 
-facades: "2. Facade tools (one per skill, parallel fetch + maths in code)" {
+shared: "shared/\n(domain helpers used by 2+ features)" {class: helper}
+
+integrations: "integrations/ (external I/O)" {
   style.fill: "#f8f9fa"
   style.stroke: "#bdc1c6"
-  analyze: "analyze_workout (+ training-log record)\nworkout, analysis, settings, recovery, fitness, weather" {class: facade}
-  checkin: "fetch_checkin_data\nworkouts, notes, metrics, fitness, cached analyses, weather" {class: facade}
-  trend: "fetch_trend_data (+ gap-fill)\ntraining log, fitness, metrics, settings" {class: facade}
-  audit: "fetch_schedule_audit_data\nworkouts, calendar notes per ISO week" {class: facade}
-  nutrition: "fetch_nutrition_context\nupcoming workouts, forecast" {class: facade}
-  create: "create_workout / create_note\nduplicate check, create or update" {class: facade}
+  tp: "trainingpeaks/\n(credentials, mcp_toolsets, tp_calls)" {class: ext}
+  meteo: "open_meteo.py" {class: ext}
+  fs: "firestore.py\n(profiles, training_log, cache)" {class: data}
 }
 
-backends: "Backends" {
-  style.fill: "#f8f9fa"
-  style.stroke: "#bdc1c6"
-  tp: "TrainingPeaks\n(tp-mcp, stdio)" {class: ext}
-  meteo: "Open-Meteo" {class: ext}
-  fs: "Firestore\n(training log, analysis cache)" {class: data}
-}
-
-coach -> skills: "load_skill(name)"
-coach -> facades: "1 tool call" {style.bold: true}
-
-skills.wa -> facades.analyze
-skills.bwa -> facades.analyze
-skills.ci -> facades.checkin
-skills.ta -> facades.trend
-skills.sa -> facades.audit
-skills.np -> facades.nutrition
-skills.wc -> facades.create
-
-facades -> backends.tp: "many MCP calls"
-facades -> backends.meteo
-facades -> backends.fs
+coach -> features: "load_skill + 1 tool call" {style.bold: true}
+features -> shared
+features -> integrations.tp
+features -> integrations.meteo
+features -> integrations.fs
+shared -> integrations.tp
+shared -> integrations.meteo
+shared -> integrations.fs
