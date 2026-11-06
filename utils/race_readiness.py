@@ -96,6 +96,11 @@ HEAVY_TSB = -10.0
 HEAVY_ATL_CTL = 1.15
 RACE_WEEK_DAYS = 7
 MAX_HEALTH_PENALTY = 0.02
+# A recent race or unusually big day explains suppressed HRV/RHR during its recovery window, even
+# when the PMC looks fresh (one session after a taper barely moves ATL/TSB).
+HARD_EFFORT_LOOKBACK_DAYS = 21
+HARD_EFFORT_TSS_X_CTL = 2.5
+RECOVERY_DAYS_BY_KM = ((40.0, 14), (21.0, 10), (10.0, 5), (0.0, 3))
 
 # Blend
 SIGNAL_WEIGHTS = {"threshold": 0.35, "goal_pace": 0.30, "hr_efficiency": 0.20, "race": 0.15}
@@ -274,36 +279,52 @@ def _evidence_date(summary: dict) -> Optional[date]:
     return parse_date(summary.get("date"))
 
 
+def threshold_lap_stats(
+    summaries: list[dict], lthr: Optional[float], tp_speed: Optional[float]
+) -> Optional[dict]:
+    """Duration-weighted speed and %LTHR of threshold laps (goal-independent).
+
+    Threshold laps: 8-40 min at 88-102% LTHR and, when a TP threshold pace is set,
+    within 10% of it. Callers pass only the summaries that may contain them.
+    """
+    if not lthr:
+        return None
+    total_s = weighted = hr_weighted = 0.0
+    latest: Optional[date] = None
+    for s in summaries:
+        for lap in s.get("laps", []):
+            pct = _pct(lap.get("hr"), lthr)
+            d = lap.get("duration_s") or 0
+            if (pct is None or not lap.get("speed_ms")
+                    or not THRESHOLD_LAP_MIN_S <= d <= THRESHOLD_LAP_MAX_S
+                    or not THRESHOLD_HR_BAND[0] <= pct <= THRESHOLD_HR_BAND[1]
+                    or (tp_speed and abs(lap["speed_ms"] / tp_speed - 1) > THRESHOLD_PACE_BAND)):
+                continue
+            total_s += d
+            weighted += lap["speed_ms"] * d
+            hr_weighted += pct * d
+            ed = _evidence_date(s)
+            latest = max(latest, ed) if latest and ed else (ed or latest)
+    if not total_s:
+        return None
+    return {"speed": weighted / total_s, "pct": hr_weighted / total_s, "total_s": total_s, "latest": latest}
+
+
 def threshold_anchor(
     summaries: list[dict], goal_label: str, lthr: Optional[float], tp_speed: Optional[float]
 ) -> Optional[dict]:
     """S1: observed threshold speed from quality/race laps, reconciled with the TP setting."""
-    total_s = weighted = hr_weighted = 0.0
-    latest: Optional[date] = None
-    if lthr:
-        for s in summaries:
-            if classify_run(s | {"distance_actual_km": s.get("distance_km")}, goal_label) not in ("quality", "race"):
-                continue
-            for lap in s.get("laps", []):
-                pct = _pct(lap.get("hr"), lthr)
-                d = lap.get("duration_s") or 0
-                if (pct is None or not lap.get("speed_ms")
-                        or not THRESHOLD_LAP_MIN_S <= d <= THRESHOLD_LAP_MAX_S
-                        or not THRESHOLD_HR_BAND[0] <= pct <= THRESHOLD_HR_BAND[1]
-                        or (tp_speed and abs(lap["speed_ms"] / tp_speed - 1) > THRESHOLD_PACE_BAND)):
-                    continue
-                total_s += d
-                weighted += lap["speed_ms"] * d
-                hr_weighted += pct * d
-                ed = _evidence_date(s)
-                latest = max(latest, ed) if latest and ed else (ed or latest)
+    quality = [
+        s for s in summaries
+        if classify_run(s | {"distance_actual_km": s.get("distance_km")}, goal_label) in ("quality", "race")
+    ]
+    stats = threshold_lap_stats(quality, lthr, tp_speed)
 
     tp_str = f"TP setting {format_pace(tp_speed)}" if tp_speed else "no TP threshold pace"
-    if total_s:
-        observed = weighted / total_s
-        mean_pct = hr_weighted / total_s
-        evidence = (f"{round(total_s / 60)}' of threshold laps @ {format_pace(observed)}, "
-                    f"{round(mean_pct * 100)}% LTHR (latest {_fmt_day(latest)}); {tp_str}")
+    if stats:
+        observed, latest = stats["speed"], stats["latest"]
+        evidence = (f"{round(stats['total_s'] / 60)}' of threshold laps @ {format_pace(observed)}, "
+                    f"{round(stats['pct'] * 100)}% LTHR (latest {_fmt_day(latest)}); {tp_str}")
         if tp_speed and abs(observed / tp_speed - 1) <= THRESHOLD_AGREEMENT:
             return {"speed": (observed + tp_speed) / 2, "source": "observed+tp", "evidence": evidence, "date": latest}
         return {"speed": observed, "source": "observed", "evidence": evidence, "date": latest}
@@ -402,16 +423,21 @@ def goal_pace_candidate(segments: list[dict]) -> Optional[dict]:
     return {"speed": speed, "evidence": evidence, "date": max(seg["date"] or date.min for seg in segments)}
 
 
-def hr_efficiency_candidate(summaries: list[dict], goal_label: str, lthr: Optional[float]) -> Optional[dict]:
-    """S3: weighted linear fit of speed vs HR over steady laps, evaluated at race HR."""
+def steady_lap_points(summaries: list[dict], lthr: Optional[float]) -> list[tuple[float, float, float, Optional[date]]]:
+    """(hr, speed_ms, duration_s, date) for steady laps: >= 8 min and >= 70% LTHR."""
     if not lthr:
-        return None
+        return []
     pts = []
     for s in summaries:
         for lap in s.get("laps", []):
             hr, speed, d = lap.get("hr"), lap.get("speed_ms"), lap.get("duration_s") or 0
             if hr and speed and d >= STEADY_LAP_MIN_S and hr >= STEADY_MIN_HR * lthr:
                 pts.append((hr, speed, d, _evidence_date(s)))
+    return pts
+
+
+def fit_speed_vs_hr(pts: list[tuple], lthr: float) -> Optional[dict]:
+    """Duration-weighted linear fit speed = my + slope * (hr - mx); None when not well-posed."""
     if len(pts) < MIN_REGRESSION_POINTS:
         return None
     hrs = [p[0] for p in pts]
@@ -424,10 +450,20 @@ def hr_efficiency_candidate(summaries: list[dict], goal_label: str, lthr: Option
     sxy = sum(p[2] * (p[0] - mx) * (p[1] - my) for p in pts)
     if sxx <= 0 or sxy <= 0:
         return None
-    slope = sxy / sxx
+    return {"mx": mx, "my": my, "slope": sxy / sxx, "hr_min": min(hrs), "hr_max": max(hrs), "n": len(pts)}
+
+
+def hr_efficiency_candidate(summaries: list[dict], goal_label: str, lthr: Optional[float]) -> Optional[dict]:
+    """S3: weighted linear fit of speed vs HR over steady laps, evaluated at race HR."""
+    if not lthr:
+        return None
+    pts = steady_lap_points(summaries, lthr)
+    fit = fit_speed_vs_hr(pts, lthr)
+    if not fit:
+        return None
     target_hr = DISTANCE_PROFILES[goal_label]["race_hr"] * lthr
-    capped_hr = min(target_hr, max(hrs) + MAX_EXTRAPOLATION * lthr)
-    speed = my + slope * (capped_hr - mx)
+    capped_hr = min(target_hr, fit["hr_max"] + MAX_EXTRAPOLATION * lthr)
+    speed = fit["my"] + fit["slope"] * (capped_hr - fit["mx"])
     if speed <= 0:
         return None
     dates = sorted(p[3] for p in pts if p[3])
@@ -472,6 +508,41 @@ def load_projection(ctl_now: Optional[float], trajectory_info: Optional[dict]) -
     return {"ctl_now": ctl_now, "ctl_race": ctl_race, "time_factor": factor}
 
 
+def _recovery_days(km: float) -> int:
+    return next(days for min_km, days in RECOVERY_DAYS_BY_KM if km >= min_km)
+
+
+def recent_hard_effort(
+    workouts: Optional[list[dict]],
+    today: date,
+    daily_pmc: Optional[list[dict]] = None,
+    race_dates: Any = (),
+) -> Optional[dict]:
+    """Most recent completed run whose recovery window still covers `today`, or None.
+
+    A run counts when it falls on a goal race date, is titled as a race, or its TSS is
+    >= HARD_EFFORT_TSS_X_CTL x the CTL of the day before (an unusually big day). The
+    recovery window scales with distance (RECOVERY_DAYS_BY_KM, e.g. 14 days after a marathon).
+    """
+    race_days = set(race_dates or ())
+    for w in completed_runs(workouts, today - timedelta(days=HARD_EFFORT_LOOKBACK_DAYS), today):
+        d = parse_date(w.get("date") or w.get("start_time"))
+        title = w.get("title") or ""
+        tss = _num(w.get("tss_actual")) or _num(w.get("tss")) or 0.0
+        ctl_before = ctl_on(daily_pmc, d - timedelta(days=1))
+        is_race = d in race_days or is_race_title(title)
+        big_day = bool(ctl_before) and tss >= HARD_EFFORT_TSS_X_CTL * ctl_before
+        if not (is_race or big_day):
+            continue
+        km = _num(w.get("distance_actual_km")) or 0.0
+        recovery = _recovery_days(km)
+        days_ago = (today - d).days
+        if days_ago <= recovery:
+            return {"title": title, "date": d, "days_ago": days_ago, "recovery_days": recovery,
+                    "is_race": is_race, "km": km, "tss": tss}
+    return None
+
+
 def health_readiness(
     dated_metrics: Optional[dict[str, list[tuple[date, float]]]],
     today: date,
@@ -479,8 +550,12 @@ def health_readiness(
     tsb: Optional[float],
     atl: Optional[float],
     ctl: Optional[float],
+    recent_effort: Optional[dict] = None,
 ) -> dict:
-    """S6: 5-day HRV/RHR/sleep vs 28-day baseline; load-aware in build, time-affecting in race week."""
+    """S6: 5-day HRV/RHR/sleep vs 28-day baseline; load-aware in build, time-affecting in race week.
+
+    `recent_effort` (from recent_hard_effort) explains poor markers during its recovery window.
+    """
     if not dated_metrics:
         return {"flag": "⚪", "markers": 0, "confidence_drop": False, "penalty": 0.0, "detail": "no health data"}
     recent_start = today - timedelta(days=HEALTH_WINDOW_DAYS - 1)
@@ -519,6 +594,12 @@ def health_readiness(
             penalty = min(MAX_HEALTH_PENALTY, MAX_HEALTH_PENALTY * markers / 3)
             return {"flag": "🔴", "markers": markers, "confidence_drop": True, "penalty": penalty,
                     "detail": f"{detail} — poor trend in race week (+{penalty * 100:.1f}% race-day)"}
+        if recent_effort:
+            e = recent_effort
+            ago = "today" if e["days_ago"] == 0 else f"{e['days_ago']} day{'s' if e['days_ago'] != 1 else ''} ago"
+            return {"flag": "🟡", "markers": markers, "confidence_drop": False, "penalty": 0.0,
+                    "detail": f"{detail} — recovery after '{e['title']}' ({_fmt_day(e['date'])}, {ago}; "
+                              f"typically ~{e['recovery_days']} days)"}
         if heavy:
             return {"flag": "🟡", "markers": markers, "confidence_drop": False, "penalty": 0.0,
                     "detail": f"{detail} — training-induced, expected to clear in taper"}
@@ -557,6 +638,7 @@ def project_race(
     dated_metrics: Optional[dict],
     today: date,
     block_start: Any = None,
+    race_dates: Any = (),
 ) -> Optional[dict]:
     """Blends all signals into 'today' and 'race-day' projections with drivers and confidence."""
     prof = DISTANCE_PROFILES[goal_label]
@@ -595,7 +677,8 @@ def project_race(
     weeks_remaining = info.get("weeks_remaining")
     days_to_race = weeks_remaining * 7 if weeks_remaining is not None else None
     load = load_projection(ctl_ref, trajectory_info)
-    health = health_readiness(dated_metrics, today, days_to_race, tsb_now, atl_now, ctl_now)
+    effort = recent_hard_effort(runs, today, daily_pmc, race_dates)
+    health = health_readiness(dated_metrics, today, days_to_race, tsb_now, atl_now, ctl_now, effort)
     race_day_s = today_s * load["time_factor"] * (1 + health["penalty"])
 
     # Confidence: agreement between signals, then downgrades.

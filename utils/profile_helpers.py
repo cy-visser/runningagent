@@ -4,11 +4,35 @@ from typing import Any, Optional
 from .date_helpers import get_today_str, parse_date
 from .goals import GOAL_TYPE_PLAN, GOAL_TYPE_SINGLE, KIND_NORTH_STAR, current_goal, north_star
 
+# ADK user-scoped state key set by the Cloud Run web backend on every turn with the IAP-verified email.
+AUTH_EMAIL_STATE_KEY = "user:auth_email"
+
 
 def normalize_timeline(timeline: Optional[str]) -> Optional[str]:
     """Returns the goal date as ISO (YYYY-MM-DD) when parseable, else the raw value."""
     parsed = parse_date(timeline) if timeline else None
     return parsed.isoformat() if parsed else timeline
+
+
+def normalize_email(email: Optional[str]) -> Optional[str]:
+    """Returns a canonical lowercase email address, or None when absent/invalid."""
+    clean = str(email or "").strip().lower()
+    if not clean or "@" not in clean or " " in clean:
+        return None
+    local, _, domain = clean.partition("@")
+    return clean if local and "." in domain else None
+
+
+def email_from_user_id(user_id: Optional[str]) -> Optional[str]:
+    """Extracts the runner email when ADK `user_id` is an email address (Gemini Enterprise).
+
+    Web sessions pass `user_id="web_<email>"` and carry the IAP-verified address in
+    `user:auth_email` instead, so `web_` prefixes are ignored here.
+    """
+    raw = str(user_id or "").strip()
+    if raw.lower().startswith("web_"):
+        return None
+    return normalize_email(raw)
 
 
 def get_user_id(firstname: Optional[str], lastname: Optional[str] = "") -> str:
@@ -25,15 +49,13 @@ def profile_user_id(profile: Optional[dict]) -> Optional[str]:
     return None if user_id == "_" else user_id
 
 
-def parse_runner_name(raw_name: Optional[str]) -> tuple[str, str, str]:
-    """Extracts (firstname, lastname, user_id) from a raw name string."""
-    clean_name = str(raw_name or "").strip()
-    if not clean_name:
-        return ("", "", "_")
-    parts = clean_name.split(maxsplit=1)
-    firstname = parts[0]
-    lastname = parts[1] if len(parts) > 1 else ""
-    return firstname, lastname, get_user_id(firstname, lastname)
+def needs_onboarding(profile: Optional[dict]) -> bool:
+    """True when a profile is missing or is a web skeleton (TrainingPeaks connected, no goal yet)."""
+    if not profile or profile.get("onboarding_pending"):
+        return True
+    has_single = bool(profile.get("training_goal") or profile.get("timeline"))
+    has_plan = bool((profile.get("north_star") or {}).get("goal"))
+    return not (has_single or has_plan)
 
 
 def _goal_line(profile: dict, today: Optional[date]) -> str:
@@ -66,25 +88,17 @@ def format_profile_summary(profile: dict, today: Optional[date] = None) -> str:
     )
 
 
-# ADK user-scoped state (shared across all sessions of the signed-in ADK user):
-# remembers which Firestore runner profile belongs to this user.
-RUNNER_ID_STATE_KEY = "user:runner_id"
-
-
 def sync_profile_to_state(ctx: Any, profile: dict) -> None:
-    """Sets user_profile and the user-scoped runner id in state.
+    """Stores `user_profile` in session state.
 
     Everything else the coach needs (date, summary, goal plan) is derived from the
     profile when the instruction is built, so it is not duplicated in state.
     """
     ctx.state["user_profile"] = profile
-    user_id = profile_user_id(profile)
-    if user_id and ctx.state.get(RUNNER_ID_STATE_KEY) != user_id:
-        ctx.state[RUNNER_ID_STATE_KEY] = user_id
 
 
 # Fields sourced from the runner's onboarding answers, falling back to data
-# already harvested from the TrainingPeaks profile.
+# already present on the profile skeleton.
 _MERGED_FIELDS = (
     "age",
     "height",
@@ -96,8 +110,8 @@ _MERGED_FIELDS = (
 )
 
 # Profile fields pre-filled from an existing profile so (re-)onboarding can
-# skip questions the runner has already answered.
-_PREFILL_FIELDS = ("firstname", "lastname", "location", *_MERGED_FIELDS)
+# skip questions the runner has already answered and preserve immutable identity fields.
+_PREFILL_FIELDS = ("firstname", "lastname", "email", "location", *_MERGED_FIELDS)
 
 # Current goal fields shown to the onboarding agent on re-onboarding (and used by
 # merge_profile_data to keep saved sub-goal results).
@@ -105,7 +119,7 @@ _GOAL_PREFILL_FIELDS = ("goal_type", "training_goal", "timeline", "north_star", 
 
 
 def onboarding_prefill(profile: dict) -> dict:
-    """Returns the temp_onboarding_data seed for re-onboarding an existing runner."""
+    """Returns the temp_onboarding_data seed for onboarding or re-onboarding a runner."""
     seed = {f: profile.get(f) for f in _PREFILL_FIELDS}
     seed.update({f: profile.get(f) for f in _GOAL_PREFILL_FIELDS if profile.get(f) is not None})
     return seed
@@ -158,14 +172,15 @@ def merge_profile_data(
     lon: Optional[float] = None,
     location: Optional[str] = None,
 ) -> dict:
-    """Consolidates onboarding answers with harvested temp data into a runner profile.
+    """Consolidates onboarding answers with prefill data into a runner profile.
 
-    The runner's name is only ever sourced from `temp_data` (harvested from the
-    TrainingPeaks profile); the onboarding schema does not collect it.
+    The runner's name and email come from `temp_data` (populated from TrainingPeaks and
+    verified sign-in when the account was connected); the onboarding schema does not
+    collect them, and `onboarding_pending` is cleared by omission.
     A goal plan (north star + sub goals) replaces training_goal/timeline; the
     active block is derived from it on read (see utils.goals.current_goal).
     """
-    profile = {
+    profile: dict[str, Any] = {
         "firstname": temp_data.get("firstname") or "",
         "lastname": temp_data.get("lastname") or "",
         "location": location or answers.get("location") or temp_data.get("location") or "",
@@ -180,6 +195,9 @@ def merge_profile_data(
         # start of the current training block (used by the race projection).
         "goal_set_date": get_today_str(),
     }
+    email = normalize_email(temp_data.get("email"))
+    if email:
+        profile["email"] = email
     if answers.get("goal_type") == GOAL_TYPE_PLAN:
         profile.update(_plan_fields(answers, temp_data.get("sub_goals")))
     for field in _MERGED_FIELDS:

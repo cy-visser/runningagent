@@ -4,10 +4,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.local/bin:$PATH"
 
-# Refuse to run if TP_AUTH_COOKIE is present in .env (secrets belong in Secret Manager).
+# Refuse to run if a raw TP_AUTH_COOKIE is present in .env.
 if [ -f .env ] && grep -q -E '^[[:space:]]*TP_AUTH_COOKIE=' .env; then
-    echo "Error: TP_AUTH_COOKIE must not be present in .env."
-    echo "Remove TP_AUTH_COOKIE from .env; both local and deployed runs read from Secret Manager."
+    echo "Error: TP_AUTH_COOKIE must not be present in .env." >&2
+    echo "TrainingPeaks cookies are stored per-runner in Firestore encrypted with Cloud KMS via the Web App UI." >&2
     exit 1
 fi
 
@@ -16,20 +16,20 @@ if [ -f .env ]; then
 fi
 
 if [ -z "${GOOGLE_CLOUD_PROJECT:-}" ]; then
-    echo "Error: GOOGLE_CLOUD_PROJECT environment variable or config in .env is required."
+    echo "Error: GOOGLE_CLOUD_PROJECT environment variable or config in .env is required." >&2
     exit 1
 fi
 
 if [ -z "${GOOGLE_CLOUD_LOCATION:-}" ]; then
-    echo "Error: GOOGLE_CLOUD_LOCATION environment variable or config in .env is required."
+    echo "Error: GOOGLE_CLOUD_LOCATION environment variable or config in .env is required." >&2
     exit 1
 fi
 
 for bin in agents-cli gcloud curl jq; do
     if ! command -v "$bin" >/dev/null 2>&1; then
-        echo "Error: Required tool '$bin' is not installed or not on PATH."
+        echo "Error: Required tool '$bin' is not installed or not on PATH." >&2
         if [ "$bin" = "agents-cli" ]; then
-            echo "Install it once with: uv tool install google-agents-cli==1.8.0"
+            echo "Install it once with: uv tool install google-agents-cli==1.8.0" >&2
         fi
         exit 1
     fi
@@ -39,58 +39,91 @@ PROJECT_ID="$GOOGLE_CLOUD_PROJECT"
 REGION="${DEPLOY_REGION:-europe-west4}"
 IDENTITY="running-coach-agent@${PROJECT_ID}.iam.gserviceaccount.com"
 SESSION_URI="firestore://${PROJECT_ID}"
-SECRET_NAME="${TP_COOKIE_SECRET_ID:-tp-auth-cookie}"
+KMS_KEY_RING="${KMS_KEY_RING:-running-coach}"
+KMS_KEY_NAME="${TP_COOKIE_KMS_KEY_NAME:-tp-cookie}"
+KMS_KEY="${TP_COOKIE_KMS_KEY:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEY_RING}/cryptoKeys/${KMS_KEY_NAME}}"
+WEB_SERVICE_NAME="${WEB_SERVICE_NAME:-running-coach-web}"
 TRACES_BUCKET="${TRACES_BUCKET:-traces_runningagent}"
 GE_LOCATION="${GE_LOCATION:-global}"
 GE_APP_ID="${GE_APP_ID:-running-coach}"
 GE_APP_DISPLAY_NAME="Running Coach"
 AGENT_DISPLAY_NAME="Running Coach"
 AGENT_DESCRIPTION="Your running coach which helps you progressing your running fitness."
+TARGET="web"
 DRY_RUN=false
 
-TP_COOKIE=""
+usage() {
+    cat <<EOF
+Usage: ./deploy.sh [--target ge|web|both] [--dry-run]
+
+Options:
+  --target ge|web|both   Front-end target(s) to deploy after updating Agent Runtime (default: web)
+                           ge   -> Deploy Agent Runtime + register in Gemini Enterprise
+                           web  -> Deploy Agent Runtime + deploy Cloud Run Web App (IAP)
+                           both -> Deploy Agent Runtime + both Gemini Enterprise & Cloud Run Web App
+  --dry-run              Validate preflight and print planned deployment actions without mutating resources
+EOF
+}
+
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --tp-cookie)
-            if [[ "$#" -gt 1 && ! "$2" =~ ^-- ]]; then
-                TP_COOKIE="$2"
-                shift
-            else
-                TP_COOKIE=""
+        --target)
+            if [[ "$#" -lt 2 ]]; then
+                echo "Error: --target requires a value (ge, web, or both)." >&2
+                usage >&2
+                exit 1
             fi
+            TARGET="$2"
+            shift
             ;;
-        --tp-cookie=*)
-            TP_COOKIE="${1#*=}"
+        --target=*)
+            TARGET="${1#*=}"
             ;;
         --dry-run)
             DRY_RUN=true
             ;;
-        *) echo "Unknown parameter: $1"; exit 1 ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown parameter: $1" >&2
+            usage >&2
+            exit 1
+            ;;
     esac
     shift
 done
 
-PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)")
+case "$TARGET" in
+    ge|web|both) ;;
+    *)
+        echo "Error: Invalid --target '${TARGET}'. Expected 'ge', 'web', or 'both'." >&2
+        exit 1
+        ;;
+esac
+
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)" --quiet)
 if [ -z "$PROJECT_NUMBER" ]; then
-    echo "Error: Could not resolve project number for project '${PROJECT_ID}'."
+    echo "Error: Could not resolve project number for project '${PROJECT_ID}'." >&2
     exit 1
 fi
 
-if [ -z "$TP_COOKIE" ]; then
-    echo "No TrainingPeaks cookie provided. Checking Secret Manager for existing '${SECRET_NAME}'..."
-    if ! gcloud secrets describe "${SECRET_NAME}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
-        echo "Error: Secret '${SECRET_NAME}' does not exist in Secret Manager for project ${PROJECT_ID}."
-        echo "Please provide a TrainingPeaks cookie to initialize the secret."
-        echo "Usage: ./deploy.sh --tp-cookie \"V001...\""
+WEB_APP_URL="${WEB_APP_URL:-https://${WEB_SERVICE_NAME}-${PROJECT_NUMBER}.${REGION}.run.app}"
+
+# Preflight: verify the Cloud KMS key for per-runner TrainingPeaks cookies exists.
+if ! gcloud kms keys describe "${KMS_KEY_NAME}" \
+    --keyring="${KMS_KEY_RING}" \
+    --location="${REGION}" \
+    --project="${PROJECT_ID}" \
+    --quiet >/dev/null 2>&1; then
+    if [ "$DRY_RUN" = true ]; then
+        echo "[DRY RUN] Note: KMS key '${KMS_KEY}' does not exist yet (run 'cd terraform && terraform apply' before live deploy)."
+    else
+        echo "Error: Cloud KMS key '${KMS_KEY}' not found in project '${PROJECT_ID}'." >&2
+        echo "Provision infrastructure first with: cd terraform && terraform apply" >&2
         exit 1
     fi
-    if ! gcloud secrets versions describe latest --secret="${SECRET_NAME}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
-        echo "Error: Secret '${SECRET_NAME}' exists in Secret Manager but has no active versions."
-        echo "Please provide a TrainingPeaks cookie."
-        echo "Usage: ./deploy.sh --tp-cookie \"V001...\""
-        exit 1
-    fi
-    echo "Found existing active secret '${SECRET_NAME}' in Secret Manager. Continuing..."
 fi
 
 if [ "$GE_LOCATION" = "global" ]; then
@@ -99,8 +132,6 @@ else
     DE_BASE_URL="https://${GE_LOCATION}-discoveryengine.googleapis.com"
 fi
 
-# Looks up an existing Gemini Enterprise app with displayName == GE_APP_DISPLAY_NAME.
-# Prints matching resource names (one per line).
 find_ge_apps() {
     local token page_token="" url resp
     token=$(gcloud auth print-access-token)
@@ -122,7 +153,6 @@ find_ge_apps() {
     done
 }
 
-# Ensures the Gemini Enterprise app exists and sets GE_APP_NAME to its full resource name.
 ensure_ge_app() {
     local matches count token create_url payload resp op_name op_resp done_flag err_msg
     matches=$(find_ge_apps)
@@ -206,7 +236,8 @@ ensure_ge_app() {
 GIT_SHA=$(git describe --always --dirty 2>/dev/null || echo "local")
 RUNTIME_ENV_VARS=(
     "SESSION_SERVICE_URI=${SESSION_URI}"
-    "TP_COOKIE_SECRET_ID=${SECRET_NAME}"
+    "TP_COOKIE_KMS_KEY=${KMS_KEY}"
+    "WEB_APP_URL=${WEB_APP_URL}"
     "AGENT_VERSION=${GIT_SHA}"
     "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true"
     "OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental"
@@ -219,23 +250,17 @@ RUNTIME_ENV_VARS=(
 RUNTIME_ENV_CSV=$(IFS=,; echo "${RUNTIME_ENV_VARS[*]}")
 
 echo "======================================================================="
-echo " Deploying Running Coach Agent (Vertex AI Agent Runtime + Gemini Enterprise)"
+echo " Deploying Running Coach (Target: ${TARGET})"
 echo "======================================================================="
 echo "Project:       ${PROJECT_ID} (${PROJECT_NUMBER})"
 echo "Region:        ${REGION}"
 echo "Identity:      ${IDENTITY}"
-echo "GE Location:   ${GE_LOCATION}"
+echo "KMS Key:       ${KMS_KEY}"
+echo "Web App URL:   ${WEB_APP_URL}"
 echo "Traces Bucket: gs://${TRACES_BUCKET}/completions"
 echo "======================================================================="
 
-# 1. Upload/Update the cookie in Secret Manager (if a new value was provided)
 if [ "$DRY_RUN" = true ]; then
-    if [ -n "$TP_COOKIE" ]; then
-        echo "[DRY RUN] Would upload new TrainingPeaks cookie to Secret Manager secret '${SECRET_NAME}'."
-    else
-        echo "[DRY RUN] Using existing '${SECRET_NAME}' secret from Secret Manager."
-    fi
-    ensure_ge_app
     agents-cli deploy \
         --project "${PROJECT_ID}" \
         --region "${REGION}" \
@@ -243,23 +268,25 @@ if [ "$DRY_RUN" = true ]; then
         --service-account "${IDENTITY}" \
         --update-env-vars "${RUNTIME_ENV_CSV}" \
         --dry-run
-    echo "[DRY RUN] Would register/update '${AGENT_DISPLAY_NAME}' in Gemini Enterprise app '${GE_APP_NAME}'."
+
+    EXISTING_RUNTIME_ID=""
+    if [ -f deployment_metadata.json ]; then
+        EXISTING_RUNTIME_ID=$(jq -r '.remote_agent_runtime_id // empty' deployment_metadata.json)
+    fi
+    EXISTING_RUNTIME_ID="${EXISTING_RUNTIME_ID:-projects/${PROJECT_NUMBER}/locations/${REGION}/reasoningEngines/PENDING}"
+
+    if [[ "$TARGET" == "ge" || "$TARGET" == "both" ]]; then
+        ensure_ge_app
+        echo "[DRY RUN] Would register/update '${AGENT_DISPLAY_NAME}' (${EXISTING_RUNTIME_ID}) in Gemini Enterprise app '${GE_APP_NAME}'."
+    fi
+
+    if [[ "$TARGET" == "web" || "$TARGET" == "both" ]]; then
+        bash ./webapp/deploy.sh --dry-run --agent-runtime-id "${EXISTING_RUNTIME_ID}"
+    fi
     exit 0
 fi
 
-if [ -n "$TP_COOKIE" ]; then
-    echo "Uploading new TrainingPeaks cookie to Secret Manager..."
-    echo -n "$TP_COOKIE" | gcloud secrets versions add "${SECRET_NAME}" \
-        --data-file=- \
-        --project="${PROJECT_ID}"
-else
-    echo "Using existing '${SECRET_NAME}' secret from Secret Manager."
-fi
-
-# 2. Ensure the "Running Coach" Gemini Enterprise app exists
-ensure_ge_app
-
-# 3. Deploy to Vertex AI Agent Runtime with agents-cli
+# 1. Always deploy the shared ADK agent to Vertex AI Agent Runtime
 echo "Deploying agent to Vertex AI Agent Runtime via agents-cli..."
 agents-cli deploy \
     --project "${PROJECT_ID}" \
@@ -274,20 +301,33 @@ if [ -z "$AGENT_RUNTIME_ID" ]; then
     exit 1
 fi
 
-# 4. Register or update the agent in the Gemini Enterprise app
-echo "Registering/updating '${AGENT_DISPLAY_NAME}' in Gemini Enterprise app '${GE_APP_NAME}'..."
-agents-cli publish gemini-enterprise \
-    --registration-type adk \
-    --gemini-enterprise-app-id "${GE_APP_NAME}" \
-    --agent-runtime-id "${AGENT_RUNTIME_ID}" \
-    --display-name "${AGENT_DISPLAY_NAME}" \
-    --description "${AGENT_DESCRIPTION}" \
-    --tool-description "${AGENT_DESCRIPTION}" \
-    --project-id "${PROJECT_ID}" \
-    --project-number "${PROJECT_NUMBER}"
+# 2. Optionally publish/update Gemini Enterprise registration
+if [[ "$TARGET" == "ge" || "$TARGET" == "both" ]]; then
+    ensure_ge_app
+    echo "Registering/updating '${AGENT_DISPLAY_NAME}' in Gemini Enterprise app '${GE_APP_NAME}'..."
+    agents-cli publish gemini-enterprise \
+        --registration-type adk \
+        --gemini-enterprise-app-id "${GE_APP_NAME}" \
+        --agent-runtime-id "${AGENT_RUNTIME_ID}" \
+        --display-name "${AGENT_DISPLAY_NAME}" \
+        --description "${AGENT_DESCRIPTION}" \
+        --tool-description "${AGENT_DESCRIPTION}" \
+        --project-id "${PROJECT_ID}" \
+        --project-number "${PROJECT_NUMBER}"
+fi
+
+# 3. Optionally deploy the Cloud Run Web App
+if [[ "$TARGET" == "web" || "$TARGET" == "both" ]]; then
+    bash ./webapp/deploy.sh --agent-runtime-id "${AGENT_RUNTIME_ID}"
+fi
 
 echo "======================================================================="
-echo "Deployment & Gemini Enterprise registration completed successfully!"
-echo "  Agent Runtime:         ${AGENT_RUNTIME_ID}"
-echo "  Gemini Enterprise App: ${GE_APP_NAME}"
+echo "Deployment completed successfully! (Target: ${TARGET})"
+echo "  Agent Runtime: ${AGENT_RUNTIME_ID}"
+if [[ "$TARGET" == "ge" || "$TARGET" == "both" ]]; then
+    echo "  Gemini Enterprise App: ${GE_APP_NAME}"
+fi
+if [[ "$TARGET" == "web" || "$TARGET" == "both" ]]; then
+    echo "  Cloud Run Web Service: ${WEB_SERVICE_NAME} (${REGION})"
+fi
 echo "======================================================================="

@@ -1,0 +1,16 @@
+frontend/node_modules
+frontend/dist
+frontend/.vite
+frontend/tsconfig.tsbuildinfo
+backend/.venv
+backend/.pytest_cache
+backend/tests
+backend/scripts
+scripts
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.env
+.env.*
+*.log
+README.md

@@ -24,7 +24,13 @@ You are now equipped with the Schedule Audit & Assessment skill. Use this skill 
    - **Intensity Balance & Spacing**: Max 1-2 hard/quality workouts per week, spaced with recovery days. Flag 3+ quality sessions or back-to-back hard days as high injury/overtraining risks.
    - **Taper Compliance**: Ensure the week(s) leading to the goal race reduce volume by 40-60% vs. peak weekly mileage.
 
-5. **Deliver Audit Summary**:
+5. **Goal-Plan Lens** (whenever the output starts with a Goal Plan Context or Goal Context block):
+   - Judge the plan on two levels: does it prepare the current (sub-)goal race, and, with a north star, does it protect the north star's aerobic base?
+   - **Long run**: use only the pre-computed `🏃 Long run` line of each week (target range, phase and flag). Never substitute a generic range (e.g. "12-16 km for a 5K"). Report `⚠` flags; a `transition` / `race week` week has no long-run target.
+   - **Aerobic base (north star)**: flag weekly volume dropping well below recent weeks, or a plan that moves CTL away from the north-star peak CTL reference range, as north-star risks. Sub-goal speed work is expected; it must not replace the long run or the base volume.
+
+6. **Deliver Audit Summary**:
    - Present the audit week-by-week using clear headers:
-     reuse the per-week lines from the tool output (`* **[Date Range]:** [km] km ([N] runs: [X] easy, [Y] quality | cross-training) | TSS: [TSS]`, with notes listed under the week).
+     reuse the per-week lines from the tool output (`* **[Date Range]:** [km] km ([N] runs: [X] easy, [Y] quality | cross-training) | TSS: [TSS]`, with the long-run line and notes listed under the week).
    - Provide an objective evaluation highlighting plan strengths, potential risks/flaws (e.g. back-to-back hard sessions, aggressive ramp rates), and recommended adjustments.
+   - With a north star, split the recommended adjustments into **Sub goal** and **North star** bullets.

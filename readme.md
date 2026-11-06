@@ -1,18 +1,20 @@
 # AI Running Coach
 
-An AI Running Coach and Exercise Physiologist built using the Google ADK framework. The coach integrates directly with **TrainingPeaks** (to fetch workouts, physiological metrics, and calendar notes), **Open-Meteo** (for hourly weather correlation), and **Google Cloud Firestore** (for session state persistence and historical check-in reports).
+An AI Running Coach and Exercise Physiologist built using the Google ADK framework. The coach integrates directly with **TrainingPeaks** (to fetch workouts, physiological metrics, and calendar notes), **Open-Meteo** (for hourly weather correlation), and **Google Cloud Firestore** (for session state persistence, per-runner KMS-encrypted credentials, and a structured training log).
 
-When deployed, the agent integrates seamlessly with **Gemini Enterprise** to deliver interactive coaching guidance in chat.
+When deployed, the shared **Vertex AI Agent Runtime** engine can be surfaced through either or both front ends:
+1. **Gemini Enterprise** (`--target ge`) — conversational A2A coaching inside Gemini Enterprise.
+2. **Cloud Run Web App** (`--target web`) — a dedicated React + FastAPI web application behind **Cloud Run Identity-Aware Proxy (IAP)** with interactive fitness charts, profile & goal-plan editing, and self-service TrainingPeaks onboarding.
 
 ---
 
 ## Features
-*   **Multi-Agent Orchestration**: Dynamically routes between onboarding (profile creation) and coaching.
-*   **Consolidated Data Pulling**: Fetches workouts, sleep, HRV, RHR, and calendar notes.
-*   **Hourly Weather Correlation**: Fetches the weather at the *exact hour* of your runs and compares it to the daily peak, explaining the physiological impact.
-*   **AI Travel Detection**: Automatically scans calendar notes and workouts for travel and incorporates travel context into the report.
-*   **Long-Term Goal Progress**: Anchors weekly feedback in your ultimate goal (e.g., the NYC Marathon) and declares if you are `ON TRACK`.
-*   **Interactive Historical Saving**: Offers to save your check-in reports to Firestore, storing them as structured JSON under a `weeknumber-year` subcollection (e.g., `27-2026`).
+*   **Dual Front-End Support (`ge` | `web` | `both`)**: One ADK agent on Vertex AI Agent Runtime serves both Gemini Enterprise and the Cloud Run Web App.
+*   **Per-Runner KMS Credential Isolation**: Each runner links their own TrainingPeaks cookie in the Web App, encrypted with **Cloud KMS** (`AAD = b"users/{runner_id}"`) in `users/{runner_id}/private/trainingpeaks`.
+*   **Multi-Agent Orchestration**: Deterministic email-based routing between onboarding (profile & goal-plan creation) and coaching.
+*   **Interactive Visual Reports (Web App)**: Structured `checkin_report_data` and `trend_report_data` session state payloads render 90-day PMC charts, Sunset CTL progress rings, race-day projections, and 6-month load-capacity ladders alongside coaching prose.
+*   **Hourly Weather & Travel Context**: Correlates run splits with exact-hour Open-Meteo weather and scans calendar notes for travel.
+*   **Training Log & 6-Month Trend Analysis**: Stores deterministic workout records in `users/{id}/training_log` for long-horizon efficiency, decoupling, and weekly volume durability analysis.
 
 ---
 
@@ -23,63 +25,55 @@ When deployed, the agent integrates seamlessly with **Gemini Enterprise** to del
 python3 -m venv venv
 source venv/bin/activate
 
-# The wheel path inside requirements.txt is relative to the deployment container
-# layout (/app/agents/running_coach), so install it explicitly first, then install
-# the remaining dependencies.
 pip install ./tp_mcp-2.0.0-py3-none-any.whl
 pip install $(grep -v 'tp_mcp.*\.whl' requirements.txt)
 ```
 
 ### 2. Configure Environment Variables & Credentials
-Both local runs and deployed instances read the TrainingPeaks cookie from **Secret Manager** (`tp-auth-cookie`). Authenticate Application Default Credentials once so local runs can access Secret Manager and Firestore:
+Authenticate Application Default Credentials so local runs can access Firestore and decrypt your runner's Cloud KMS credential:
 
 ```bash
 gcloud auth application-default login
 ```
 
-Create a `.env` file in the project root containing the configuration parameters (never put `TP_AUTH_COOKIE` in `.env`):
+Create a `.env` file in `running_coach/` (never put `TP_AUTH_COOKIE` in `.env`):
 
 ```env
-# Enable Vertex AI GenAI SDK mode
 GOOGLE_GENAI_USE_VERTEXAI=1
-
-# Google Cloud Deployment project details
 GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 FIRESTORE_PROJECT_ID=YOUR_PROJECT_ID
 GOOGLE_CLOUD_LOCATION=eu
-
-# Firestore database name for the agent (defaults to running-coach)
 FIRESTORE_DATABASE=running-coach
-
-# PYTHONPATH injection needed specifically for container deployment startup
+TP_COOKIE_KMS_KEY=projects/YOUR_PROJECT_ID/locations/europe-west4/keyRings/running-coach/cryptoKeys/tp-cookie
+DEV_RUNNER_EMAIL=you@yourdomain.com
 PYTHONPATH=/app/agents/running_coach
 ```
 
-### 3. Run the Local Web Server
-To open the interactive ADK Web UI and chat with the coach locally:
-```bash
-adk web
-```
-Open your browser and navigate to `http://127.0.0.1:8000`.
+### 3. Run Locally
+- **ADK Developer UI**:
+  ```bash
+  adk web
+  ```
+- **Cloud Run Web App UI** (demo mode or full local stack): see [`webapp/README.md`](webapp/README.md).
 
 ---
 
 ## Testing
 
-Unit tests cover the pure helper layer (`utils/` and the extracted `tools.py` helpers). They
-require no network access, GCP credentials, or TrainingPeaks cookie:
+Unit tests cover the agent (`tests/`), the web backend (`webapp/backend/tests/`), and the React frontend (`webapp/frontend/src/__tests__/`), requiring no live network access:
 
 ```bash
+# Agent unit tests
 python -m pytest tests/ -q
+
+# Web backend unit tests
+python -m pytest webapp/backend/tests/ -q
+
+# Web frontend unit tests + production bundle check
+cd webapp/frontend && npm test -- --run && npm run build
 ```
 
-**Testing policy:** `tests/` is a lean smoke suite (~50 tests): one or two happy-path tests per
-module plus data-safety guards (e.g. never onboard a known runner, never save a nameless
-profile). Don't add a unit test per option, threshold, or edge case — behavioural coverage
-lives in `evals/`.
-
-The behavioural eval sets in `evals/` exercise the full agent and **do** require live
-credentials:
+Behavioural eval sets in `evals/` exercise the full agent with live credentials:
 
 ```bash
 adk eval . evals/comprehensive_coach_evals.evalset.json --config_file_path evals/eval_config.json
@@ -89,7 +83,7 @@ adk eval . evals/comprehensive_coach_evals.evalset.json --config_file_path evals
 
 ## Production Deployment Guide
 
-We follow production best practices: managing infrastructure via **Terraform (IaC)**, storing sensitive credentials in **GCP Secret Manager**, and deploying/publishing with **`agents-cli`**.
+Infrastructure is managed via **Terraform (IaC)**, per-runner TrainingPeaks credentials are encrypted with **Cloud KMS**, and deployments are driven by `./deploy.sh`.
 
 ### Prerequisites
 Install `agents-cli` (`google-agents-cli`), `gcloud`, `jq`, and `curl`:
@@ -98,63 +92,53 @@ uv tool install google-agents-cli==1.8.0
 ```
 
 ### Phase 1: Provision Infrastructure (Terraform)
-Navigate to the `terraform/` directory and run Terraform to enable APIs, create the service account, grant IAM roles, provision the secret container, and manage the prompt/response traces bucket:
-
 ```bash
 cd terraform
 terraform init
 terraform apply
 ```
-*Review the plan and type `yes` to approve. This will provision:*
-*   **APIs**: Vertex AI, Discovery Engine (Gemini Enterprise), Secret Manager, Firestore, Cloud Trace, Cloud Logging.
-*   **Service Account**: `running-coach-agent@your_project_id.iam.gserviceaccount.com`.
-*   **IAM Roles**: Vertex AI User, Firestore User, Trace Agent, Logs Writer, Service Usage Consumer, Secret Accessor, Storage Object User on `gs://traces_runningagent`, and the Vertex AI Service Agent bindings.
-*   **Secret**: A secure container named `tp-auth-cookie`.
-*   **Traces Bucket**: `gs://traces_runningagent` for GenAI prompt and response completion logs.
+*Provisions:*
+*   **APIs**: Vertex AI, Discovery Engine, Cloud Run, Cloud Build, Artifact Registry, IAP, Cloud KMS, Firestore, Cloud Trace, Cloud Logging.
+*   **Service Accounts**:
+    *   `running-coach-agent@...` (Agent Runtime — `roles/cloudkms.cryptoKeyDecrypter`, Firestore, Vertex AI, Trace/Logs).
+    *   `running-coach-web@...` (Cloud Run Web App — `roles/cloudkms.cryptoKeyEncrypter`, Firestore, `aiplatform.user`).
+*   **Cloud KMS**: Keyring `running-coach` and symmetric key `tp-cookie` (90-day rotation).
+*   **Firestore Indexes & TTL**: `training_log` date index, `users.email` index, and `workout_analyses` TTL policy.
+*   **Traces Bucket**: `gs://traces_runningagent` for GenAI prompt/response completion logs.
 
-### Phase 2: Deploy the Agent & Register in Gemini Enterprise
-Return to the project root and run `deploy.sh`. The script:
-1. Uploads a new TrainingPeaks cookie version to Secret Manager if `--tp-cookie` is passed (otherwise verifies an active version exists).
-2. Ensures a Gemini Enterprise app named **Running Coach** exists (creating it if needed).
-3. Deploys the container image to Vertex AI Agent Runtime via `agents-cli deploy` with prompt/response logging to `gs://traces_runningagent/completions`.
-4. Registers or updates the agent in the **Running Coach** Gemini Enterprise app via `agents-cli publish gemini-enterprise`.
-
+### Phase 2: Deploy Agent Runtime & Chosen Front End (`ge` | `web` | `both`)
 ```bash
 cd ..
 chmod +x deploy.sh
 
-# Validate preflight, app lookup, and deploy config without making changes:
+# Dry-run preflight check:
 ./deploy.sh --dry-run
 
-# First deployment (or rotating the TrainingPeaks cookie):
-./deploy.sh --tp-cookie 'YOUR_ACTUAL_TP_COOKIE_HERE'
-
-# Subsequent deployments (reuses secret in Secret Manager):
+# Deploy Agent Runtime + Cloud Run Web App (behind IAP) (default):
 ./deploy.sh
+
+# Deploy Agent Runtime + Gemini Enterprise registration:
+./deploy.sh --target ge
+
+# Deploy Agent Runtime + BOTH Gemini Enterprise and Cloud Run Web App:
+./deploy.sh --target both
+```
+
+Grant IAM users access to the Cloud Run Web App via IAP:
+```bash
+gcloud iap web add-iam-policy-binding \
+  --project=YOUR_PROJECT_ID \
+  --resource-type=cloud-run \
+  --service=running-coach-web \
+  --region=europe-west4 \
+  --member="user:you@yourdomain.com" \
+  --role="roles/iap.httpsResourceAccessor"
 ```
 
 ---
 
 ## Monitoring & Telemetry (Production)
 
-Once deployed, the agent is instrumented with OpenTelemetry (`--otel_to_cloud`), allowing you to monitor performance, latencies, prompts/responses, and costs in the **Google Cloud Console**:
-
-### 1. Request Traces & Bottlenecks (Cloud Trace)
-*   Go to **Cloud Trace** -> **Trace Explorer**.
-*   View end-to-end waterfall latency charts for every check-in session, showing how long the LLM, TrainingPeaks API, and weather API took.
-
-### 2. Prompt & Response Completion Logs (Cloud Storage)
-*   Every model invocation uploads its prompt inputs, system instructions, tool definitions, and model responses as JSONL files under `gs://traces_runningagent/completions/`.
-*   Message content is kept out of Cloud Trace and Cloud Logging (`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=NO_CONTENT`); trace spans and log events reference the uploaded GCS objects.
-
-### 3. Token Usage & Cost Tracking (Cloud Monitoring)
-To monitor your token consumption and set up budget alerts:
-*   Go to **Monitoring** -> **Metrics Explorer**.
-*   Select the metric: `aiplatform.googleapis.com/prediction/token_count`.
-*   Group by `model_id` to track and compare token usage.
-*   Set up an **Alerting Policy** to notify you if token consumption spikes, protecting you against billing surprises.
-
-### 4. Live Logs (Cloud Logging)
-*   Go to **Logging** -> **Logs Explorer**.
-*   Search for logs associated with the `running-coach-agent` service account to view real-time execution logs structured by session ID.
-
+*   **Cloud Trace**: End-to-end waterfall latency spans across Gemini, TrainingPeaks MCP, and Open-Meteo.
+*   **Prompt & Response Completion Logs**: Uploaded as JSONL to `gs://traces_runningagent/completions/` while keeping message content out of Cloud Trace/Logging (`NO_CONTENT`).
+*   **Cloud Monitoring**: Track `aiplatform.googleapis.com/prediction/token_count` grouped by `model_id`.

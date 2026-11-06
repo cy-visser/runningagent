@@ -15,16 +15,28 @@ variable "agent_sa_name" {
   description = "The account ID for the dedicated Agent Service Account"
 }
 
+variable "web_sa_name" {
+  type        = string
+  default     = "running-coach-web"
+  description = "The account ID for the dedicated Cloud Run Web App Service Account"
+}
+
 variable "firestore_db_name" {
   type        = string
   default     = "running-coach"
   description = "The Firestore database name for the running agent"
 }
 
-variable "tp_cookie_secret_id" {
-  description = "Secret Manager secret id holding the TrainingPeaks auth cookie (must match TP_COOKIE_SECRET_ID used by deploy.sh / the agent)"
+variable "kms_key_ring_name" {
   type        = string
-  default     = "tp-auth-cookie"
+  default     = "running-coach"
+  description = "Cloud KMS key ring name for encrypting per-runner credentials"
+}
+
+variable "tp_cookie_kms_key_name" {
+  type        = string
+  default     = "tp-cookie"
+  description = "Cloud KMS cryptoKey name used for per-runner TrainingPeaks cookies"
 }
 
 variable "traces_bucket_name" {
@@ -32,4 +44,5 @@ variable "traces_bucket_name" {
   type        = string
   default     = "traces_runningagent"
 }
+
 

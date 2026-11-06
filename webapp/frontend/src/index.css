@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body {
+    background-color: #ffffff;
+    color: #0f172a;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+.bg-sunset {
+  background-image: linear-gradient(135deg, #f97316 0%, #ec4899 100%);
+}
+
+.bg-sunset-hover:hover {
+  background-image: linear-gradient(135deg, #ea580c 0%, #db2777 100%);
+}
+
+.text-sunset {
+  background-image: linear-gradient(135deg, #f97316 0%, #ec4899 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.shadow-card {
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 1px 2px rgba(15, 23, 42, 0.02);
+}
+
+.shadow-card-hover {
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.shadow-card-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px -8px rgba(15, 23, 42, 0.09);
+}
+
+.shadow-sunset {
+  box-shadow: 0 10px 24px -6px rgba(249, 115, 22, 0.34);
+}
+
+.shadow-sunset:hover {
+  box-shadow: 0 14px 28px -6px rgba(236, 72, 153, 0.4);
+}
+
+@keyframes shimmerSlide {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    #f8fafc 0%,
+    #fff7ed 45%,
+    #fce7f3 55%,
+    #f8fafc 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmerSlide 1.8s linear infinite;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

@@ -13,7 +13,11 @@ tests/*
 evals
 evals/
 evals/*
+webapp
+webapp/
+webapp/*
 *.log
 deploy_help.txt
 deploy.sh
 deployment_metadata.json*
+

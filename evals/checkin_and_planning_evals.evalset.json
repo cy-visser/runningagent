@@ -13,7 +13,7 @@
     },
     "data": [
       {
-        "query": "Give me my weekly check-in report and save it to my profile history. How are my CTL and ATL trending?",
+        "query": "Give me my weekly check-in report. How are my CTL and ATL trending?",
         "expected_tool_use": [
           {
             "tool_name": "load_skill",
@@ -26,7 +26,7 @@
             "tool_input": {}
           }
         ],
-        "reference": "Here is your weekly progress check-in: Over the past 14 days, your Chronic Training Load (CTL / Fitness) has steadily increased while your Acute Training Load (ATL / Fatigue) remained manageable, keeping your Training Stress Balance (TSB) in an optimal productive training zone. Your 14-day average sleep and recovery metrics support this training progression. I have saved this structured check-in report to your history."
+        "reference": "Here is your weekly progress check-in: Over the past 14 days, your Chronic Training Load (CTL / Fitness) has steadily increased while your Acute Training Load (ATL / Fatigue) remained manageable, keeping your Training Stress Balance (TSB) in an optimal productive training zone. Your 14-day average sleep and recovery metrics support this training progression."
       }
     ]
   },

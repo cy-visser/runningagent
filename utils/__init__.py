@@ -40,12 +40,14 @@ from .metrics import (
     parse_mcp_response,
 )
 from .profile_helpers import (
-    RUNNER_ID_STATE_KEY,
+    AUTH_EMAIL_STATE_KEY,
+    email_from_user_id,
     format_profile_summary,
     get_user_id,
     merge_profile_data,
+    needs_onboarding,
+    normalize_email,
     onboarding_prefill,
-    parse_runner_name,
     profile_user_id,
     sync_profile_to_state,
 )
@@ -57,6 +59,12 @@ from .race_readiness import (
     project_race,
     select_for_analysis,
     summarize_analysis,
+)
+from .report_data import (
+    CHECKIN_REPORT_STATE_KEY,
+    TREND_REPORT_STATE_KEY,
+    checkin_report_data,
+    trend_report_data,
 )
 from .status_summary import (
     compile_checkin_summary,
@@ -111,12 +119,14 @@ __all__ = [
     "extract_health_metrics_dated",
     "parse_mcp_response",
     # Profile helpers
-    "RUNNER_ID_STATE_KEY",
+    "AUTH_EMAIL_STATE_KEY",
+    "email_from_user_id",
     "format_profile_summary",
     "get_user_id",
     "merge_profile_data",
+    "needs_onboarding",
+    "normalize_email",
     "onboarding_prefill",
-    "parse_runner_name",
     "profile_user_id",
     "sync_profile_to_state",
     # Race readiness projection
@@ -127,6 +137,11 @@ __all__ = [
     "project_race",
     "select_for_analysis",
     "summarize_analysis",
+    # Structured report payloads
+    "CHECKIN_REPORT_STATE_KEY",
+    "TREND_REPORT_STATE_KEY",
+    "checkin_report_data",
+    "trend_report_data",
     # Status summary formatters
     "compile_checkin_summary",
     "format_nutrition_context_summary",
@@ -143,3 +158,4 @@ __all__ = [
     "format_other_sessions",
     "partition_workouts_by_date",
 ]
+

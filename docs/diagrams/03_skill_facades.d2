@@ -22,6 +22,7 @@ skills: "1. Skills (protocol + output format)" {
   wa: "workout-analysis" {class: skill}
   bwa: "bike-workout-analysis" {class: skill}
   ci: "check-in-report" {class: skill}
+  ta: "trend-analysis" {class: skill}
   sa: "schedule-audit" {class: skill}
   np: "nutrition-planner" {class: skill}
   wc: "workout-creator" {class: skill}
@@ -30,8 +31,9 @@ skills: "1. Skills (protocol + output format)" {
 facades: "2. Facade tools (one per skill, parallel fetch + maths in code)" {
   style.fill: "#f8f9fa"
   style.stroke: "#bdc1c6"
-  analyze: "analyze_workout\nworkout, analysis, settings, recovery, weather" {class: facade}
-  checkin: "fetch_checkin_data (+ save_checkin_report)\nworkouts, notes, metrics, fitness, cached analyses, weather" {class: facade}
+  analyze: "analyze_workout (+ training-log record)\nworkout, analysis, settings, recovery, fitness, weather" {class: facade}
+  checkin: "fetch_checkin_data\nworkouts, notes, metrics, fitness, cached analyses, weather" {class: facade}
+  trend: "fetch_trend_data (+ gap-fill)\ntraining log, fitness, metrics, settings" {class: facade}
   audit: "fetch_schedule_audit_data\nworkouts, calendar notes per ISO week" {class: facade}
   nutrition: "fetch_nutrition_context\nupcoming workouts, forecast" {class: facade}
   create: "create_workout / create_note\nduplicate check, create or update" {class: facade}
@@ -42,7 +44,7 @@ backends: "Backends" {
   style.stroke: "#bdc1c6"
   tp: "TrainingPeaks\n(tp-mcp, stdio)" {class: ext}
   meteo: "Open-Meteo" {class: ext}
-  fs: "Firestore\n(analysis cache, reports)" {class: data}
+  fs: "Firestore\n(training log, analysis cache)" {class: data}
 }
 
 coach -> skills: "load_skill(name)"
@@ -51,6 +53,7 @@ coach -> facades: "1 tool call" {style.bold: true}
 skills.wa -> facades.analyze
 skills.bwa -> facades.analyze
 skills.ci -> facades.checkin
+skills.ta -> facades.trend
 skills.sa -> facades.audit
 skills.np -> facades.nutrition
 skills.wc -> facades.create

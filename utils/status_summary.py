@@ -1,7 +1,10 @@
 from typing import Optional
 from .date_helpers import format_display_date
+from .long_run import format_week_long_run
 from .race_readiness import format_drivers_table, format_projection_row
+from .structure import fmt_clock
 from .trajectory import DEFAULT_PEAK_CTL, DEFAULT_PEAK_RANGE, TAPER_WEEKS, ramp_status
+from .trends import LT_FIT_WEEKS, lt_verdict
 
 PROGRESS_BAR_SEGMENTS = 10
 # Typical race-day form (TSB) after a good taper; shown in the CTL row during the taper.
@@ -90,11 +93,38 @@ def format_calendar_notes(notes_list: Optional[list[dict]]) -> str:
         notes_summary_list.append(f"- {date_display}: {n_title}{desc_str}")
     return "\n".join(notes_summary_list) if notes_summary_list else "No calendar notes."
 
-def format_fitness_pmc(fitness_data: Optional[dict], race_projection: Optional[dict] = None) -> str:
-    """Renders the CTL + goal-race projection table for LLM trajectory reasoning.
+def format_lt_rows(lt: Optional[dict]) -> str:
+    """Pace @ LT1 / LT2 rows (current 4-week HR->pace fit vs the previous 4 weeks)."""
+    if not lt:
+        return ""
+    now, prev = lt.get("now") or {}, lt.get("prev") or {}
+    rows = ""
+    for key, label, hr_label in (
+        ("lt1", "Pace @ LT1", f"top Z2, {round(lt['lt1_hr'])} bpm" if lt.get("lt1_hr") else "top Z2"),
+        ("lt2", "Pace @ LT2", f"LTHR {round(lt['lthr'])} bpm" if lt.get("lthr") else "LTHR"),
+    ):
+        now_s, prev_s = now.get(f"{key}_pace_s"), prev.get(f"{key}_pace_s")
+        if now_s is None:
+            continue
+        if prev_s is not None:
+            ref = f"prev {LT_FIT_WEEKS} wks `{fmt_clock(prev_s)}/km`"
+            trend = f"{lt_verdict(now_s, prev_s)} `{now_s - prev_s:+.0f} s/km`"
+        else:
+            ref, trend = f"no prior {LT_FIT_WEEKS}-wk fit", "n/a"
+        if now.get(f"{key}_extrapolated"):
+            trend += " ⚠️ extrapolated"
+        rows += f"| **{label}** ({hr_label}) | `{fmt_clock(now_s)}/km` | {ref} | {trend} |\n"
+    return rows
+
+
+def format_fitness_pmc(
+    fitness_data: Optional[dict], race_projection: Optional[dict] = None, lt: Optional[dict] = None,
+) -> str:
+    """Renders the CTL + LT1/LT2 + goal-race projection table for LLM trajectory reasoning.
 
     ATL/TSB are not displayed as table rows; they are kept as an analysis-only
     line so recovery reasoning (TSB vs HRV/RHR) remains possible.
+    lt: trends.checkin_lt_paces output (LT rows omitted when None).
     """
     if fitness_data is None:
         return ""
@@ -144,6 +174,7 @@ def format_fitness_pmc(fitness_data: Optional[dict], race_projection: Optional[d
         "| Metric | Current Value | Target / Reference | Progress & Trajectory |\n"
         "|---|---|---|---|\n"
         f"| **CTL (Fitness)** | `{ctl_end}` | Target: `{target_peak}`{range_str}{weeks_str} | `[{bar}]` **{pct}%**{ramp_str} |\n"
+        f"{format_lt_rows(lt)}"
         f"{projection_row}"
         f"{drivers_str}"
         f"\nLoad context (analysis only, not displayed): ATL `{atl_end}` | TSB `{tsb_end:+.1f}`\n"
@@ -161,6 +192,7 @@ def compile_checkin_summary(
     race_projection: Optional[dict] = None,
     weekly_totals: Optional[list[dict]] = None,
     recovery_baseline: Optional[str] = None,
+    lt_paces: Optional[dict] = None,
 ) -> str:
     """Compiles a complete, unified Check-In Summary payload for the check-in-report skill.
 
@@ -168,13 +200,14 @@ def compile_checkin_summary(
     weekly_totals: completed-week buckets from utils.weekly (km, TSS, easy/quality counts),
         optionally annotated by weekly.annotate_week_progression (growth %, partial weeks).
     recovery_baseline: 5-day vs 28-day HRV/RHR/sleep deltas (race_readiness.health_readiness detail).
+    lt_paces: current vs previous 4-week LT1/LT2 paces (trends.checkin_lt_paces).
     """
     parts = ["### Weekly Check-In Training & Physiological Report\n"]
 
     if fitness_data is not None:
         parts.append(
             f"**1. Fitness PMC Trends, Goal Race Projection & Trajectory (Past {lookback_days} days):**\n"
-            f"{format_fitness_pmc(fitness_data, race_projection)}\n"
+            f"{format_fitness_pmc(fitness_data, race_projection, lt_paces)}\n"
         )
 
     if metrics_data is not None:
@@ -234,7 +267,9 @@ def _week_progression(w: dict) -> str:
     if runs:
         easy_pct = round(100 * w.get("easy_count", 0) / runs)
         out += f" | Split: {easy_pct}% easy / {100 - easy_pct}% quality (by runs)"
-    if w.get("partial"):
+    if w.get("in_progress"):
+        out += " | Current week (in progress): no growth comparison"
+    elif w.get("partial"):
         out += " | Partial week (only partly in window): no growth comparison"
     elif w.get("growth_pct") is not None:
         growth = w["growth_pct"]
@@ -250,12 +285,21 @@ def format_weekly_totals(weeks: Optional[list[dict]]) -> str:
     return "\n".join(_format_week_line(w) + _week_progression(w) for w in weeks)
 
 
-def format_schedule_audit_summary(weeks_data: list[dict]) -> str:
-    """Formats a multi-week schedule audit breakdown with each week's sessions and notes."""
+def format_schedule_audit_summary(weeks_data: list[dict], goal_context: Optional[str] = None) -> str:
+    """Formats a multi-week schedule audit breakdown with each week's sessions and notes.
+
+    goal_context: goal / goal-plan block from utils.long_run.format_goal_context (placed first).
+    Weeks annotated by utils.long_run.annotate_long_runs get a pre-computed long-run line.
+    """
     lines = ["### Training Schedule Audit & Workload Assessment\n"]
+    if goal_context:
+        lines += [goal_context, ""]
 
     for w in weeks_data:
         lines.append(_format_week_line(w))
+        long_run = format_week_long_run(w)
+        if long_run:
+            lines.append(f"    - 🏃 {long_run}")
         for s in w.get("sessions", []):
             lines.append(f"    - {s}")
         for note in w.get("notes", []):

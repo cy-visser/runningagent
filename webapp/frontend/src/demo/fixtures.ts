@@ -1,0 +1,327 @@
+import type {
+  CheckinReportData,
+  MeResponse,
+  ProfileResponse,
+  TrendReportData,
+} from "../types";
+
+export const DEMO_ME_READY: MeResponse = {
+  email: "cyrille@cyvisser.altostrat.com",
+  runner_id: "cyrille_visser",
+  display_name: "Cyrille Visser",
+  initials: "CV",
+  profile_state: "ready",
+  tp: {
+    connected: true,
+    tp_athlete_id: "4819204",
+    tp_name: "Cyrille Visser",
+    updated_at: "2026-11-05T08:30:00Z",
+  },
+  summary: {
+    firstname: "Cyrille",
+    lastname: "Visser",
+    full_name: "Cyrille Visser",
+    location: "Amsterdam, Netherlands",
+    goal_type: "plan",
+    active_goal: "Sub-1:26 Half Marathon",
+    active_race_name: "CPC Loop Den Haag",
+    active_date: "2027-03-14",
+    weeks_remaining: 18.4,
+    north_star: {
+      goal: "Sub-2:58 Marathon",
+      race_name: "Rotterdam Marathon",
+      race_date: "2027-04-11",
+    },
+  },
+};
+
+export const DEMO_ME_ONBOARDING: MeResponse = {
+  email: "new.runner@cyvisser.altostrat.com",
+  runner_id: null,
+  display_name: "Alex Vermeer",
+  initials: "AV",
+  profile_state: "none",
+  tp: {
+    connected: false,
+    tp_athlete_id: null,
+    tp_name: null,
+    updated_at: null,
+  },
+  summary: null,
+};
+
+export const DEMO_PROFILE_RESPONSE: ProfileResponse = {
+  runner_id: "cyrille_visser",
+  profile_state: "ready",
+  tp: DEMO_ME_READY.tp,
+  summary: DEMO_ME_READY.summary,
+  profile: {
+    firstname: "Cyrille",
+    lastname: "Visser",
+    email: "cyrille@cyvisser.altostrat.com",
+    age: "38",
+    height: "183 cm",
+    weight: "73.5 kg",
+    location: "Amsterdam, Netherlands",
+    goal_type: "plan",
+    goal_set_date: "2026-09-15",
+    north_star: {
+      goal: "Sub-2:58 Marathon",
+      race_name: "NN Marathon Rotterdam",
+      start_date: "2027-01-04",
+      race_date: "2027-04-11",
+      taper_weeks: 3,
+    },
+    sub_goals: [
+      {
+        goal: "Sub-39:30 10K",
+        race_name: "Zevenheuvelenloop Warm-Up 10K",
+        start_date: "2026-09-15",
+        race_date: "2026-10-18",
+        taper_weeks: 1,
+        result: "39:12 (chip) — strong negative split",
+      },
+      {
+        goal: "Sub-1:26 Half Marathon",
+        race_name: "CPC Loop Den Haag",
+        start_date: "2026-10-26",
+        race_date: "2027-03-14",
+        taper_weeks: 1.5,
+        result: null,
+      },
+    ],
+    recent_race_times: "10K: 39:12 (Oct 2026) · HM: 1:27:48 (Mar 2026) · Marathon: 3:04:19 (Oct 2025)",
+    injuries: "Mild left Achilles tightness after steep hill repeats; managed with eccentric heel drops.",
+    cross_training_strength: "2x/wk posterior-chain strength (35 min) + 1x easy indoor spin recovery.",
+    shoe_rotation: "Daily: Superblast 2 · Tempo/Intervals: Magic Speed 4 · Race: Metaspeed Sky Paris",
+  },
+};
+
+export const DEMO_CHECKIN_DATA: CheckinReportData = {
+  version: 1,
+  window: { start: "2026-10-22", end: "2026-11-05" },
+  ctl: {
+    current: 61.4,
+    target: 74.0,
+    range: [68, 78],
+    pct: 83,
+    weeks_remaining: 18.4,
+    required_ramp: 0.78,
+    ramp_tier: "safe",
+    phase: "build",
+    pre_taper_ctl: null,
+    atl: 66.2,
+    tsb: -4.8,
+  },
+  pmc: [
+    { date: "2026-08-14", ctl: 47.2, atl: 50.1, tsb: -2.9 },
+    { date: "2026-08-28", ctl: 49.6, atl: 53.4, tsb: -3.8 },
+    { date: "2026-09-11", ctl: 52.1, atl: 56.0, tsb: -3.9 },
+    { date: "2026-09-25", ctl: 54.8, atl: 59.2, tsb: -4.4 },
+    { date: "2026-10-09", ctl: 57.3, atl: 54.1, tsb: 3.2 },
+    { date: "2026-10-18", ctl: 56.9, atl: 61.8, tsb: -4.9 },
+    { date: "2026-10-25", ctl: 59.1, atl: 63.7, tsb: -4.6 },
+    { date: "2026-11-01", ctl: 60.6, atl: 65.0, tsb: -4.4 },
+    { date: "2026-11-05", ctl: 61.4, atl: 66.2, tsb: -4.8 },
+  ],
+  projection: {
+    goal_label: "Sub-1:26 Half Marathon",
+    today_s: 5218,
+    race_day_s: 5124,
+    goal_s: 5160,
+    gap_s: -36,
+    range_s: [5085, 5168],
+    confidence: "High",
+    stale: false,
+    readiness: "on_track",
+  },
+  weeks: [
+    {
+      week: "2026-10-12",
+      date_range: "Oct 12 – Oct 18",
+      km: 62.4,
+      tss: 392,
+      easy: 4,
+      quality: 1,
+      growth_pct: -8.2,
+      partial: false,
+    },
+    {
+      week: "2026-10-19",
+      date_range: "Oct 19 – Oct 25",
+      km: 69.8,
+      tss: 446,
+      easy: 4,
+      quality: 2,
+      growth_pct: 11.9,
+      partial: false,
+    },
+    {
+      week: "2026-10-26",
+      date_range: "Oct 26 – Nov 1",
+      km: 73.5,
+      tss: 472,
+      easy: 4,
+      quality: 2,
+      growth_pct: 5.3,
+      partial: false,
+    },
+    {
+      week: "2026-11-02",
+      date_range: "Nov 2 – Nov 5",
+      km: 41.2,
+      tss: 258,
+      easy: 2,
+      quality: 1,
+      growth_pct: null,
+      partial: true,
+      in_progress: true,
+    },
+  ],
+  recovery: {
+    sleep_avg_h: 7.65,
+    hrv_latest: 68.0,
+    rhr_latest: 46.0,
+    series: [
+      { date: "2026-10-26", hrv: 65, rhr: 47, sleep_h: 7.4 },
+      { date: "2026-10-29", hrv: 67, rhr: 46, sleep_h: 7.8 },
+      { date: "2026-11-01", hrv: 66, rhr: 47, sleep_h: 7.5 },
+      { date: "2026-11-05", hrv: 68, rhr: 46, sleep_h: 7.9 },
+    ],
+  },
+  lt: {
+    lt1_pace_s: 300,
+    lt2_pace_s: 248,
+    lt1_prev_s: 306,
+    lt2_prev_s: 253,
+    lt1_hr: 141,
+    lthr: 168,
+    lt1_extrapolated: false,
+    lt2_extrapolated: false,
+  },
+};
+
+export const DEMO_CHECKIN_MARKDOWN = `### Check-In Overview
+
+Your post-10K transition into the **Sub-1:26 Half Marathon** build is right in the sweet spot, with 18.4 weeks to race day.
+
+### 📊 Metrics Progress
+
+| Metric | Current | Target | Status |
+| :--- | :--- | :--- | :--- |
+| **CTL** | 61.4 \`[████████░░]\` 83% | 74 | 🟢 Safe ramp (+0.78/wk) |
+| **Projected HM** | 1:25:24 | 1:26:00 | 🟢 On track (-0:36) |
+
+### 🎯 Goal Trajectory Status
+
+🟢 On Track. Chronic Training Load has climbed to **61.4 CTL**, requiring only **+0.78 CTL/wk** over the next 18.4 weeks, well inside the safe ramp. The projected **1:25:24** leaves a 36 s buffer at target CTL.
+
+### 🔍 Training Load & Adaptation Analysis
+
+The 80/20 balance held at 4 easy / 2 quality sessions and easy runs stayed cleanly below LT1 (141 bpm). HRV (**68 ms** ↑) and RHR (**46 bpm** →) confirm you are absorbing the 70+ km/wk tier.
+
+| Pillar | Metric | Status | Coach Takeaway |
+| :--- | :--- | :--- | :--- |
+| **Load & Ramp** | 73.5 km · +0.78 CTL/wk needed | 🟢 Safe ramp | Productive stimulus with TSB at **-4.8** |
+| **Achilles Watch** | Eccentric protocol active | 🟡 Monitor | Keep Friday strides on flat tarmac only |
+
+### 🚀 Top 2 Priorities for the Upcoming Week
+1. **Hold Sunday's progressive long run at 22 km** with the final 5 km at 4:08–4:12/km (marathon-to-HM bridge effort).
+2. **Protect recovery ceiling**: keep easy days below 141 bpm so HRV stays at or above 66 ms.`;
+
+export const DEMO_TREND_DATA: TrendReportData = {
+  version: 1,
+  window: { start: "2026-05-11", end: "2026-11-05" },
+  weeks: [
+    { week: "2026-05-18", complete: true, km: 48.0, tss: 305, runs: 5, quality: 1, long_km: 16, ctl: 43.2, tsb: 1.4, hrv: 61, rhr: 49, sleep_h: 7.3, lt1_pace_s: 318, lt2_pace_s: 262, key_decoupling: 5.4 },
+    { week: "2026-06-01", complete: true, km: 52.5, tss: 332, runs: 5, quality: 2, long_km: 18, ctl: 45.1, tsb: -1.8, hrv: 62, rhr: 48, sleep_h: 7.4, lt1_pace_s: 316, lt2_pace_s: 261, key_decoupling: 4.9 },
+    { week: "2026-06-15", complete: true, km: 56.2, tss: 355, runs: 5, quality: 2, long_km: 19, ctl: 47.0, tsb: -2.4, hrv: 63, rhr: 48, sleep_h: 7.5, lt1_pace_s: 314, lt2_pace_s: 259, key_decoupling: 4.5 },
+    { week: "2026-06-29", complete: true, km: 46.0, tss: 284, runs: 5, quality: 1, long_km: 16, ctl: 46.4, tsb: 5.1, hrv: 65, rhr: 47, sleep_h: 7.7, lt1_pace_s: 313, lt2_pace_s: 258, key_decoupling: 3.9 },
+    { week: "2026-07-13", complete: true, km: 59.4, tss: 378, runs: 6, quality: 2, long_km: 20, ctl: 48.9, tsb: -3.2, hrv: 63, rhr: 48, sleep_h: 7.4, lt1_pace_s: 312, lt2_pace_s: 257, key_decoupling: 4.1 },
+    { week: "2026-07-27", complete: true, km: 62.8, tss: 398, runs: 6, quality: 2, long_km: 21, ctl: 50.8, tsb: -3.7, hrv: 64, rhr: 47, sleep_h: 7.5, lt1_pace_s: 311, lt2_pace_s: 256, key_decoupling: 3.8 },
+    { week: "2026-08-10", complete: true, km: 64.5, tss: 410, runs: 6, quality: 2, long_km: 22, ctl: 52.4, tsb: -3.5, hrv: 64, rhr: 47, sleep_h: 7.6, lt1_pace_s: 309, lt2_pace_s: 255, key_decoupling: 3.6 },
+    { week: "2026-08-24", complete: true, km: 53.0, tss: 330, runs: 5, quality: 1, long_km: 18, ctl: 51.9, tsb: 4.6, hrv: 66, rhr: 46, sleep_h: 7.8, lt1_pace_s: 307, lt2_pace_s: 254, key_decoupling: 3.3 },
+    { week: "2026-09-07", complete: true, km: 66.8, tss: 428, runs: 6, quality: 2, long_km: 22, ctl: 54.6, tsb: -4.0, hrv: 65, rhr: 47, sleep_h: 7.5, lt1_pace_s: 306, lt2_pace_s: 253, key_decoupling: 3.2 },
+    { week: "2026-09-21", complete: true, km: 70.4, tss: 452, runs: 6, quality: 2, long_km: 23, ctl: 57.1, tsb: -4.5, hrv: 66, rhr: 46, sleep_h: 7.6, lt1_pace_s: 304, lt2_pace_s: 252, key_decoupling: 3.0 },
+    { week: "2026-10-05", complete: true, km: 68.2, tss: 438, runs: 6, quality: 2, long_km: 22, ctl: 58.0, tsb: -2.1, hrv: 67, rhr: 46, sleep_h: 7.7, lt1_pace_s: 304, lt2_pace_s: 251, key_decoupling: 2.8 },
+    { week: "2026-10-19", complete: true, km: 69.8, tss: 446, runs: 6, quality: 2, long_km: 23, ctl: 59.4, tsb: -4.3, hrv: 67, rhr: 46, sleep_h: 7.6, lt1_pace_s: 302, lt2_pace_s: 249, key_decoupling: 2.7 },
+    { week: "2026-10-26", complete: true, km: 73.5, tss: 472, runs: 6, quality: 2, long_km: 24, ctl: 61.4, tsb: -4.8, hrv: 68, rhr: 46, sleep_h: 7.8, lt1_pace_s: 300, lt2_pace_s: 248, key_decoupling: 2.5 },
+  ],
+  progress: [
+    {
+      label: "Chronic Load (CTL)",
+      first: "43.2",
+      latest: "61.4",
+      best: "61.4",
+      change: "+42%",
+      arrow: "↑",
+      verdict: "🟢 Improving",
+    },
+    {
+      label: "Pace @ LT1 (top of zone 2)",
+      first: "5:17/km",
+      latest: "5:02/km",
+      best: "5:00/km (wk 2026-10-26)",
+      change: "-15 s/km",
+      arrow: "↓",
+      verdict: "🟢 improving",
+    },
+    {
+      label: "Pace @ LT2 (LTHR)",
+      first: "4:21/km",
+      latest: "4:10/km",
+      best: "4:08/km (wk 2026-10-26)",
+      change: "-11 s/km",
+      arrow: "↓",
+      verdict: "🟢 improving",
+    },
+    {
+      label: "Key-run Pa:Hr % (long run / race-pace blocks)",
+      first: "4.9",
+      latest: "2.8",
+      best: "2.5 (wk 2026-10-26)",
+      change: "-2.1",
+      arrow: "↓",
+      verdict: "🟢 improving",
+    },
+    {
+      label: "Overnight HRV",
+      first: "61 ms",
+      latest: "68 ms",
+      best: "68 ms",
+      change: "+11%",
+      arrow: "↑",
+      verdict: "🟢 Absorbing",
+    },
+  ],
+  levels: [
+    { level: 50, weeks: 7, streak: 4, tolerated_share: 1.0, hrv_delta_pct: 2.1, rhr_delta: -1.0, rpe: 4.8, proven: true },
+    { level: 60, weeks: 9, streak: 5, tolerated_share: 0.89, hrv_delta_pct: 1.4, rhr_delta: -0.5, rpe: 5.3, proven: true },
+    { level: 70, weeks: 4, streak: 3, tolerated_share: 0.75, hrv_delta_pct: 0.8, rhr_delta: 0.0, rpe: 5.8, proven: true },
+    { level: 80, weeks: 0, streak: 0, tolerated_share: 0.0, hrv_delta_pct: null, rhr_delta: null, rpe: null, proven: false },
+  ],
+  outlook: {
+    proven_km: 70,
+    max_km: 73.5,
+    current_km: 73.5,
+    targets: [
+      { target: 70, status: "proven", build_weeks: 0 },
+      { target: 80, status: "next_tier", build_weeks: 4 },
+      { target: 90, status: "stretch", build_weeks: 9 },
+    ],
+  },
+  key_run_label: "long run / race-pace blocks",
+};
+
+export const DEMO_TREND_MARKDOWN = `### 6-Month Structural Progression
+
+Over the past 26 weeks you have lifted your **proven weekly volume ceiling to 70 km/wk** while simultaneously improving aerobic speed-per-heartbeat (**EF 1.48 → 1.68**, +13.5%) and cutting 22–24 km long-run cardiac drift down to **2.5%**.
+
+| Dimension | 6-Month Shift | Readiness for Rotterdam Sub-2:58 |
+| :--- | :--- | :--- |
+| **Volume Durability** | 48 km/wk → **73.5 km/wk** | 🟢 Proven through 70 km/wk; 4-week bridge to 80 km/wk |
+| **Aerobic Economy** | Easy pace 5:02/km → **4:39/km** @ 138 bpm | 🟢 Strong sub-LT1 engine expansion |
+| **Threshold & 10K Speed** | **39:12 10K** PR in October | 🟢 Speed reserve comfortably supports 4:13/km marathon pace |
+
+### Strategic Recommendation for Winter Block
+- Consolidate **70–75 km/wk** for two more weeks before a recovery cutback week (~56 km), then step into an **80–84 km/wk** peak marathon block in January.`;

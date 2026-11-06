@@ -14,13 +14,15 @@ from google.adk.workflow import node
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from .callbacks import apply_thinking_policy, splice_checkin_tables
-from .services.tp_mcp import get_tp_tool
+from .callbacks import before_model, splice_tables
+from .services.config import dev_runner_email, web_app_url
+from .services.tp_credentials import has_tp_credential
 from .steps import (
-    PROFILE_TP_UNAVAILABLE,
-    check_profile_step,
+    PROFILE_EMAIL_CONFLICT,
+    PROFILE_NO_NAME,
+    activate_profile,
     create_profile_step,
-    load_profile_by_id,
+    find_profile_by_email,
 )
 from .tools import (
     analyze_workout_tool,
@@ -29,78 +31,27 @@ from .tools import (
     fetch_checkin_data_tool,
     fetch_nutrition_context_tool,
     fetch_schedule_audit_data_tool,
+    fetch_trend_data_tool,
     get_weather_tool,
     request_new_goal_tool,
-    save_checkin_report_tool,
     skill_toolset,
 )
 from .utils import (
-    RUNNER_ID_STATE_KEY,
+    AUTH_EMAIL_STATE_KEY,
+    email_from_user_id,
     final_race_passed,
     format_goal_plan,
     format_profile_summary,
     get_today_date,
     get_today_str,
+    needs_onboarding,
     next_block,
+    normalize_email,
     onboarding_prefill,
     sub_goals_missing_result,
 )
 
 logger = logging.getLogger(__name__)
-
-try:  # Optional: only present when google-api-core is installed.
-    from google.api_core.exceptions import ResourceExhausted, TooManyRequests
-
-    _RATE_LIMIT_EXCEPTIONS: tuple[type[Exception], ...] = (ResourceExhausted, TooManyRequests)
-except ImportError:  # pragma: no cover - depends on the transport in use
-    _RATE_LIMIT_EXCEPTIONS = ()
-
-
-def _is_rate_limit_error(error: Exception) -> bool:
-    """Identifies HTTP 429 / quota-exhaustion errors worth retrying.
-
-    Prefers typed exceptions and structured status codes; the message check is a
-    deliberately narrow fallback so unrelated errors that merely contain '429'
-    (e.g. a workout ID) do not trigger a retry storm.
-    """
-    if _RATE_LIMIT_EXCEPTIONS and isinstance(error, _RATE_LIMIT_EXCEPTIONS):
-        return True
-    if getattr(error, "code", None) == 429 or getattr(error, "status_code", None) == 429:
-        return True
-    if "RESOURCE_EXHAUSTED" in str(getattr(error, "status", "")).upper():
-        return True
-    message = str(error)
-    return "RESOURCE_EXHAUSTED" in message or "429 " in message or "Too Many Requests" in message
-
-
-async def run_node_with_retry(
-    ctx: Context,
-    node_or_agent: Any,
-    node_input: Any = None,
-    raise_on_wait: bool = False,
-    max_retries: int = 3,
-    initial_delay: float = 2.0,
-    backoff_factor: float = 4.0,
-) -> Any:
-    """Wraps ctx.run_node with exponential backoff on rate-limit errors.
-
-    Only used for idempotent nodes (the TrainingPeaks profile lookup). LLM agents
-    retry at the model call instead (see `_model`), so a 429 never replays tool
-    calls such as `create_workout`.
-    """
-    delay = initial_delay
-    for attempt in range(1, max_retries + 1):
-        try:
-            return await ctx.run_node(node_or_agent, node_input=node_input, raise_on_wait=raise_on_wait)
-        except Exception as e:
-            if not _is_rate_limit_error(e) or attempt >= max_retries:
-                raise
-            logger.warning(
-                "Rate limited; retrying in %.1fs (attempt %d/%d)", delay, attempt, max_retries
-            )
-            await asyncio.sleep(delay)
-            delay *= backoff_factor
-    raise ValueError("max_retries must be >= 1")
 
 
 # ==============================================================================
@@ -109,7 +60,7 @@ async def run_node_with_retry(
 COACH_MODEL = os.getenv("COACH_MODEL", "gemini-3.8-flash")
 ONBOARDING_MODEL = os.getenv("ONBOARDING_MODEL", "gemini-3.1-flash-lite")
 
-# Retry 429s at the model call (same schedule as run_node_with_retry).
+# Retry 429s at the model call so tool side effects are never replayed.
 _MODEL_RETRY = types.HttpRetryOptions(attempts=3, initial_delay=2, exp_base=4, http_status_codes=[429])
 
 
@@ -235,11 +186,11 @@ coaching_agent_tools = [
     skill_toolset,
     analyze_workout_tool,
     fetch_checkin_data_tool,
+    fetch_trend_data_tool,
     fetch_schedule_audit_data_tool,
     fetch_nutrition_context_tool,
     create_workout_tool,
     create_note_tool,
-    save_checkin_report_tool,
     request_new_goal_tool,
     get_weather_tool,
 ]
@@ -249,32 +200,51 @@ _COACH_ROLE = (
     "and grounded strictly in sports science and physiological data."
 )
 
-# Static coaching rules; `build_coach_instruction` adds the profile-based header.
-_COACH_RULES = """
+# Static coaching rules; `build_coach_instruction` adds the profile-based header and, for goal
+# plans only, `_GOAL_PLAN_LENS`. Sent on every model call, so keep them tight: task-specific
+# analysis guidance belongs in the skills.
+_ROUTING_RULES = """
     SKILL ROUTING: in the SAME step, call `load_skill` AND the skill's data tool in parallel
     (e.g. load_skill("check-in-report") + fetch_checkin_data()), then follow the skill's protocol exactly
-    on the returned data. Write tools (create_workout, create_note, save_checkin_report) only run when the
-    skill's protocol says so.
+    on the returned data. Write tools (create_workout, create_note) only run when the skill's protocol
+    says so.
     - Analyze a completed run         -> workout-analysis      -> analyze_workout
     - Analyze a completed ride        -> bike-workout-analysis -> analyze_workout
-    - Weekly check-in / progress      -> check-in-report       -> fetch_checkin_data (+ save_checkin_report)
+    - Check-in (last 2 weeks + next week: status, trajectory, next-week priorities)
+                                      -> check-in-report       -> fetch_checkin_data
+    - Trends (6+ weeks: progress, load capacity, pacing, training patterns)
+                                      -> trend-analysis        -> fetch_trend_data
     - Review / audit the plan         -> schedule-audit        -> fetch_schedule_audit_data
     - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
     - Create/change workouts or notes -> workout-creator       -> fetch_schedule_audit_data, then create_workout / create_note
-    Do not reload a skill whose instructions are already in this conversation; just call its data tool.
+    Do not reload a skill whose instructions are already in THIS turn; just call its data tool. Skill
+    instructions and tool output from earlier turns are elided: reload the skill / re-fetch data when needed.
     New goal (the runner accepts setting one) -> request_new_goal. Ad-hoc weather -> get_weather.
 
-    GOAL PLAN LENS (only when a GOAL PLAN is shown above):
+    CHECK-IN vs TREND: route on the time horizon of the question.
+    - Check-in: "checking in", "how was my week", "am I on track", "ready for next week".
+    - Trend: "since <date>", "over the last months", "this block", "what works for me", "how much volume can
+      I handle", "what pace should my easy runs be", "can I run my workouts faster", "compare with <period>".
+    - No horizon ("How am I progressing?"): check-in, then end with one line offering the long-term trend.
+    - Never call fetch_checkin_data and fetch_trend_data in the same turn.
+"""
+
+_GOAL_PLAN_LENS = """
+    GOAL PLAN LENS:
     1. The current block's sub goal is a step toward the north star, never the end point. Judge results, workouts
        and plan changes on both levels: the sub goal, and what it means for the north star. Use the north-star
        equivalents and gaps provided; do not recompute them.
     2. Sub-goal race results are progress, never pass/fail and never a reason to reschedule. Report the trend of
        north-star equivalents across the completed blocks.
     3. Protect the north star: push back on block choices that erode the aerobic base the marathon needs
-       (e.g. dropping long runs in a 5K block). The north-star peak CTL range is shown as context.
+       (e.g. long runs below the long-run target the tools report, or a collapse in weekly volume). Use the
+       tools' long-run target as the only long-run distance guidance. The north-star peak CTL range is shown
+       as context.
     4. Riegel equivalents are optimistic for the marathon without marathon-specific volume; say so when you use them.
     5. A sub-goal race never ends the plan: never offer onboarding or a new goal because a sub goal finished.
+"""
 
+_CONTRACT_RULES = """
     CRITICAL COACHING CONTRACT (Non-Negotiable):
     1. You are a coach, not an assistant. Your job is to protect the runner's long-term progression, including
        from their own enthusiasm. Agreement is not a service you provide.
@@ -284,7 +254,7 @@ _COACH_RULES = """
        request and note the risk you flagged. Never silently comply, and never flatly refuse.
     3. Disagree explicitly when the runner's self-assessment conflicts with their data. If they call a session
        "easy" and the telemetry shows Zone 4 heart rate with 8% Pa:Hr drift, say so plainly. Never validate a
-       claim the data contradicts.
+       claim the data contradicts (e.g. easy runs in the gray zone, blown interval pacing, unmanaged drift).
     4. Hold your position. Do not reverse a data-backed judgement just because the runner pushes back. Change
        your assessment only when given NEW evidence (context you did not have, or a correction to the data).
        When there is no new evidence, say so: "The data still shows X."
@@ -292,18 +262,10 @@ _COACH_RULES = """
        Praise only specific, evidenced execution, and be equally specific about what went wrong.
     6. State uncertainty honestly. If data is missing, stale, or ambiguous, say so instead of producing a
        confident answer you cannot support.
-    
-    COACHING & REASONING PRINCIPLES:
-    1. Objective, Data-Driven Appraisal: Provide honest, constructive feedback based on the metrics. Highlight genuine execution strengths and clearly identify flaws, breakdowns, or lack of discipline (e.g. running easy runs in the 'gray zone', blowing up interval pacing, or unmanaged cardiac drift) without empty cheerleading.
-    2. Contextual Physiological Synthesis:
-       - Aerobic Decoupling & Drift: Evaluate pace/power vs. heart rate (Pa:Hr / Pw:Hr) contextually. Differentiate between expected cardiovascular drift from environmental heat/humidity/hills versus true aerobic fatigue or poor pacing discipline.
-       - Terrain & Grade (NGP): Compare Normalized Graded Pace against raw pace to accurately assess physiological effort on elevation changes.
-       - Recovery & Readiness Context: Cross-reference workout execution against morning recovery indicators (HRV baseline, Resting Heart Rate, sleep duration) to identify fatigue accumulation or overreaching.
-    3. Plain-Text & Markdown Formatting (No LaTeX):
-       - Present all output in clean standard Markdown.
-       - NEVER use LaTeX math mode, dollar-sign delimiters ($...$ or $$...$$), or LaTeX commands (e.g. \\rightarrow, \\to, \\text{...}, or math subscripts like $P_a:HR$).
-       - For lap progressions and transitions, use standard text arrows (-> or →) or plain text words (e.g. "4:37/km -> 4:32/km" or "4:37/km to 4:32/km").
-       - Format metric abbreviations in standard plain text: Pa:Hr (or Pace:HR decoupling), Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W.
+
+    FORMATTING: clean standard Markdown. NEVER use LaTeX ($...$, $$...$$, \\rightarrow, \\text{...},
+    subscripts like $P_a:HR$). Use text arrows ("4:37/km -> 4:32/km" or →) and plain metric names: Pa:Hr,
+    Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W.
 """
 
 
@@ -361,7 +323,8 @@ def build_coach_instruction(ctx: ReadonlyContext) -> str:
     notice = goal_notice(profile, today)
     if notice:
         sections.append(notice)
-    return "\n\n".join(sections) + "\n" + _COACH_RULES
+    rules = _ROUTING_RULES + (_GOAL_PLAN_LENS if goal_plan else "") + _CONTRACT_RULES
+    return "\n\n".join(sections) + "\n" + rules
 
 
 coaching_agent = Agent(
@@ -370,9 +333,10 @@ coaching_agent = Agent(
     description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
     instruction=build_coach_instruction,
     tools=coaching_agent_tools,
-    # Full reasoning except on post-write confirmations; check-in tables spliced in verbatim.
-    before_model_callback=apply_thinking_policy,
-    after_model_callback=splice_checkin_tables,
+    # Prune earlier-turn tool/skill payloads; full reasoning except on post-write confirmations;
+    # check-in / trend tables spliced in verbatim.
+    before_model_callback=before_model,
+    after_model_callback=splice_tables,
     mode="chat",
 )
 
@@ -381,79 +345,97 @@ coaching_agent = Agent(
 # ==============================================================================
 ROUTE_ONBOARDING = "ONBOARDING"
 ROUTE_COACHING = "COACHING"
-ROUTE_UNAVAILABLE = "TP_UNAVAILABLE"
+ROUTE_NOT_LINKED = "NOT_LINKED"
+ROUTE_TP_NOT_CONNECTED = "TP_NOT_CONNECTED"
+ROUTE_UNAVAILABLE = "PROFILE_UNAVAILABLE"
 
-TP_UNAVAILABLE_MESSAGE = (
-    "I couldn't reach TrainingPeaks to identify you just now, so I've paused rather than "
+PROFILE_UNAVAILABLE_MESSAGE = (
+    "I couldn't load your runner profile from Firestore just now, so I've paused rather than "
     "starting onboarding. Please send your message again in a moment."
 )
 
 
-async def _resolve_profile(ctx: Context) -> tuple[Optional[dict], bool]:
-    """Resolves the runner's profile. Returns (profile, unavailable).
+def _caller_email(ctx: Context) -> Optional[str]:
+    """Resolves the caller's email across Web (`user:auth_email`), GE (`user_id`), and local dev."""
+    auth_email = normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY))
+    if auth_email:
+        return auth_email
+    session_uid = getattr(getattr(ctx, "session", None), "user_id", None)
+    return email_from_user_id(session_uid) or dev_runner_email()
 
-    Order: session state -> user-scoped `user:runner_id` (Firestore only, no
-    TrainingPeaks call) -> TrainingPeaks identity lookup (first-ever session).
-    `unavailable=True` means the runner couldn't be identified and must NOT be
-    sent to onboarding.
-    """
-    profile = ctx.state.get("user_profile")
-    if profile:
-        return profile, False
 
-    # Known runner: `user:` state is shared by all sessions of this ADK user_id.
-    runner_id = ctx.state.get(RUNNER_ID_STATE_KEY)
-    if runner_id:
-        try:
-            profile = await load_profile_by_id(ctx, runner_id)
-        except Exception:
-            logger.exception("Failed to load Firestore profile for %s", runner_id)
-            return None, True
-        if profile:
-            return profile, False
-        logger.warning("Stale %s=%r; falling back to TrainingPeaks.", RUNNER_ID_STATE_KEY, runner_id)
-        ctx.state[RUNNER_ID_STATE_KEY] = None
+def _not_linked_message(email: Optional[str]) -> str:
+    who = f" ({email})" if email else ""
+    url = web_app_url()
+    where = f"open the Running Coach web app ({url})" if url else "open the Running Coach web app"
+    return (
+        f"No runner profile is linked to your account{who} yet — "
+        f"{where} to connect TrainingPeaks and set up your profile."
+    )
 
-    # First-ever session for this ADK user: identify via TrainingPeaks.
-    try:
-        tp_get_profile_tool = await get_tp_tool("tp_get_profile")
-        tp_profile = await run_node_with_retry(ctx, tp_get_profile_tool)
-    except Exception:
-        logger.exception("Failed to fetch the TrainingPeaks profile")
-        return None, True
 
-    status = await check_profile_step(ctx, tp_profile)
-    if status == PROFILE_TP_UNAVAILABLE:
-        return None, True
-    return ctx.state.get("user_profile"), False
+def _tp_not_connected_message() -> str:
+    url = web_app_url()
+    where = f"in the Running Coach web app ({url})" if url else "in the Running Coach web app"
+    return (
+        f"Your runner profile doesn't have an active TrainingPeaks connection yet. "
+        f"Please reconnect TrainingPeaks from your profile {where}, then message me again."
+    )
 
 
 @node(name="profile_router", rerun_on_resume=True)
 async def profile_router(ctx: Context, node_input: Any = None) -> None:
-    """Resolves the runner and routes to onboarding or coaching.
+    """Identifies the runner by email and routes. No TrainingPeaks call, no shared credential.
 
-    Writes no derived goal/date keys: the coach instruction derives them from
-    `user_profile` (see build_coach_instruction).
+    Web turns set `user:auth_email` and always reload Firestore so profile edits apply immediately.
+    Gemini Enterprise and evals reuse a session-cached `user_profile` when already present.
     """
-    profile, unavailable = await _resolve_profile(ctx)
-    if unavailable:
-        ctx.route = ROUTE_UNAVAILABLE
-        return
+    auth_email = normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY))
+    profile = None if auth_email else ctx.state.get("user_profile")
+    if not profile:
+        email = _caller_email(ctx)
+        if not email:
+            ctx.route = ROUTE_NOT_LINKED
+            return
+        try:
+            found = await find_profile_by_email(email)
+            connected = bool(found) and await has_tp_credential(found[0])
+        except Exception:
+            logger.exception("Failed to resolve the runner profile for %s", email)
+            ctx.route = ROUTE_UNAVAILABLE
+            return
+        if not found:
+            ctx.route = ROUTE_NOT_LINKED
+            return
+        if not connected:
+            ctx.route = ROUTE_TP_NOT_CONNECTED
+            return
+        profile = await activate_profile(ctx, *found)
 
-    if not profile or ctx.state.get("reonboard_requested"):
-        # Re-onboarding: prefill the runner's known details.
-        if profile:
-            ctx.state["temp_onboarding_data"] = onboarding_prefill(profile)
+    if needs_onboarding(profile) or ctx.state.get("reonboard_requested"):
+        ctx.state["temp_onboarding_data"] = onboarding_prefill(profile)
         ctx.route = ROUTE_ONBOARDING
         return
 
     ctx.route = ROUTE_COACHING
 
 
-@node(name="tp_unavailable_node", rerun_on_resume=True)
-async def tp_unavailable_node(ctx: Context, node_input: Any = None) -> AsyncGenerator[Any, None]:
-    """Tells the runner we couldn't identify them, instead of wrongly onboarding."""
-    yield Event(author="model", message=TP_UNAVAILABLE_MESSAGE)
+@node(name="not_linked_node", rerun_on_resume=True)
+async def not_linked_node(ctx: Context, node_input: Any = None) -> AsyncGenerator[Any, None]:
+    """Directs an unlinked account to the web app to connect TrainingPeaks and create a profile."""
+    yield Event(author="model", message=_not_linked_message(_caller_email(ctx)))
+
+
+@node(name="tp_not_connected_node", rerun_on_resume=True)
+async def tp_not_connected_node(ctx: Context, node_input: Any = None) -> AsyncGenerator[Any, None]:
+    """Directs a runner whose profile lacks an encrypted TrainingPeaks cookie to reconnect."""
+    yield Event(author="model", message=_tp_not_connected_message())
+
+
+@node(name="profile_unavailable_node", rerun_on_resume=True)
+async def profile_unavailable_node(ctx: Context, node_input: Any = None) -> AsyncGenerator[Any, None]:
+    """Tells the runner we couldn't load their profile, instead of wrongly onboarding."""
+    yield Event(author="model", message=PROFILE_UNAVAILABLE_MESSAGE)
 
 
 @node(name="onboarding_node", rerun_on_resume=True)
@@ -464,10 +446,17 @@ async def onboarding_node(ctx: Context, node_input: Any = None) -> AsyncGenerato
         return
 
     ctx.state["onboarding_answers"] = onboarding_answers
-    if not await create_profile_step(ctx):
+    status = await create_profile_step(ctx)
+    if status == PROFILE_NO_NAME:
         yield Event(
             author="model",
-            message="I couldn't save your profile because I don't know your name yet. Please try again in a moment.",
+            message="I couldn't save your profile because I don't know your name yet. Please reconnect TrainingPeaks in the web app and try again.",
+        )
+        return
+    if status == PROFILE_EMAIL_CONFLICT:
+        yield Event(
+            author="model",
+            message="I couldn't save your profile because another account is already linked to that runner ID. Please contact an administrator.",
         )
         return
     ctx.state["reonboard_requested"] = None
@@ -497,7 +486,9 @@ root_agent = Workflow(
             {
                 ROUTE_ONBOARDING: onboarding_node,
                 ROUTE_COACHING: coaching_node,
-                ROUTE_UNAVAILABLE: tp_unavailable_node,
+                ROUTE_NOT_LINKED: not_linked_node,
+                ROUTE_TP_NOT_CONNECTED: tp_not_connected_node,
+                ROUTE_UNAVAILABLE: profile_unavailable_node,
             },
         ),
     ],
@@ -514,3 +505,4 @@ app = App(
         summarizer=LlmEventSummarizer(llm=_model(ONBOARDING_MODEL)),
     ),
 )
+

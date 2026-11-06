@@ -5,7 +5,7 @@ description: Performs a deep, structured physiological analysis of a single comp
 
 # Workout Analysis Skill
 
-You are now equipped with the Workout Analysis skill. Use this skill when the runner asks to analyze a specific **run** or **running workout**. *(Note: For completed cycling/biking workouts, route to the `bike-workout-analysis` skill.)*
+You are now equipped with the Workout Analysis skill. Use this skill when the runner asks to analyze a specific **run** or **running workout**.
 
 ## Protocol:
 

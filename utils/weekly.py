@@ -24,6 +24,8 @@ def new_week_bucket(day: date) -> dict:
         "start_date": w_start,
         "end_date": w_end,
         "total_distance_km": 0.0,
+        "long_km": 0.0,
+        "long_duration_h": None,
         "total_tss": 0.0,
         "easy_count": 0,
         "quality_count": 0,
@@ -54,6 +56,11 @@ def tally_workout(bucket: dict, workout: dict, w_date: date) -> None:
     if sport_lower in RUN_SPORTS:
         bucket["total_distance_km"] += dist
         bucket["quality_count" if is_quality_title(title) else "easy_count"] += 1
+        if dist > bucket["long_km"]:
+            bucket["long_km"] = dist
+            bucket["long_duration_h"] = next(
+                (_float(workout.get(f"duration_{k}")) for k in order if workout.get(f"duration_{k}")), None
+            )
     elif sport_lower in BIKE_SPORTS:
         bucket["bike_count"] += 1
     elif sport_lower in STRENGTH_SPORTS:
@@ -103,12 +110,15 @@ def add_notes_to_weeks(weeks: dict[str, dict], notes: Optional[list[dict]]) -> N
 def annotate_week_progression(weeks: list[dict], window_start: date, window_end: date) -> list[dict]:
     """Marks weeks only partly inside the window and adds running-volume growth vs the prior week.
 
+    `partial`: the week is not fully inside [window_start, window_end]; `in_progress`: it is the
+    current week (ends after window_end), as opposed to a past week clipped by the window start.
     Growth is only computed between two complete weeks (a partial week would fake a drop or
     spike) and when the prior week had running volume. Mutates and returns `weeks`.
     """
     prev: Optional[dict] = None
     for w in weeks:
-        w["partial"] = w["start_date"] < window_start or w["end_date"] > window_end
+        w["in_progress"] = w["end_date"] > window_end
+        w["partial"] = w["start_date"] < window_start or w["in_progress"]
         w["growth_pct"] = None
         if prev and not prev["partial"] and not w["partial"] and prev["total_distance_km"] > 0:
             w["growth_pct"] = (w["total_distance_km"] / prev["total_distance_km"] - 1) * 100

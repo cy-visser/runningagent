@@ -117,6 +117,16 @@ def current_goal(profile: Optional[dict], today: Optional[date] = None) -> dict:
     return {**active, "before_start": bool(start and today < start)}
 
 
+def goal_race_dates(profile: Optional[dict]) -> set[date]:
+    """Race days of every goal: the single goal's timeline, or each sub goal and the north star."""
+    profile = profile or {}
+    if is_plan(profile):
+        days = {_race_day(b) for b in blocks(profile)}
+    else:
+        days = {parse_date(profile.get("timeline"))}
+    return {d for d in days if d}
+
+
 def north_star(profile: Optional[dict]) -> Optional[dict]:
     """The north-star block of a plan, or None."""
     all_blocks = blocks(profile)

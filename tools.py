@@ -12,15 +12,20 @@ from google.adk.tools.skill_toolset import SkillToolset
 
 from .services.firestore import (
     get_cached_workout_analysis,
-    save_checkin_report as save_checkin_report_data,
+    list_training_records,
+    save_training_record,
     save_workout_analysis,
     update_user_profile,
 )
+from .services.tp_credentials import resolve_tp_cookie
 from .services.tp_mcp import get_tp_tool
-from .services.weather import format_weather_conditions, get_weather_conditions, get_weather_for_dates
+from .services.weather import format_weather_conditions, geocode_location, get_conditions_at, get_weather_conditions, get_weather_for_dates
 from .utils import (
     ANALYSIS_SCHEMA_VERSION,
+    CHECKIN_REPORT_STATE_KEY,
     PROJECTION_WINDOW_DAYS,
+    TREND_REPORT_STATE_KEY,
+    checkin_report_data,
     coerce_mcp_payload,
     compile_checkin_summary,
     current_goal,
@@ -51,14 +56,44 @@ from .utils import (
     resolve_goal_distance,
     select_for_analysis,
     summarize_analysis,
+    trend_report_data,
 )
 from .utils import completed_runs as completed_goal_runs
+from .utils.classification import NON_TRAINING_SPORTS, RUN_SPORTS
 from .utils.date_helpers import ISO_DATE_FMT
+from .utils.load_capacity import (
+    add_load_ratio,
+    capacity_outlook,
+    format_levels_table,
+    format_outlook,
+    ratio_vs_next_hrv,
+    volume_levels,
+)
+from .utils.long_run import annotate_long_runs, format_goal_context, format_trend_long_run_target
+from .utils.pacing import analyse_pacing, extract_hr_zones, format_pacing_details, format_pacing_tables
 from .utils.paths import SKILLS_DIR
-from .utils.race_readiness import HEALTH_BASELINE_DAYS, health_readiness, is_complete_summary
+from .utils.goals import goal_race_dates
+from .utils.race_readiness import (
+    HEALTH_BASELINE_DAYS,
+    health_readiness,
+    is_complete_summary,
+    recent_hard_effort,
+)
 from .utils.status_summary import format_fitness_pmc
+from .utils.training_log import WorkoutBundle, build_training_record, workout_context
+from .utils.trends import (
+    LT_FIT_WEEKS,
+    checkin_lt_paces,
+    format_patterns,
+    format_progress_table,
+    format_weekly_table,
+    key_run_label,
+    progress_summary,
+    training_patterns,
+    weekly_rows,
+)
 from .utils.weekly import add_notes_to_weeks, annotate_week_progression, build_week_buckets
-from .callbacks import CHECKIN_TABLES_STATE_KEY, LAST_CHECKIN_REPORT_STATE_KEY, expand_checkin_placeholder
+from .callbacks import CHECKIN_TABLES_STATE_KEY, TREND_TABLES_STATE_KEY
 from .utils.structure import (
     align_laps,
     flatten_structure,
@@ -76,19 +111,16 @@ logger = logging.getLogger(__name__)
 SKILL_NAMES = (
     "nutrition-planner",
     "check-in-report",
+    "trend-analysis",
     "workout-analysis",
     "bike-workout-analysis",
     "schedule-audit",
     "workout-creator",
 )
 
-_SKILL_INSTRUCTION = (
-    "You can use specialized skills. Each skill has a SKILL.md with the protocol and output "
-    "format for one task. When a skill matches the request, call `load_skill` with its name "
-    "together with the skill's data tool in the same step (parallel calls), then follow its "
-    "instructions exactly and complete every step. Write tools (create_workout, create_note, "
-    "save_checkin_report) only run when the skill's protocol says so. Available skills:"
-)
+# Routing (when to load which skill, parallel data call, write-tool rules) lives in the coach
+# instruction's SKILL ROUTING section; this line only introduces the catalog.
+_SKILL_INSTRUCTION = "Available skills (load with `load_skill` per SKILL ROUTING; follow the loaded protocol exactly):"
 
 
 class CompactSkillToolset(SkillToolset):
@@ -144,8 +176,8 @@ async def _fetch_weather_text(profile: dict, dates: list[str]) -> str:
 
 
 async def _run_tp_tool(tool_context: ToolContext, tool_name: str, **node_input: Any) -> Any:
-    """Resolves a TrainingPeaks MCP tool by name and invokes it."""
-    tool = await get_tp_tool(tool_name)
+    """Resolves a TrainingPeaks MCP tool by name for the active runner and invokes it."""
+    tool = await get_tp_tool(tool_name, await resolve_tp_cookie(tool_context.state))
     return await tool_context.run_node(tool, node_input=node_input or None)
 
 
@@ -233,14 +265,14 @@ async def analyze_workout(
     include_weather: bool = True,
     include_recovery: bool = True,
 ) -> str:
-    """Gets comprehensive physiological, telemetry, recovery, and environmental analysis for a workout.
+    """Physiological, telemetry, recovery and weather analysis of one completed workout.
 
     Args:
-        workout_id: Specific workout ID to analyze. If omitted, automatically finds the completed workout for date_str.
-        date_str: Target date in ISO format (YYYY-MM-DD or 'today'). Defaults to today if workout_id is not provided.
-        sport: Optional 'run' or 'bike'. When resolving by date, prefer a completed workout of this sport.
-        include_weather: Whether to fetch the hourly weather at the workout's start time. Defaults to True.
-        include_recovery: Whether to include the morning recovery metrics (HRV, Sleep, RHR) before the workout. Defaults to True.
+        workout_id: Workout to analyze; omit to use the completed workout on date_str.
+        date_str: YYYY-MM-DD or 'today' (default).
+        sport: Optional 'run' or 'bike' to prefer when resolving by date.
+        include_weather: Hourly weather at the start time (default True).
+        include_recovery: Morning HRV, sleep and RHR (default True).
     """
     profile = tool_context.state.get("user_profile") or {}
     today_date = get_today_date()
@@ -307,16 +339,19 @@ async def analyze_workout(
         structured = meta.get("structured_workout")
         is_structured = has_structure(structured)
 
-        # Recovery, weather and, for structured workouts, athlete thresholds.
-        extras: dict[str, Any] = {}
-        if is_structured:
-            extras["athlete settings"] = _run_tp_tool(tool_context, "tp_get_athlete_settings")
-        if include_recovery:
-            extras["recovery metrics"] = _run_tp_tool(
+        # Thresholds, recovery and PMC are always fetched: the training-log record needs them
+        # regardless of what this reply displays.
+        extras: dict[str, Any] = {
+            "athlete settings": _run_tp_tool(tool_context, "tp_get_athlete_settings"),
+            "recovery metrics": _run_tp_tool(
                 tool_context, "tp_get_metrics",
                 start_date=_iso(workout_date - timedelta(days=RECOVERY_LOOKBACK_DAYS)),
                 end_date=_iso(workout_date),
-            )
+            ),
+            "fitness PMC": _run_tp_tool(
+                tool_context, "tp_get_fitness", start_date=_iso(workout_date), end_date=_iso(workout_date),
+            ),
+        }
         if include_weather:
             extras["weather"] = _fetch_weather_text(profile, [str(start)])
         extra, series = await asyncio.gather(
@@ -347,7 +382,7 @@ async def analyze_workout(
         feedback = _format_athlete_feedback(meta)
         if feedback:
             sections.append(f"**Athlete feedback:** {feedback}")
-        if extra.get("recovery metrics"):
+        if include_recovery and extra.get("recovery metrics"):
             rec_formatted = format_recovery_metrics(extract_health_metrics(extra["recovery metrics"]))
             if rec_formatted:
                 sections.append(
@@ -360,6 +395,14 @@ async def analyze_workout(
         )
         if goal_context:
             sections.append(goal_context)
+        await record_workout(
+            profile, meta, data, series,
+            thresholds=extract_thresholds(extra.get("athlete settings")),
+            daily_pmc=(coerce_mcp_payload(extra["fitness PMC"]).get("daily_data") if extra.get("fitness PMC") else None),
+            dated_metrics=(extract_health_metrics_dated(extra["recovery metrics"])
+                           if extra.get("recovery metrics") else None),
+            start=str(start),
+        )
         return "\n\n".join(sections)
     except Exception as e:
         logger.error("analyze_workout failed for %s: %s", workout_id, e)
@@ -535,6 +578,7 @@ async def _build_goal_projection(
         dated_metrics=dated_metrics,
         today=today_date,
         block_start=goal["goal_set_date"],
+        race_dates=goal_race_dates(profile),
     )
     return {"goal_label": goal_label, "projection": projection}
 
@@ -545,21 +589,12 @@ async def fetch_checkin_data(
     end_date: Optional[str] = None,
     refresh_analysis_cache: bool = False,
 ) -> str:
-    """Fetches all data needed for a comprehensive weekly check-in report.
-
-    Includes:
-    - 14-day past completed workouts with run-time weather, plus pre-computed weekly totals
-    - 7-day future scheduled workouts
-    - 14-day recovery metrics (Sleep, HRV, RHR)
-    - 14-day PMC fitness trends (CTL table, ATL/TSB load context, goal trajectory)
-    - Projected goal-race time (today and race day) for the Firestore training_goal,
-      from threshold laps, goal-pace segments, HR efficiency, durability, load
-      and health readiness, with a 'Projection drivers' evidence table
-    - Calendar notes (work stress, travel, illness)
+    """Check-in data, last 14 days + next 7: workouts, weekly totals, recovery, PMC, goal-race
+    projection and calendar notes.
 
     Args:
-        start_date: Optional window start (YYYY-MM-DD). Defaults to 14 days ago.
-        end_date: Optional window end (YYYY-MM-DD). Defaults to 7 days ahead.
+        start_date: YYYY-MM-DD; default 14 days ago.
+        end_date: YYYY-MM-DD; default 7 days ahead.
         refresh_analysis_cache: Re-analyse key workouts instead of using cached summaries.
     """
     profile = tool_context.state.get("user_profile")
@@ -587,9 +622,15 @@ async def fetch_checkin_data(
         "fitness PMC": _run_tp_tool(
             tool_context, "tp_get_fitness", start_date=_iso(history_start), end_date=recovery_end_str,
         ),
+        # Athlete settings: LTHR / HR zones for LT1/LT2, thresholds for the goal projection.
+        "athlete settings": _run_tp_tool(tool_context, "tp_get_athlete_settings"),
     }
-    if goal_label:
-        fetches["athlete settings"] = _run_tp_tool(tool_context, "tp_get_athlete_settings")
+    user_id = profile_user_id(profile)
+    if user_id:
+        # Training log (laps) for the current and previous 4-week LT1/LT2 fits; no gap-fill here.
+        fetches["training records"] = list_training_records(
+            user_id, _iso(today_date - timedelta(weeks=2 * LT_FIT_WEEKS)), _iso(today_date)
+        )
     raw = await _gather_labeled(fetches)
 
     all_workouts = raw["workouts"] or []
@@ -606,12 +647,25 @@ async def fetch_checkin_data(
     )
     fitness_data = _summarize_fitness(raw["fitness PMC"], profile, today_date, window_start=q_start)
     window_end = min(q_end, today_date)
+    # Weekly totals cover whole ISO weeks: a window starting mid-week would otherwise clip the first
+    # week (undercounted km, wrongly flagged). Workouts are fetched from >= workouts_start, so the
+    # Monday is only used when its workouts are actually loaded.
+    week_start = q_start - timedelta(days=q_start.weekday())
+    if week_start < workouts_start:
+        week_start = q_start
+    weekly_source, _ = partition_workouts_by_date(
+        [w for w in all_workouts
+         if (parse_date(w.get("date") or w.get("start_time")) or q_start) >= week_start],
+        today_date,
+    )
     weekly_totals = annotate_week_progression(
-        list(build_week_buckets(workouts_past, q_start, window_end).values()), q_start, window_end
+        list(build_week_buckets(weekly_source, week_start, window_end).values()), week_start, window_end
     )
     fit = fitness_data or {}
+    recent_effort = recent_hard_effort(all_workouts, today_date, fit.get("history"), goal_race_dates(profile))
     recovery_baseline = health_readiness(
-        dated_metrics, today_date, None, fit.get("tsb_end"), fit.get("atl_end"), fit.get("ctl_end")
+        dated_metrics, today_date, None, fit.get("tsb_end"), fit.get("atl_end"), fit.get("ctl_end"),
+        recent_effort,
     )["detail"] if dated_metrics else None
 
     # Phase 2: project the goal race (cache-first analyses) while fetching run-time weather.
@@ -629,9 +683,20 @@ async def fetch_checkin_data(
         _fetch_weather_map(profile, run_timestamps),
     )
 
+    # LT1 (top of TP HR zone 2) / LT2 (LTHR) paces, same fit as the trend report.
+    zones = extract_hr_zones(raw["athlete settings"])
+    lt = checkin_lt_paces(
+        raw.get("training records") or [], today_date,
+        extract_thresholds(raw["athlete settings"]).get("lthr"),
+        zones[1]["max"] if len(zones) >= 2 else None,
+    )
+
     # Rendered once: the model reasons over it here, and the report gets it spliced in verbatim.
     if fitness_data is not None:
-        tool_context.state[CHECKIN_TABLES_STATE_KEY] = format_fitness_pmc(fitness_data, race_projection)
+        tool_context.state[CHECKIN_TABLES_STATE_KEY] = format_fitness_pmc(fitness_data, race_projection, lt)
+    tool_context.state[CHECKIN_REPORT_STATE_KEY] = checkin_report_data(
+        q_start, q_end, fitness_data, race_projection, weekly_totals, dated_metrics, lt_paces=lt,
+    )
 
     summary = compile_checkin_summary(
         lookback_days=(today_date - q_start).days,
@@ -645,6 +710,7 @@ async def fetch_checkin_data(
         race_projection=race_projection,
         weekly_totals=weekly_totals,
         recovery_baseline=recovery_baseline,
+        lt_paces=lt,
     )
     north_star_progress = _north_star_progress(profile, race_projection, today_date)
     return f"{summary}\n\n{north_star_progress}" if north_star_progress else summary
@@ -673,18 +739,16 @@ async def fetch_schedule_audit_data(
     weeks_forward: int = 4,
     weeks_back: int = 1,
 ) -> str:
-    """Audits the runner's training schedule per ISO week: running volume, TSS, easy vs. quality
-    split, cross-training, and calendar notes (travel, illness, work stress).
-
-    Past weeks use completed values, so week-over-week growth and taper checks can include
-    the prior week(s).
+    """Per-ISO-week schedule audit: volume, TSS, easy/quality split, cross-training, calendar notes,
+    goal context and long runs vs target. Past weeks use completed values.
 
     Args:
-        start_date: Optional audit start (YYYY-MM-DD). Defaults to `weeks_back` weeks before today.
-        end_date: Optional audit end (YYYY-MM-DD). Defaults to `weeks_forward` weeks after today.
-        weeks_forward: Weeks ahead to audit when end_date is omitted. Defaults to 4.
-        weeks_back: Completed weeks before today to include when start_date is omitted. Defaults to 1.
+        start_date: YYYY-MM-DD; default weeks_back weeks ago.
+        end_date: YYYY-MM-DD; default weeks_forward weeks ahead.
+        weeks_forward: Weeks ahead when end_date is omitted (default 4).
+        weeks_back: Completed weeks to include when start_date is omitted (default 1).
     """
+    profile = tool_context.state.get("user_profile") or {}
     today_date = get_today_date()
     q_start = parse_date(start_date) or (today_date - timedelta(weeks=max(0, weeks_back)))
     q_end = parse_date(end_date) or (today_date + timedelta(weeks=weeks_forward))
@@ -693,11 +757,16 @@ async def fetch_schedule_audit_data(
     raw = await _gather_labeled({
         "workouts": _fetch_workouts(tool_context, start_str, end_str),
         "calendar notes": _fetch_notes(tool_context, start_str, end_str),
+        "fitness PMC": _run_tp_tool(tool_context, "tp_get_fitness",
+                                    start_date=_iso(today_date - timedelta(days=7)), end_date=_iso(today_date)),
     })
 
     weeks = build_week_buckets(raw["workouts"], q_start, q_end)
     add_notes_to_weeks(weeks, raw["calendar notes"])
-    return format_schedule_audit_summary(list(weeks.values()))
+    week_list = annotate_long_runs(list(weeks.values()), profile)
+    daily = coerce_mcp_payload(raw["fitness PMC"]).get("daily_data") or [] if raw["fitness PMC"] else []
+    ctl = next((d.get("ctl") for d in reversed(daily) if d.get("ctl") is not None), None)
+    return format_schedule_audit_summary(week_list, goal_context=format_goal_context(profile, today_date, ctl))
 
 
 fetch_schedule_audit_data_tool = FunctionTool(fetch_schedule_audit_data)
@@ -708,11 +777,10 @@ async def fetch_nutrition_context(
     tool_context: ToolContext,
     days_forward: int = 3,
 ) -> str:
-    """Fetches runner biometrics, upcoming training demands and the forecast (temperature,
-    feels-like, humidity, wind) for customized sports nutrition and hydration guidance.
+    """Runner biometrics, upcoming training and the weather forecast for fueling and hydration guidance.
 
     Args:
-        days_forward: Days ahead to plan for. Defaults to 3.
+        days_forward: Days ahead to plan (default 3).
     """
     profile = tool_context.state.get("user_profile") or {}
     today_date = get_today_date()
@@ -841,17 +909,16 @@ async def create_workout(
       Workouts of other sports on that day are never touched.
 
     Args:
-        tool_context: ADK tool context.
-        date_str: Workout date in ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS).
-        sport: Sport type (default 'Run', e.g. 'Run', 'Bike', 'Swim', 'Strength', 'Walk', 'Crosstrain', 'Race').
-        title: Workout title (e.g. 'Easy Aerobic Recovery Run', 'Threshold Intervals: 5x1km').
-        duration_minutes: Planned duration in minutes.
-        distance_km: Optional planned distance in kilometres.
-        tss_planned: Optional planned Training Stress Score.
-        description: Structured coaching instructions (warm-up, main set, cool-down, pacing cues).
-        structure: Optional interval structure dictionary or JSON string.
-        workout_id: Optional workout ID to update directly.
-        create: If True, creates a new workout even if one of the same sport exists that day.
+        date_str: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS.
+        sport: 'Run' (default), 'Bike', 'Swim', 'Strength', 'Walk', 'Crosstrain' or 'Race'.
+        title: e.g. 'Threshold Intervals: 5x1km'.
+        duration_minutes: Planned duration.
+        distance_km: Planned distance.
+        tss_planned: Planned TSS.
+        description: Coaching instructions (warm-up, main set, cool-down, pacing cues).
+        structure: Interval structure (dict or JSON string).
+        workout_id: Workout to update.
+        create: Always create a new workout.
     """
     target_date = parse_date(date_str)
     target_iso = _iso(target_date) if target_date else date_str[:10]
@@ -918,49 +985,200 @@ create_note_tool = FunctionTool(create_note)
 
 
 # ==============================================================================
-# Action tools
+# Training log (written by analyze_workout and the trend facade's gap-fill)
 # ==============================================================================
-async def save_checkin_report(tool_context: ToolContext, report_content: Optional[str] = None) -> str:
-    """Saves the check-in report to Firestore for historical tracking.
+TP_MAX_RANGE_DAYS = 89          # TP list endpoints reject ranges > 90 days
+GAPFILL_CONCURRENCY = 2         # TP's analysis API rate-limits (429) bursts
+
+
+def _weather_at(profile: dict, start: str) -> Optional[dict]:
+    """Structured conditions at the run's start (blocking: geocoding + HTTP; call in a thread)."""
+    lat, lon = profile.get("latitude"), profile.get("longitude")
+    if (lat is None or lon is None) and profile.get("location"):
+        lat, lon = geocode_location(profile["location"]) or (None, None)
+    return get_conditions_at(lat, lon, start) if lat is not None and lon is not None else None
+
+
+async def record_workout(
+    profile: dict, meta: dict, analysis: Optional[dict], series: Optional[list[dict]], *,
+    thresholds: dict, daily_pmc: Optional[list[dict]], dated_metrics: Optional[dict], start: Optional[str],
+) -> Optional[dict]:
+    """Builds and saves the training-log record for one workout. Best effort: never raises.
+
+    The single write path for the training log; analyze_workout and gap-fill both call it.
+    """
+    try:
+        user_id = profile_user_id(profile)
+        if not user_id or not meta:
+            return None
+        weather = None
+        if start and str(meta.get("sport") or "").lower() in RUN_SPORTS:
+            weather = await asyncio.to_thread(_weather_at, profile, start)
+        bundle = WorkoutBundle(
+            meta=meta, analysis=analysis, series=series, thresholds=thresholds, weather=weather,
+            context=workout_context(parse_date(meta.get("date")), daily_pmc, dated_metrics),
+        )
+        record = build_training_record(bundle, datetime.now())
+        if record:
+            await save_training_record(user_id, record["workout_id"], record)
+        return record
+    except Exception as e:
+        logger.warning("Training-log record failed for workout %s: %s", (meta or {}).get("id"), e)
+        return None
+
+
+def _date_chunks(start: Any, end: Any) -> list[tuple[str, str]]:
+    chunks, cur = [], start
+    while cur <= end:
+        chunk_end = min(end, cur + timedelta(days=TP_MAX_RANGE_DAYS))
+        chunks.append((_iso(cur), _iso(chunk_end)))
+        cur = chunk_end + timedelta(days=1)
+    return chunks
+
+
+async def _fetch_workouts_range(tool_context: ToolContext, start: Any, end: Any) -> list[dict]:
+    parts = await asyncio.gather(*(_fetch_workouts(tool_context, s, e) for s, e in _date_chunks(start, end)))
+    return list({str(w.get("id")): w for part in parts for w in part}.values())
+
+
+async def _fetch_metrics_range(tool_context: ToolContext, start: Any, end: Any) -> dict:
+    raws = await asyncio.gather(*(
+        _run_tp_tool(tool_context, "tp_get_metrics", start_date=s, end_date=e) for s, e in _date_chunks(start, end)
+    ))
+    merged: dict[str, list] = {"sleep": [], "hrv": [], "rhr": []}
+    for raw in raws:
+        for key, values in extract_health_metrics_dated(raw).items():
+            merged[key].extend(values)
+    return merged
+
+
+async def _gapfill_one(
+    tool_context: ToolContext, sem: asyncio.Semaphore, profile: dict, workout: dict, **context: Any
+) -> Optional[dict]:
+    """Fetches one unrecorded workout from TP and records it via record_workout."""
+    async with sem:
+        wid = str(workout.get("id"))
+        is_run = str(workout.get("sport") or "").lower() in RUN_SPORTS
+        fetches = {"meta": _run_tp_tool(tool_context, "tp_get_workout", workout_id=wid)}
+        if is_run:
+            fetches["analysis"] = _run_tp_tool(tool_context, "tp_analyze_workout", workout_id=wid)
+        raw = await _gather_labeled(fetches)
+        meta = coerce_mcp_payload(raw["meta"]) if raw["meta"] else {}
+        analysis = coerce_mcp_payload(raw["analysis"]) if raw.get("analysis") else None
+        if meta.get("isError") or (analysis or {}).get("isError"):
+            return None
+        series = await asyncio.to_thread(_load_series, analysis.get("data_file")) if analysis else None
+        start = (analysis or {}).get("startTimestamp") or workout.get("start_time")
+        return await record_workout(profile, meta, analysis, series, start=start, **context)
+
+
+# ==============================================================================
+# Trend analysis facade
+# ==============================================================================
+TREND_MIN_WEEKS, TREND_MAX_WEEKS = 6, 52
+
+
+async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
+    """Long-horizon training-log trends: progress, weekly load capacity, pacing and training patterns.
 
     Args:
-        report_content: Omit to save the check-in report you just delivered (preferred).
-            Only pass text when saving an edited/different report.
+        weeks: Weeks to analyse (6-52, default 26).
     """
     profile = tool_context.state.get("user_profile")
     if not profile:
         return "Error: User profile not found in state."
-
     user_id = profile_user_id(profile)
     if not user_id:
         return "Error: Name not found in profile."
 
-    report = expand_checkin_placeholder(
-        report_content or "", tool_context.state.get(CHECKIN_TABLES_STATE_KEY)
-    ) or tool_context.state.get(LAST_CHECKIN_REPORT_STATE_KEY)
-    if not report:
-        return "Error: No check-in report found to save; pass report_content."
+    weeks = max(TREND_MIN_WEEKS, min(TREND_MAX_WEEKS, int(weeks or 26)))
+    today = get_today_date()
+    start = today - timedelta(weeks=weeks)
+    start = start - timedelta(days=start.weekday())          # whole ISO weeks
+    health_start = start - timedelta(days=HEALTH_BASELINE_DAYS)
 
-    today = datetime.now()
-    iso_year, iso_week, _ = today.isocalendar()
-    doc_id = f"{iso_week}-{iso_year}"
+    raw = await _gather_labeled({
+        "workouts": _fetch_workouts_range(tool_context, start, today),
+        "records": list_training_records(user_id, _iso(start), _iso(today)),
+        "fitness PMC": _run_tp_tool(tool_context, "tp_get_fitness", start_date=_iso(start), end_date=_iso(today)),
+        "health": _fetch_metrics_range(tool_context, health_start, today),
+        "athlete settings": _run_tp_tool(tool_context, "tp_get_athlete_settings"),
+    })
+    if raw["records"] is None:
+        return "Error: Could not read the training log from Firestore; try again later."
+    records = raw["records"]
+    daily_pmc = coerce_mcp_payload(raw["fitness PMC"]).get("daily_data") or [] if raw["fitness PMC"] else []
+    dated_metrics = raw["health"] or {}
+    thresholds = extract_thresholds(raw["athlete settings"])
 
-    try:
-        await save_checkin_report_data(user_id, doc_id, {
-            "week": iso_week,
-            "year": iso_year,
-            "created_at": today.isoformat(),
-            "report_markdown": report,
-        })
-    except Exception as e:
-        logger.error("Failed to save check-in report '%s' for %s: %s", doc_id, user_id, e)
-        return f"Error: Failed to save the report to Firestore: {e}"
+    # Gap-fill: completed workouts without a record go through the same write path as analyze_workout.
+    known = {r.get("workout_id") for r in records}
+    missing = sorted((
+        w for w in raw["workouts"] or []
+        if is_workout_completed(w) and (w.get("sport") or "") not in NON_TRAINING_SPORTS
+        and str(w.get("id")) not in known
+    ), key=lambda w: str(w.get("date") or ""), reverse=True)    # newest first: recent weeks matter most
+    sem = asyncio.Semaphore(GAPFILL_CONCURRENCY)
+    filled = await asyncio.gather(*(
+        _gapfill_one(tool_context, sem, profile, w, thresholds=thresholds,
+                     daily_pmc=daily_pmc, dated_metrics=dated_metrics)
+        for w in missing
+    ))
+    new = [r for r in filled if r]
+    records = sorted(records + new, key=lambda r: (r.get("date") or "", r.get("workout_id") or ""))
+    unrecorded = [str(w.get("date") or "") for w, r in zip(missing, filled) if not r]
 
-    logger.info("Saved check-in report '%s' to Firestore for %s", doc_id, user_id)
-    return f"Success: Your check-in report for Week {iso_week}, {iso_year} has been saved to your history."
+    goal_label = resolve_goal_distance(current_goal(profile, today)["training_goal"])
+    zones = extract_hr_zones(raw["athlete settings"])
+    lthr = thresholds.get("lthr")
+    lt1_hr = zones[1]["max"] if len(zones) >= 2 else None          # LT1 = top of TP HR zone 2
+    rows = add_load_ratio(weekly_rows(records, daily_pmc, dated_metrics, start, today, unrecorded,
+                                      goal_label=goal_label, lthr=lthr, lt1_hr=lt1_hr))
+    progress = progress_summary(rows, goal_label)
+    levels = volume_levels(rows)
+    outlook = capacity_outlook(rows, levels)
+    rho, n_pairs = ratio_vs_next_hrv(rows)
+    pacing = analyse_pacing(records, thresholds, zones, today)
+    patterns = training_patterns(rows)
+
+    progress_table = format_progress_table(progress)
+    if progress_table and (pacing.get("lthr_check") or {}).get("status") == "unconfirmed":
+        progress_table += ("\n\n_Pace @ LT2 relies on a TrainingPeaks LTHR that the data has not confirmed "
+                           "(see the LTHR check)._")
+    tables = "\n\n".join(t for t in (
+        progress_table, format_levels_table(levels), format_pacing_tables(pacing)
+    ) if t)
+    tool_context.state[TREND_TABLES_STATE_KEY] = tables
+    tool_context.state[TREND_REPORT_STATE_KEY] = trend_report_data(
+        start, today, rows, progress, levels, outlook, key_run_label=key_run_label(goal_label)
+    )
+
+    runs = sum(1 for r in records if str(r.get("sport") or "").lower() in RUN_SPORTS)
+    with_laps = sum(1 for r in records if r.get("laps"))
+    comments = [c for r in rows for c in r["comments"]]
+    easy = pacing.get("easy")
+    easy_pace_s = (easy["fast_s"] + easy["slow_s"]) / 2 if easy else None
+    long_run_line = format_trend_long_run_target(profile, today, rows, easy_pace_s)
+    capacity = format_outlook(outlook, rho, n_pairs) + (f"\n\n{long_run_line}" if long_run_line else "")
+    sections = [
+        f"## Trend data: {_iso(start)} to {_iso(today)} ({weeks} weeks)",
+        f"Coverage: {len(records)} workouts in the training log ({runs} runs, {with_laps} with lap data); "
+        f"{len(new)} added by gap-fill now, {len(unrecorded)} could not be recorded now (no data, still syncing, "
+        "or a TrainingPeaks error such as a rate limit; retried on the next call). Weeks with unrecorded "
+        "workouts are marked and excluded from progress, capacity and pattern conclusions.",
+        tables,
+        "### Weekly rows\n" + format_weekly_table(rows),
+        "### Load capacity\n" + capacity,
+        "### Pacing\n" + format_pacing_details(pacing),
+        "### Training patterns\n" + format_patterns(patterns),
+    ]
+    if comments:
+        sections.append("### Athlete comments (raw)\n" + "\n".join(f"- {c}" for c in comments))
+    return "\n\n".join(sections)
 
 
-save_checkin_report_tool = FunctionTool(save_checkin_report)
+fetch_trend_data_tool = FunctionTool(fetch_trend_data)
+
 
 
 async def request_new_goal(tool_context: ToolContext) -> str:
@@ -997,11 +1215,11 @@ __all__ = [
     "skill_toolset",
     "analyze_workout_tool",
     "fetch_checkin_data_tool",
+    "fetch_trend_data_tool",
     "fetch_schedule_audit_data_tool",
     "fetch_nutrition_context_tool",
     "create_workout_tool",
     "create_note_tool",
-    "save_checkin_report_tool",
     "request_new_goal_tool",
     "get_weather_tool",
 ]

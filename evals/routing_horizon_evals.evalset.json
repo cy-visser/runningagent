@@ -1,0 +1,219 @@
+[
+  {
+    "name": "checking_in",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Checking in",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "check-in-report"
+            }
+          },
+          {
+            "tool_name": "fetch_checkin_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Here is your check-in for the last two weeks: training load, recovery markers and goal trajectory, with your top priorities for the coming week."
+      }
+    ]
+  },
+  {
+    "name": "how_was_my_week",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "How was my week?",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "check-in-report"
+            }
+          },
+          {
+            "tool_name": "fetch_checkin_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Here is your check-in for the last two weeks: training load, recovery markers and goal trajectory, with your top priorities for the coming week."
+      }
+    ]
+  },
+  {
+    "name": "ambiguous_progress_defaults_to_checkin",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "How am I progressing?",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "check-in-report"
+            }
+          },
+          {
+            "tool_name": "fetch_checkin_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Here is your check-in for the last two weeks: training load, recovery markers and goal trajectory, with your top priorities for the coming week. Want the long-term trend since the start of your training block as well?"
+      }
+    ]
+  },
+  {
+    "name": "fitness_since_july",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "How has my fitness developed since July?",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "trend-analysis"
+            }
+          },
+          {
+            "tool_name": "fetch_trend_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Here is your long-term trend: progress in fitness and efficiency, the weekly volume you have proven to handle, your easy and workout paces, and which training patterns worked for you."
+      }
+    ]
+  },
+  {
+    "name": "what_works_for_me",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "What works for me?",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "trend-analysis"
+            }
+          },
+          {
+            "tool_name": "fetch_trend_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Here is your long-term trend: progress in fitness and efficiency, the weekly volume you have proven to handle, your easy and workout paces, and which training patterns worked for you."
+      }
+    ]
+  },
+  {
+    "name": "load_capacity",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "How much weekly volume can I handle? Could I do 100 km weeks?",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "trend-analysis"
+            }
+          },
+          {
+            "tool_name": "fetch_trend_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Here is your long-term trend: progress in fitness and efficiency, the weekly volume you have proven to handle, your easy and workout paces, and which training patterns worked for you."
+      }
+    ]
+  },
+  {
+    "name": "easy_pace",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2026-11-15",
+          "training_goal": "Sub-3:30 Marathon"
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "What pace should my easy runs be, and can I run my workouts faster?",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "trend-analysis"
+            }
+          },
+          {
+            "tool_name": "fetch_trend_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "Here is your long-term trend: progress in fitness and efficiency, the weekly volume you have proven to handle, your easy and workout paces, and which training patterns worked for you."
+      }
+    ]
+  }
+]

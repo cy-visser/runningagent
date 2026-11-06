@@ -203,3 +203,36 @@ def get_weather_for_dates(
     if error:
         return error
     return format_weather_conditions(location, conditions)
+
+
+# The forecast API only serves ~92 days of history; older dates come from the archive API.
+FORECAST_HISTORY_DAYS = 80
+
+
+def get_conditions_at(lat: float, lon: float, timestamp: str) -> Optional[dict]:
+    """Structured conditions at one local timestamp (YYYY-MM-DDTHH:MM:SS), or None on failure.
+
+    Returns {"temp_c", "feels_like_c", "humidity", "wind_kmh"} for the hour of the timestamp.
+    """
+    dt = parse_iso_timestamp(timestamp)
+    if dt is None or lat is None or lon is None:
+        return None
+    day = dt.strftime("%Y-%m-%d")
+    old = dt.date() < datetime.now().date() - timedelta(days=FORECAST_HISTORY_DAYS)
+    host = "https://archive-api.open-meteo.com/v1/archive" if old else "https://api.open-meteo.com/v1/forecast"
+    url = (
+        f"{host}?latitude={lat}&longitude={lon}&start_date={day}&end_date={day}"
+        "&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m&timezone=auto"
+    )
+    try:
+        hourly = _fetch_json(url).get("hourly") or {}
+        i = (hourly.get("time") or []).index(f"{day}T{dt.hour:02d}:00")
+        return {
+            "temp_c": hourly["temperature_2m"][i],
+            "feels_like_c": hourly["apparent_temperature"][i],
+            "humidity": hourly["relative_humidity_2m"][i],
+            "wind_kmh": hourly["wind_speed_10m"][i],
+        }
+    except Exception as e:  # network, missing hour or missing key -> no weather on the record
+        logger.info("Structured weather unavailable for %s: %s", timestamp, e)
+        return None

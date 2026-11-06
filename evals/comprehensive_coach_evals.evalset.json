@@ -266,5 +266,53 @@
         "reference": "Congratulations on finishing your marathon on 2026-10-18! Here is the analysis of your race. Whenever you are ready, I can help you set up your next goal."
       }
     ]
+  },
+  {
+    "name": "five_k_block_audit_protects_north_star",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "location": "Amsterdam",
+          "goal_type": "plan",
+          "north_star": {
+            "goal": "Sub-3:20 Marathon",
+            "race_name": "London Marathon 2028",
+            "start_date": null,
+            "race_date": "2028-04-23",
+            "taper_weeks": null
+          },
+          "sub_goals": [
+            {
+              "goal": "Sub-21 5K",
+              "race_name": "Winter 5K",
+              "start_date": "2026-11-30",
+              "race_date": "2027-02-07",
+              "taper_weeks": null,
+              "result": null
+            }
+          ]
+        }
+      }
+    },
+    "data": [
+      {
+        "query": "Can you audit my 5K block? How long should my long runs be?",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "schedule-audit"
+            }
+          },
+          {
+            "tool_name": "fetch_schedule_audit_data",
+            "tool_input": {}
+          }
+        ],
+        "reference": "I audited your 5K block on two levels: the Sub-21 5K and your Sub-3:20 London Marathon north star. Each week's long run is checked against the computed long-run target: 25-30% of the week's running km with a 16 km floor to protect your marathon base, capped at 110 minutes, dropping to 12-16 km in the last two weeks before the race. Weeks flagged below the north-star floor should get a longer easy long run. Sub goal: keep the quality sessions spaced. North star: hold weekly volume so CTL keeps moving toward the north-star range."
+      }
+    ]
   }
 ]

@@ -5,22 +5,26 @@ from typing import Any, Optional
 from google.adk import Context
 
 from .services.firestore import (
+    find_user_profile_by_email,
     get_user_profile,
     save_user_profile,
     update_user_profile,
 )
 from .services.weather import geocode_location
 from .utils import (
-    calculate_age,
+    AUTH_EMAIL_STATE_KEY,
     merge_profile_data,
+    normalize_email,
     onboarding_prefill,
-    parse_mcp_response,
-    parse_runner_name,
     profile_user_id,
     sync_profile_to_state,
 )
 
 logger = logging.getLogger(__name__)
+
+PROFILE_SAVED = "saved"
+PROFILE_NO_NAME = "no_name"
+PROFILE_EMAIL_CONFLICT = "email_conflict"
 
 
 def _as_dict(value: Any) -> dict:
@@ -51,81 +55,63 @@ async def _ensure_cached_coordinates(user_id: str, profile: dict) -> None:
     logger.info("Cached coordinates %s for %s", coords, user_id)
 
 
-PROFILE_FOUND = "found"
-PROFILE_NEW = "new"
-PROFILE_TP_UNAVAILABLE = "tp_unavailable"
+async def find_profile_by_email(email: str) -> Optional[tuple[str, dict]]:
+    """Looks up `(runner_id, profile)` in Firestore by normalized email.
 
-
-async def load_profile_by_id(ctx: Context, user_id: str) -> Optional[dict]:
-    """Loads a Firestore profile by id into state. Returns None if it doesn't exist.
-
-    Raises on Firestore errors so callers can tell "missing" from "unreachable".
+    Raises on Firestore errors or duplicate mappings so callers can fail closed.
     """
-    profile = await get_user_profile(user_id)
-    logger.info("Firestore profile lookup for '%s': exists=%s", user_id, profile is not None)
-    if not profile:
-        return None
+    found = await find_user_profile_by_email(email)
+    logger.info("Firestore email lookup for %r: exists=%s", email, found is not None)
+    return found
+
+
+async def activate_profile(ctx: Context, user_id: str, profile: dict) -> dict:
+    """Caches missing coordinates (best-effort) and activates `profile` in session state."""
     try:
         await _ensure_cached_coordinates(user_id, profile)
-    except Exception as e:  # non-fatal: the profile itself was found
-        logger.warning("Could not cache coordinates for %s: %s", user_id, e)
+    except Exception as exc:  # non-fatal: the profile itself was loaded
+        logger.warning("Could not cache coordinates for %s: %s", user_id, exc)
     sync_profile_to_state(ctx, profile)
     ctx.state["temp_onboarding_data"] = onboarding_prefill(profile)
     return profile
 
 
-async def check_profile_step(ctx: Context, tp_profile: Any) -> str:
-    """Identifies the runner from the TrainingPeaks profile and loads their Firestore profile.
-
-    Returns PROFILE_FOUND (user_profile in state), PROFILE_NEW (no stored profile;
-    `temp_onboarding_data` seeded from TrainingPeaks) or PROFILE_TP_UNAVAILABLE
-    (the runner couldn't be identified or Firestore failed; must NOT onboard).
-    """
-    ctx.state["temp_onboarding_data"] = {}
-
-    profile_data = parse_mcp_response(tp_profile)
-    if not isinstance(profile_data, dict) or not profile_data:
-        logger.error("Could not parse the TrainingPeaks profile response.")
-        return PROFILE_TP_UNAVAILABLE
-
-    name = str(profile_data.get("name", "")).strip()
-    if not name:
-        logger.error("Name not found in the TrainingPeaks profile.")
-        return PROFILE_TP_UNAVAILABLE
-
-    firstname, lastname, user_id = parse_runner_name(name)
-
-    try:
-        if await load_profile_by_id(ctx, user_id):
-            return PROFILE_FOUND
-    except Exception:
-        logger.exception("Failed to load Firestore profile for %s", user_id)
-        return PROFILE_TP_UNAVAILABLE
-
-    # No stored profile: seed onboarding with the data harvested from TrainingPeaks.
-    ctx.state["temp_onboarding_data"] = {
-        "firstname": firstname,
-        "lastname": lastname,
-        "age": calculate_age(profile_data.get("birthDate")),
-        "height": profile_data.get("height"),
-        "weight": profile_data.get("weight"),
-        "location": profile_data.get("city") or profile_data.get("country"),
-    }
-    return PROFILE_NEW
-
-
-async def create_profile_step(ctx: Context) -> bool:
+async def create_profile_step(ctx: Context) -> str:
     """Resolves coordinates and saves the final profile to Firestore.
 
-    Returns False (and writes nothing) when the runner's name is unknown.
+    Returns:
+      - `PROFILE_SAVED`: profile written and synced into session state.
+      - `PROFILE_NO_NAME`: refused because no runner name was present.
+      - `PROFILE_EMAIL_CONFLICT`: refused because `users/{user_id}` already belongs to a
+        different (or unlinked) account.
     """
     onboarding_answers = _as_dict(ctx.state.get("onboarding_answers"))
-    temp_data = ctx.state.get("temp_onboarding_data") or {}
+    temp_data = dict(ctx.state.get("temp_onboarding_data") or {})
+
+    incoming_email = normalize_email(
+        temp_data.get("email")
+        or (ctx.state.get("user_profile") or {}).get("email")
+        or ctx.state.get(AUTH_EMAIL_STATE_KEY)
+    )
+    if incoming_email:
+        temp_data["email"] = incoming_email
 
     user_id = profile_user_id(temp_data)
     if not user_id:
         logger.error("Refusing to save a profile without a runner name.")
-        return False
+        return PROFILE_NO_NAME
+
+    existing = await get_user_profile(user_id)
+    if existing is not None:
+        existing_email = normalize_email(existing.get("email"))
+        if existing_email != incoming_email:
+            logger.error(
+                "Refusing to overwrite users/%s: existing email %r != incoming email %r",
+                user_id,
+                existing_email,
+                incoming_email,
+            )
+            return PROFILE_EMAIL_CONFLICT
 
     location = onboarding_answers.get("location") or temp_data.get("location") or ""
     lat, lon = None, None
@@ -147,4 +133,4 @@ async def create_profile_step(ctx: Context) -> bool:
 
     ctx.state["temp_onboarding_data"] = None
     ctx.state["onboarding_answers"] = None
-    return True
+    return PROFILE_SAVED
