@@ -41,7 +41,6 @@ from .metrics import (
 )
 from .profile_helpers import (
     AUTH_EMAIL_STATE_KEY,
-    email_from_user_id,
     format_profile_summary,
     get_user_id,
     merge_profile_data,
@@ -124,7 +123,6 @@ __all__ = [
     "parse_mcp_response",
     # Profile helpers
     "AUTH_EMAIL_STATE_KEY",
-    "email_from_user_id",
     "format_profile_summary",
     "get_user_id",
     "merge_profile_data",

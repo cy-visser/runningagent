@@ -17,6 +17,9 @@ def test_router_outcomes_profile_guards_and_sub_goal_result_preservation(runner)
     # Web-authenticated known runner -> COACHING.
     assert _route(FakeContext(state={AUTH_EMAIL_STATE_KEY: EMAIL}, user_id=f"web_{EMAIL}")) == agent.ROUTE_COACHING
 
+    # Bare-email session.user_id without user:auth_email is NOT trusted -> NOT_LINKED.
+    assert _route(FakeContext(user_id=EMAIL)) == agent.ROUTE_NOT_LINKED
+
     # Unknown web email -> NOT_LINKED.
     assert _route(FakeContext(state={AUTH_EMAIL_STATE_KEY: "stranger@x.com"})) == agent.ROUTE_NOT_LINKED
 

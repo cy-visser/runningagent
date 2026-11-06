@@ -38,7 +38,6 @@ from .tools import (
 )
 from .utils import (
     AUTH_EMAIL_STATE_KEY,
-    email_from_user_id,
     final_race_passed,
     format_goal_plan,
     format_profile_summary,
@@ -355,12 +354,8 @@ PROFILE_UNAVAILABLE_MESSAGE = (
 
 
 def _caller_email(ctx: Context) -> Optional[str]:
-    """Resolves the caller's email across Web (`user:auth_email`), GE (`user_id`), and local dev."""
-    auth_email = normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY))
-    if auth_email:
-        return auth_email
-    session_uid = getattr(getattr(ctx, "session", None), "user_id", None)
-    return email_from_user_id(session_uid) or dev_runner_email()
+    """Resolves the caller's email from the web app (`user:auth_email`) or local dev."""
+    return normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY)) or dev_runner_email()
 
 
 def _not_linked_message(email: Optional[str]) -> str:
@@ -387,7 +382,7 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
     """Identifies the runner by email and routes. No TrainingPeaks call, no shared credential.
 
     Web turns set `user:auth_email` and always reload Firestore so profile edits apply immediately.
-    Gemini Enterprise and evals reuse a session-cached `user_profile` when already present.
+    Evals and local runs reuse a session-cached `user_profile` when already present.
     """
     auth_email = normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY))
     profile = None if auth_email else ctx.state.get("user_profile")

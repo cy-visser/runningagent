@@ -1,4 +1,4 @@
-google-adk[extensions,a2a,mcp,otel-gcp]==2.2.0
+google-adk[extensions,mcp,otel-gcp]==2.2.0
 google-cloud-firestore
 python-dotenv
 ./agents/running_coach/tp_mcp-2.0.0-py3-none-any.whl

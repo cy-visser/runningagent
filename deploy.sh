@@ -25,7 +25,7 @@ if [ -z "${GOOGLE_CLOUD_LOCATION:-}" ]; then
     exit 1
 fi
 
-for bin in agents-cli gcloud curl jq; do
+for bin in agents-cli gcloud jq; do
     if ! command -v "$bin" >/dev/null 2>&1; then
         echo "Error: Required tool '$bin' is not installed or not on PATH." >&2
         if [ "$bin" = "agents-cli" ]; then
@@ -44,41 +44,22 @@ KMS_KEY_NAME="${TP_COOKIE_KMS_KEY_NAME:-tp-cookie}"
 KMS_KEY="${TP_COOKIE_KMS_KEY:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEY_RING}/cryptoKeys/${KMS_KEY_NAME}}"
 WEB_SERVICE_NAME="${WEB_SERVICE_NAME:-running-coach-web}"
 TRACES_BUCKET="${TRACES_BUCKET:-traces_runningagent}"
-GE_LOCATION="${GE_LOCATION:-global}"
-GE_APP_ID="${GE_APP_ID:-running-coach}"
-GE_APP_DISPLAY_NAME="Running Coach"
 AGENT_DISPLAY_NAME="Running Coach"
-AGENT_DESCRIPTION="Your running coach which helps you progressing your running fitness."
-TARGET="web"
 DRY_RUN=false
 
 usage() {
     cat <<EOF
-Usage: ./deploy.sh [--target ge|web|both] [--dry-run]
+Usage: ./deploy.sh [--dry-run]
+
+Deploys the Running Coach ADK agent to Vertex AI Agent Runtime and the Cloud Run Web App (IAP).
 
 Options:
-  --target ge|web|both   Front-end target(s) to deploy after updating Agent Runtime (default: web)
-                           ge   -> Deploy Agent Runtime + register in Gemini Enterprise
-                           web  -> Deploy Agent Runtime + deploy Cloud Run Web App (IAP)
-                           both -> Deploy Agent Runtime + both Gemini Enterprise & Cloud Run Web App
-  --dry-run              Validate preflight and print planned deployment actions without mutating resources
+  --dry-run   Validate preflight and print planned deployment actions without mutating resources
 EOF
 }
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --target)
-            if [[ "$#" -lt 2 ]]; then
-                echo "Error: --target requires a value (ge, web, or both)." >&2
-                usage >&2
-                exit 1
-            fi
-            TARGET="$2"
-            shift
-            ;;
-        --target=*)
-            TARGET="${1#*=}"
-            ;;
         --dry-run)
             DRY_RUN=true
             ;;
@@ -94,14 +75,6 @@ while [[ "$#" -gt 0 ]]; do
     esac
     shift
 done
-
-case "$TARGET" in
-    ge|web|both) ;;
-    *)
-        echo "Error: Invalid --target '${TARGET}'. Expected 'ge', 'web', or 'both'." >&2
-        exit 1
-        ;;
-esac
 
 PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)" --quiet)
 if [ -z "$PROJECT_NUMBER" ]; then
@@ -126,113 +99,6 @@ if ! gcloud kms keys describe "${KMS_KEY_NAME}" \
     fi
 fi
 
-if [ "$GE_LOCATION" = "global" ]; then
-    DE_BASE_URL="https://discoveryengine.googleapis.com"
-else
-    DE_BASE_URL="https://${GE_LOCATION}-discoveryengine.googleapis.com"
-fi
-
-find_ge_apps() {
-    local token page_token="" url resp
-    token=$(gcloud auth print-access-token)
-    while :; do
-        url="${DE_BASE_URL}/v1/projects/${PROJECT_NUMBER}/locations/${GE_LOCATION}/collections/default_collection/engines?pageSize=100"
-        if [ -n "$page_token" ]; then
-            url="${url}&pageToken=${page_token}"
-        fi
-        resp=$(curl -sS --fail-with-body \
-            -H "Authorization: Bearer ${token}" \
-            -H "X-Goog-User-Project: ${PROJECT_ID}" \
-            "$url")
-        echo "$resp" | jq -r --arg name "$GE_APP_DISPLAY_NAME" \
-            '.engines[]? | select(.displayName == $name) | .name'
-        page_token=$(echo "$resp" | jq -r '.nextPageToken // empty')
-        if [ -z "$page_token" ]; then
-            break
-        fi
-    done
-}
-
-ensure_ge_app() {
-    local matches count token create_url payload resp op_name op_resp done_flag err_msg
-    matches=$(find_ge_apps)
-    if [ -z "$matches" ]; then
-        count=0
-    else
-        count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
-    fi
-
-    if [ "$count" -gt 1 ]; then
-        echo "Error: Found multiple Gemini Enterprise apps named '${GE_APP_DISPLAY_NAME}' in '${GE_LOCATION}':" >&2
-        printf '%s\n' "$matches" >&2
-        exit 1
-    fi
-
-    if [ "$count" -eq 1 ]; then
-        GE_APP_NAME=$(printf '%s\n' "$matches" | head -n 1)
-        echo "Found existing Gemini Enterprise app: ${GE_APP_NAME}"
-        return 0
-    fi
-
-    if [ "$DRY_RUN" = true ]; then
-        GE_APP_NAME="projects/${PROJECT_NUMBER}/locations/${GE_LOCATION}/collections/default_collection/engines/${GE_APP_ID}"
-        echo "[DRY RUN] Gemini Enterprise app '${GE_APP_DISPLAY_NAME}' not found in '${GE_LOCATION}'."
-        echo "[DRY RUN] Would create app: ${GE_APP_NAME}"
-        return 0
-    fi
-
-    echo "Creating Gemini Enterprise app '${GE_APP_DISPLAY_NAME}' (${GE_APP_ID}) in '${GE_LOCATION}'..."
-    token=$(gcloud auth print-access-token)
-    create_url="${DE_BASE_URL}/v1/projects/${PROJECT_NUMBER}/locations/${GE_LOCATION}/collections/default_collection/engines?engineId=${GE_APP_ID}"
-    payload=$(jq -n \
-        --arg display_name "$GE_APP_DISPLAY_NAME" \
-        '{
-            displayName: $display_name,
-            solutionType: "SOLUTION_TYPE_SEARCH",
-            industryVertical: "GENERIC",
-            appType: "APP_TYPE_INTRANET",
-            searchEngineConfig: {
-                searchTier: "SEARCH_TIER_ENTERPRISE",
-                searchAddOns: ["SEARCH_ADD_ON_LLM"]
-            }
-        }')
-    resp=$(curl -sS --fail-with-body -X POST \
-        -H "Authorization: Bearer ${token}" \
-        -H "X-Goog-User-Project: ${PROJECT_ID}" \
-        -H "Content-Type: application/json" \
-        -d "$payload" \
-        "$create_url")
-
-    op_name=$(echo "$resp" | jq -r '.name // empty')
-    if [ -z "$op_name" ]; then
-        echo "Error: Unexpected response when creating Gemini Enterprise app:" >&2
-        echo "$resp" >&2
-        exit 1
-    fi
-
-    for _ in $(seq 1 60); do
-        done_flag=$(echo "$resp" | jq -r '.done // false')
-        if [ "$done_flag" = "true" ]; then
-            err_msg=$(echo "$resp" | jq -r '.error.message // empty')
-            if [ -n "$err_msg" ]; then
-                echo "Error creating Gemini Enterprise app: ${err_msg}" >&2
-                exit 1
-            fi
-            break
-        fi
-        sleep 3
-        token=$(gcloud auth print-access-token)
-        op_resp=$(curl -sS --fail-with-body \
-            -H "Authorization: Bearer ${token}" \
-            -H "X-Goog-User-Project: ${PROJECT_ID}" \
-            "${DE_BASE_URL}/v1/${op_name}")
-        resp="$op_resp"
-    done
-
-    GE_APP_NAME="projects/${PROJECT_NUMBER}/locations/${GE_LOCATION}/collections/default_collection/engines/${GE_APP_ID}"
-    echo "Created Gemini Enterprise app: ${GE_APP_NAME}"
-}
-
 GIT_SHA=$(git describe --always --dirty 2>/dev/null || echo "local")
 RUNTIME_ENV_VARS=(
     "SESSION_SERVICE_URI=${SESSION_URI}"
@@ -250,7 +116,7 @@ RUNTIME_ENV_VARS=(
 RUNTIME_ENV_CSV=$(IFS=,; echo "${RUNTIME_ENV_VARS[*]}")
 
 echo "======================================================================="
-echo " Deploying Running Coach (Target: ${TARGET})"
+echo " Deploying Running Coach (Agent Runtime + Cloud Run Web App)"
 echo "======================================================================="
 echo "Project:       ${PROJECT_ID} (${PROJECT_NUMBER})"
 echo "Region:        ${REGION}"
@@ -275,18 +141,11 @@ if [ "$DRY_RUN" = true ]; then
     fi
     EXISTING_RUNTIME_ID="${EXISTING_RUNTIME_ID:-projects/${PROJECT_NUMBER}/locations/${REGION}/reasoningEngines/PENDING}"
 
-    if [[ "$TARGET" == "ge" || "$TARGET" == "both" ]]; then
-        ensure_ge_app
-        echo "[DRY RUN] Would register/update '${AGENT_DISPLAY_NAME}' (${EXISTING_RUNTIME_ID}) in Gemini Enterprise app '${GE_APP_NAME}'."
-    fi
-
-    if [[ "$TARGET" == "web" || "$TARGET" == "both" ]]; then
-        bash ./webapp/deploy.sh --dry-run --agent-runtime-id "${EXISTING_RUNTIME_ID}"
-    fi
+    bash ./webapp/deploy.sh --dry-run --agent-runtime-id "${EXISTING_RUNTIME_ID}"
     exit 0
 fi
 
-# 1. Always deploy the shared ADK agent to Vertex AI Agent Runtime
+# 1. Deploy the ADK agent to Vertex AI Agent Runtime
 echo "Deploying agent to Vertex AI Agent Runtime via agents-cli..."
 agents-cli deploy \
     --project "${PROJECT_ID}" \
@@ -301,33 +160,11 @@ if [ -z "$AGENT_RUNTIME_ID" ]; then
     exit 1
 fi
 
-# 2. Optionally publish/update Gemini Enterprise registration
-if [[ "$TARGET" == "ge" || "$TARGET" == "both" ]]; then
-    ensure_ge_app
-    echo "Registering/updating '${AGENT_DISPLAY_NAME}' in Gemini Enterprise app '${GE_APP_NAME}'..."
-    agents-cli publish gemini-enterprise \
-        --registration-type adk \
-        --gemini-enterprise-app-id "${GE_APP_NAME}" \
-        --agent-runtime-id "${AGENT_RUNTIME_ID}" \
-        --display-name "${AGENT_DISPLAY_NAME}" \
-        --description "${AGENT_DESCRIPTION}" \
-        --tool-description "${AGENT_DESCRIPTION}" \
-        --project-id "${PROJECT_ID}" \
-        --project-number "${PROJECT_NUMBER}"
-fi
-
-# 3. Optionally deploy the Cloud Run Web App
-if [[ "$TARGET" == "web" || "$TARGET" == "both" ]]; then
-    bash ./webapp/deploy.sh --agent-runtime-id "${AGENT_RUNTIME_ID}"
-fi
+# 2. Deploy the Cloud Run Web App
+bash ./webapp/deploy.sh --agent-runtime-id "${AGENT_RUNTIME_ID}"
 
 echo "======================================================================="
-echo "Deployment completed successfully! (Target: ${TARGET})"
+echo "Deployment completed successfully!"
 echo "  Agent Runtime: ${AGENT_RUNTIME_ID}"
-if [[ "$TARGET" == "ge" || "$TARGET" == "both" ]]; then
-    echo "  Gemini Enterprise App: ${GE_APP_NAME}"
-fi
-if [[ "$TARGET" == "web" || "$TARGET" == "both" ]]; then
-    echo "  Cloud Run Web Service: ${WEB_SERVICE_NAME} (${REGION})"
-fi
+echo "  Cloud Run Web Service: ${WEB_SERVICE_NAME} (${REGION})"
 echo "======================================================================="

@@ -17,7 +17,6 @@ provider "google" {
 locals {
   apis = [
     "aiplatform.googleapis.com",       # Vertex AI / Agent Platform
-    "discoveryengine.googleapis.com",  # Gemini Enterprise (Discovery Engine)
     "firestore.googleapis.com",        # Firestore (Profiles, Sessions, Training Log)
     "cloudtrace.googleapis.com",       # Cloud Trace (Telemetry)
     "logging.googleapis.com",          # Cloud Logging (Telemetry)

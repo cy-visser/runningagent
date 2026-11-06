@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir -r /app/agents/running_coach/requirements.txt
 
 EXPOSE 8080
 
+# Note: in ADK 2.2.0 --gemini_enterprise_app_name mounts /api/reasoning_engine and
+# /api/stream_reasoning_engine required by Vertex AI Agent Runtime (it does not register with GE).
 CMD exec adk api_server --port=8080 --host=0.0.0.0 \
     --session_service_uri="${SESSION_SERVICE_URI:?SESSION_SERVICE_URI must be set}" \
-    --otel_to_cloud --a2a --gemini_enterprise_app_name=running_coach /app/agents
+    --otel_to_cloud --gemini_enterprise_app_name=running_coach /app/agents
+

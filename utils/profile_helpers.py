@@ -23,17 +23,6 @@ def normalize_email(email: Optional[str]) -> Optional[str]:
     return clean if local and "." in domain else None
 
 
-def email_from_user_id(user_id: Optional[str]) -> Optional[str]:
-    """Extracts the runner email when ADK `user_id` is an email address (Gemini Enterprise).
-
-    Web sessions pass `user_id="web_<email>"` and carry the IAP-verified address in
-    `user:auth_email` instead, so `web_` prefixes are ignored here.
-    """
-    raw = str(user_id or "").strip()
-    if raw.lower().startswith("web_"):
-        return None
-    return normalize_email(raw)
-
 
 def get_user_id(firstname: Optional[str], lastname: Optional[str] = "") -> str:
     """Returns the canonical lowercase user_id for Firestore document keys."""
