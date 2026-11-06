@@ -13,15 +13,10 @@ REPO_PARENT = os.path.dirname(PACKAGE_ROOT)
 if REPO_PARENT not in sys.path:
     sys.path.insert(0, REPO_PARENT)
 
+from running_coach.integrations import firestore, open_meteo
+from running_coach.integrations.trainingpeaks import credentials, tp_calls
+from running_coach.shared import dates
 from running_coach.tests.fakes import CANOVA, FakeRunnerEnv
-
-
-def _try_import(mod_name: str) -> Any:
-    try:
-        __import__(mod_name)
-        return sys.modules[mod_name]
-    except ImportError:
-        return None
 
 
 @pytest.fixture
@@ -101,67 +96,23 @@ def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
     def fake_geocode(location: str) -> tuple[float, float]:
         return (52.37, 4.89)
 
-    for mod_name in ("running_coach.utils.date_helpers", "running_coach.shared.dates"):
-        mod = _try_import(mod_name)
-        if mod is not None and hasattr(mod, "_now"):
-            monkeypatch.setattr(mod, "_now", lambda: env.now)
+    monkeypatch.setattr(dates, "_now", lambda: env.now)
 
-    for mod_name in (
-        "running_coach.services.firestore",
-        "running_coach.integrations.firestore",
-        "running_coach.tools",
-        "running_coach.steps",
-    ):
-        mod = _try_import(mod_name)
-        if mod is None:
-            continue
-        for attr, fn in (
-            ("get_cached_workout_analysis", fake_get_cached_analysis),
-            ("save_workout_analysis", fake_save_cached_analysis),
-            ("list_training_records", fake_list_records),
-            ("save_training_record", fake_save_record),
-            ("get_user_profile", fake_get_profile),
-            ("save_user_profile", fake_save_profile),
-            ("update_user_profile", fake_update_profile),
-            ("find_user_profile_by_email", fake_find_by_email),
-        ):
-            if hasattr(mod, attr):
-                monkeypatch.setattr(mod, attr, fn)
+    monkeypatch.setattr(firestore, "get_cached_workout_analysis", fake_get_cached_analysis)
+    monkeypatch.setattr(firestore, "save_workout_analysis", fake_save_cached_analysis)
+    monkeypatch.setattr(firestore, "list_training_records", fake_list_records)
+    monkeypatch.setattr(firestore, "save_training_record", fake_save_record)
+    monkeypatch.setattr(firestore, "get_user_profile", fake_get_profile)
+    monkeypatch.setattr(firestore, "save_user_profile", fake_save_profile)
+    monkeypatch.setattr(firestore, "update_user_profile", fake_update_profile)
+    monkeypatch.setattr(firestore, "find_user_profile_by_email", fake_find_by_email)
 
-    for mod_name in (
-        "running_coach.services.weather",
-        "running_coach.integrations.open_meteo",
-        "running_coach.tools",
-        "running_coach.steps",
-    ):
-        mod = _try_import(mod_name)
-        if mod is None:
-            continue
-        for attr, fn in (
-            ("get_weather_conditions", fake_weather_conditions),
-            ("get_weather_for_dates", fake_weather_for_dates),
-            ("get_conditions_at", fake_conditions_at),
-            ("geocode_location", fake_geocode),
-        ):
-            if hasattr(mod, attr):
-                monkeypatch.setattr(mod, attr, fn)
+    monkeypatch.setattr(open_meteo, "get_weather_conditions", fake_weather_conditions)
+    monkeypatch.setattr(open_meteo, "get_weather_for_dates", fake_weather_for_dates)
+    monkeypatch.setattr(open_meteo, "get_conditions_at", fake_conditions_at)
+    monkeypatch.setattr(open_meteo, "geocode_location", fake_geocode)
 
-    for mod_name in (
-        "running_coach.services.tp_credentials",
-        "running_coach.integrations.trainingpeaks.credentials",
-        "running_coach.agent",
-        "running_coach.coach.profile_router",
-    ):
-        mod = _try_import(mod_name)
-        if mod is not None and hasattr(mod, "has_tp_credential"):
-            monkeypatch.setattr(mod, "has_tp_credential", fake_has_credential)
-
-    tools_mod = _try_import("running_coach.tools")
-    if tools_mod is not None and hasattr(tools_mod, "_run_tp_tool"):
-        monkeypatch.setattr(tools_mod, "_run_tp_tool", env.run_tp_tool)
-
-    tp_calls_mod = _try_import("running_coach.integrations.trainingpeaks.tp_calls")
-    if tp_calls_mod is not None and hasattr(tp_calls_mod, "run_tp_tool"):
-        monkeypatch.setattr(tp_calls_mod, "run_tp_tool", env.run_tp_tool)
+    monkeypatch.setattr(credentials, "has_tp_credential", fake_has_credential)
+    monkeypatch.setattr(tp_calls, "run_tp_tool", env.run_tp_tool)
 
     return env

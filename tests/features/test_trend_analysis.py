@@ -3,7 +3,7 @@
 import asyncio
 import json
 
-from running_coach.tools import fetch_trend_data
+from running_coach.features.trend_analysis.fetch_trend_data_tool import fetch_trend_data
 
 
 def test_trend_analysis_gap_fills_flags_rate_limited_runs_and_builds_web_payload(runner):

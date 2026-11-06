@@ -2,7 +2,6 @@
 
 - Thinking: low reasoning for the confirmation that follows a write tool, default otherwise.
 - Splicing: replaces table placeholders with the tables from `fetch_checkin_data` / `fetch_trend_data`.
-- No-workout short-circuit: returns `analyze_workout`'s no-workout reply directly so the model does not retry.
 """
 
 from typing import Any, Optional
@@ -12,14 +11,28 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
-from .utils.workouts import NO_WORKOUT_PREFIX
+from ...features.check_in_report.fetch_checkin_data_tool import (
+    CHECKIN_PLACEHOLDER,
+    CHECKIN_TABLES_STATE_KEY,
+)
+from ...features.trend_analysis.fetch_trend_data_tool import (
+    TREND_PLACEHOLDER,
+    TREND_TABLES_STATE_KEY,
+)
+from ...features.workout_creator.create_note_tool import create_note_tool
+from ...features.workout_creator.create_workout_tool import create_workout_tool
+from ..onboarding.request_new_goal_tool import request_new_goal_tool
 
 # ------------------------------------------------------------------------------
-# Thinking policy & deterministic no-workout reply
+# Thinking policy
 # ------------------------------------------------------------------------------
 # Tools whose response only needs a short confirmation. Anything else (runner messages,
 # facade outputs, get_weather, unknown tools) keeps the model's default reasoning.
-WRITE_TOOLS = frozenset({"create_workout", "create_note", "request_new_goal"})
+WRITE_TOOLS = frozenset({
+    create_workout_tool.name,
+    create_note_tool.name,
+    request_new_goal_tool.name,
+})
 # LOW, not MINIMAL: gemini-3.8-flash (COACH_MODEL) rejects THINKING_LEVEL_MINIMAL with a 400.
 CONFIRMATION_THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW)
 
@@ -29,22 +42,11 @@ def _last_function_response_names(llm_request: LlmRequest) -> set[str]:
     if not llm_request.contents:
         return set()
     parts = llm_request.contents[-1].parts or []
-    return {p.function_response.name for p in parts if p.function_response and p.function_response.name}
-
-
-def no_workout_reply(
-    callback_context: CallbackContext, llm_request: LlmRequest
-) -> Optional[LlmResponse]:
-    """before_model_callback: returns analyze_workout's 'no workout' reply directly so the LLM cannot retry."""
-    if not llm_request.contents:
-        return None
-    for part in llm_request.contents[-1].parts or []:
-        fr = part.function_response
-        if fr and fr.name == "analyze_workout":
-            result = (fr.response or {}).get("result")
-            if isinstance(result, str) and result.startswith(NO_WORKOUT_PREFIX):
-                return LlmResponse(content=types.Content(role="model", parts=[types.Part(text=result)]))
-    return None
+    return {
+        p.function_response.name
+        for p in parts
+        if p.function_response and p.function_response.name
+    }
 
 
 def apply_thinking_policy(
@@ -61,12 +63,11 @@ def apply_thinking_policy(
 # ------------------------------------------------------------------------------
 # Table splicing
 # ------------------------------------------------------------------------------
-CHECKIN_PLACEHOLDER = "[[CHECKIN_METRICS]]"
-CHECKIN_TABLES_STATE_KEY = "checkin_tables"
-TREND_PLACEHOLDER = "[[TREND_METRICS]]"
-TREND_TABLES_STATE_KEY = "trend_tables"
 # Placeholder written by the model -> state key holding the pre-rendered tables.
-SPLICES = {CHECKIN_PLACEHOLDER: CHECKIN_TABLES_STATE_KEY, TREND_PLACEHOLDER: TREND_TABLES_STATE_KEY}
+SPLICES = {
+    CHECKIN_PLACEHOLDER: CHECKIN_TABLES_STATE_KEY,
+    TREND_PLACEHOLDER: TREND_TABLES_STATE_KEY,
+}
 
 
 def expand_placeholders(text: str, state: Any) -> str:

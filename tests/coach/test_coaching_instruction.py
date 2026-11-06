@@ -7,8 +7,8 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
-import running_coach.agent as agent
-from running_coach.callbacks import (
+from running_coach.coach.coaching.instruction import build_coach_instruction
+from running_coach.coach.coaching.model_callbacks import (
     TREND_PLACEHOLDER,
     TREND_TABLES_STATE_KEY,
     apply_thinking_policy,
@@ -19,7 +19,7 @@ from running_coach.tests.fakes import FakeContext, PLAN_PROFILE, SINGLE_PROFILE
 
 def test_coaching_instruction_notices_thinking_policy_and_table_splicing(runner):
     # Goal-plan runner on 2026-10-27 has an unrecorded 2026-10-20 sub-goal race -> SUB-GOAL RACE DONE + GOAL PLAN LENS.
-    plan_instr = agent.build_coach_instruction(SimpleNamespace(state={"user_profile": dict(PLAN_PROFILE)}))
+    plan_instr = build_coach_instruction(SimpleNamespace(state={"user_profile": dict(PLAN_PROFILE)}))
     assert "GOAL PLAN (north star with sub goals)" in plan_instr
     assert "GOAL PLAN LENS:" in plan_instr
     assert "SUB-GOAL RACE DONE: sub goal Sub-21 5K was raced on 2026-10-20" in plan_instr
@@ -27,7 +27,7 @@ def test_coaching_instruction_notices_thinking_policy_and_table_splicing(runner)
 
     # Single-goal runner after race date -> GOAL RACE DONE and no GOAL PLAN LENS.
     runner.now = datetime(2026, 12, 10, 9, 0, 0)
-    single_instr = agent.build_coach_instruction(SimpleNamespace(state={"user_profile": dict(SINGLE_PROFILE)}))
+    single_instr = build_coach_instruction(SimpleNamespace(state={"user_profile": dict(SINGLE_PROFILE)}))
     assert "GOAL PLAN LENS:" not in single_instr
     assert "GOAL RACE DONE: the runner's goal race (2026-12-06) is in the past" in single_instr
 

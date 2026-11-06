@@ -3,7 +3,8 @@
 import asyncio
 import json
 
-from running_coach.tools import fetch_checkin_data, fetch_trend_data
+from running_coach.features.check_in_report.fetch_checkin_data_tool import fetch_checkin_data
+from running_coach.features.trend_analysis.fetch_trend_data_tool import fetch_trend_data
 
 
 def test_check_in_report_populates_sections_tables_and_web_payload(runner):

@@ -2,7 +2,9 @@
 
 import asyncio
 
-from running_coach.tools import fetch_nutrition_context
+from running_coach.features.nutrition_planner.fetch_nutrition_context_tool import (
+    fetch_nutrition_context,
+)
 
 
 def test_nutrition_planner_surfaces_biometrics_upcoming_sessions_and_forecast(runner):

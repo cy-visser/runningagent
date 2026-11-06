@@ -3,7 +3,8 @@
 import asyncio
 import json
 
-from running_coach.tools import create_note, create_workout
+from running_coach.features.workout_creator.create_note_tool import create_note
+from running_coach.features.workout_creator.create_workout_tool import create_workout
 
 
 def test_workout_creator_upserts_by_sport_flags_ambiguity_and_creates_notes(runner):

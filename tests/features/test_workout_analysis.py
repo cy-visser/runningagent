@@ -5,8 +5,9 @@ import asyncio
 from google.adk.models.llm_request import LlmRequest
 from google.genai import types
 
-from running_coach.callbacks import no_workout_reply
-from running_coach.tools import analyze_workout, fetch_trend_data
+from running_coach.features.trend_analysis.fetch_trend_data_tool import fetch_trend_data
+from running_coach.features.workout_analysis.analyze_workout_tool import analyze_workout
+from running_coach.features.workout_analysis.no_workout_reply_callback import no_workout_reply
 
 
 def test_workout_analysis_saves_sub_goal_result_matches_gap_fill_and_short_circuits_no_workout(runner):

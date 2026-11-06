@@ -3,7 +3,9 @@
 import asyncio
 import json
 
-from running_coach.tools import fetch_schedule_audit_data
+from running_coach.features.schedule_audit.fetch_schedule_audit_data_tool import (
+    fetch_schedule_audit_data,
+)
 
 
 def test_schedule_audit_surfaces_goal_context_long_run_floor_and_web_payload(runner):

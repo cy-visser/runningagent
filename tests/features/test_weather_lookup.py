@@ -2,7 +2,7 @@
 
 import asyncio
 
-from running_coach.tools import get_weather
+from running_coach.features.weather_lookup.get_weather_tool import get_weather
 
 
 def test_weather_lookup_uses_home_location_destination_or_prompts_when_missing(runner):

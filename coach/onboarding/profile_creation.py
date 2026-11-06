@@ -1,90 +1,27 @@
 from datetime import date
 from typing import Any, Optional
 
-from .date_helpers import get_today_str, parse_date
-from .goals import GOAL_TYPE_PLAN, GOAL_TYPE_SINGLE, KIND_NORTH_STAR, current_goal, north_star
+from ...integrations import firestore, open_meteo
+from ...shared.dates import get_today_str, parse_date
+from ...shared.goal_plan import GOAL_TYPE_PLAN, GOAL_TYPE_SINGLE
+from ...shared.runner_identity import normalize_email, profile_user_id
+from ...shared.session_state import AUTH_EMAIL_STATE_KEY, sync_profile_to_state
+import asyncio
+import logging
 
-# ADK user-scoped state key set by the Cloud Run web backend on every turn with the IAP-verified email.
-AUTH_EMAIL_STATE_KEY = "user:auth_email"
+from google.adk import Context
+
+logger = logging.getLogger(__name__)
+
+PROFILE_SAVED = "saved"
+PROFILE_NO_NAME = "no_name"
+PROFILE_EMAIL_CONFLICT = "email_conflict"
 
 
 def normalize_timeline(timeline: Optional[str]) -> Optional[str]:
     """Returns the goal date as ISO (YYYY-MM-DD) when parseable, else the raw value."""
     parsed = parse_date(timeline) if timeline else None
     return parsed.isoformat() if parsed else timeline
-
-
-def normalize_email(email: Optional[str]) -> Optional[str]:
-    """Returns a canonical lowercase email address, or None when absent/invalid."""
-    clean = str(email or "").strip().lower()
-    if not clean or "@" not in clean or " " in clean:
-        return None
-    local, _, domain = clean.partition("@")
-    return clean if local and "." in domain else None
-
-
-
-def get_user_id(firstname: Optional[str], lastname: Optional[str] = "") -> str:
-    """Returns the canonical lowercase user_id for Firestore document keys."""
-    fn = str(firstname or "").strip().lower()
-    ln = str(lastname or "").strip().lower()
-    return f"{fn}_{ln}"
-
-
-def profile_user_id(profile: Optional[dict]) -> Optional[str]:
-    """Returns the Firestore user_id for a profile, or None when it has no name."""
-    profile = profile or {}
-    user_id = get_user_id(profile.get("firstname"), profile.get("lastname"))
-    return None if user_id == "_" else user_id
-
-
-def needs_onboarding(profile: Optional[dict]) -> bool:
-    """True when a profile is missing or is a web skeleton (TrainingPeaks connected, no goal yet)."""
-    if not profile or profile.get("onboarding_pending"):
-        return True
-    has_single = bool(profile.get("training_goal") or profile.get("timeline"))
-    has_plan = bool((profile.get("north_star") or {}).get("goal"))
-    return not (has_single or has_plan)
-
-
-def _goal_line(profile: dict, today: Optional[date]) -> str:
-    """Goal line: the single goal, or the current block plus the north star for a plan."""
-    goal = current_goal(profile, today)
-    ns = north_star(profile)
-    if not ns:
-        return f"Goal: {goal['training_goal']} (Timeline: {goal['timeline']})"
-    if goal["kind"] == KIND_NORTH_STAR:
-        return f"Goal: North star {ns['training_goal']} (Race: {ns['timeline']}); final block"
-    return (
-        f"Goal: Current block {goal['training_goal']} (Race: {goal['timeline']}) -> "
-        f"North star {ns['training_goal']} (Race: {ns['timeline']})"
-    )
-
-
-def format_profile_summary(profile: dict, today: Optional[date] = None) -> str:
-    """Formats a slim, token-efficient markdown summary of the runner's profile."""
-    if not profile:
-        return ""
-    return (
-        f"Name: {profile.get('firstname')} {profile.get('lastname')} (Age: {profile.get('age')})\n"
-        f"Location: {profile.get('location')}\n"
-        f"Stats: Height: {profile.get('height')}, Weight: {profile.get('weight')}\n"
-        f"{_goal_line(profile, today)}\n"
-        f"Recent Races: {profile.get('recent_race_times')}\n"
-        f"Injuries: {profile.get('injuries')}\n"
-        f"Cross-Training: {profile.get('cross_training_strength')}\n"
-        f"Shoe Rotation: {profile.get('shoe_rotation')}"
-    )
-
-
-def sync_profile_to_state(ctx: Any, profile: dict) -> None:
-    """Stores `user_profile` in session state.
-
-    Everything else the coach needs (date, summary, goal plan) is derived from the
-    profile when the instruction is built, so it is not duplicated in state.
-    """
-    ctx.state["user_profile"] = profile
-
 
 # Fields sourced from the runner's onboarding answers, falling back to data
 # already present on the profile skeleton.
@@ -115,14 +52,18 @@ def onboarding_prefill(profile: dict) -> dict:
 
 
 def _sub_goal_key(sub_goal: dict) -> tuple:
-    return (str(sub_goal.get("goal") or "").strip().lower(), normalize_timeline(sub_goal.get("race_date")))
+    return (
+        str(sub_goal.get("goal") or "").strip().lower(),
+        normalize_timeline(sub_goal.get("race_date")),
+    )
 
 
 def _plan_fields(answers: dict, previous_sub_goals: Any) -> dict:
     """north_star + sorted sub_goals from onboarding answers; saved results survive re-onboarding."""
     saved_results = {
         _sub_goal_key(s): s.get("result")
-        for s in previous_sub_goals or [] if isinstance(s, dict) and s.get("result")
+        for s in previous_sub_goals or []
+        if isinstance(s, dict) and s.get("result")
     }
     sub_goals = []
     for answer in answers.get("sub_goals") or []:
@@ -167,7 +108,7 @@ def merge_profile_data(
     verified sign-in when the account was connected); the onboarding schema does not
     collect them, and `onboarding_pending` is cleared by omission.
     A goal plan (north star + sub goals) replaces training_goal/timeline; the
-    active block is derived from it on read (see utils.goals.current_goal).
+    active block is derived from it on read (see shared.goal_plan.current_goal).
     """
     profile: dict[str, Any] = {
         "firstname": temp_data.get("firstname") or "",
@@ -192,3 +133,74 @@ def merge_profile_data(
     for field in _MERGED_FIELDS:
         profile[field] = answers.get(field) or temp_data.get(field)
     return profile
+
+
+def _as_dict(value: Any) -> dict:
+    """Normalises ADK structured output (pydantic model or dict) into a plain dict."""
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return {}
+
+
+async def create_profile_step(ctx: Context) -> str:
+    """Resolves coordinates and saves the final profile to Firestore.
+
+    Returns:
+      - `PROFILE_SAVED`: profile written and synced into session state.
+      - `PROFILE_NO_NAME`: refused because no runner name was present.
+      - `PROFILE_EMAIL_CONFLICT`: refused because `users/{user_id}` already belongs to a
+        different (or unlinked) account.
+    """
+    onboarding_answers = _as_dict(ctx.state.get("onboarding_answers"))
+    temp_data = dict(ctx.state.get("temp_onboarding_data") or {})
+
+    incoming_email = normalize_email(
+        temp_data.get("email")
+        or (ctx.state.get("user_profile") or {}).get("email")
+        or ctx.state.get(AUTH_EMAIL_STATE_KEY)
+    )
+    if incoming_email:
+        temp_data["email"] = incoming_email
+
+    user_id = profile_user_id(temp_data)
+    if not user_id:
+        logger.error("Refusing to save a profile without a runner name.")
+        return PROFILE_NO_NAME
+
+    existing = await firestore.get_user_profile(user_id)
+    if existing is not None:
+        existing_email = normalize_email(existing.get("email"))
+        if existing_email != incoming_email:
+            logger.error(
+                "Refusing to overwrite users/%s: existing email %r != incoming email %r",
+                user_id,
+                existing_email,
+                incoming_email,
+            )
+            return PROFILE_EMAIL_CONFLICT
+
+    location = onboarding_answers.get("location") or temp_data.get("location") or ""
+    lat, lon = None, None
+    if location:
+        coords = await asyncio.to_thread(open_meteo.geocode_location, location)
+        if coords:
+            lat, lon = coords
+
+    profile = merge_profile_data(
+        answers=onboarding_answers,
+        temp_data=temp_data,
+        lat=lat,
+        lon=lon,
+        location=location,
+    )
+
+    await firestore.save_user_profile(user_id, profile)
+    sync_profile_to_state(ctx, profile)
+
+    ctx.state["temp_onboarding_data"] = None
+    ctx.state["onboarding_answers"] = None
+    return PROFILE_SAVED
