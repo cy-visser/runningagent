@@ -1,10 +1,16 @@
-"""End-to-end API tests for the FastAPI web backend (auth, connect guards, profile edits, SSE chat)."""
+"""Shared fake profile store, agent client, and test app builder for FastAPI web backend tests."""
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any, AsyncIterator, Optional
 
-from fastapi.testclient import TestClient
+BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, BACKEND_ROOT)
+if os.path.dirname(__file__) not in sys.path:
+    sys.path.insert(0, os.path.dirname(__file__))
 
 from app.main import create_app
 from app.profile_model import ProfileUpdatePayload, apply_profile_edit, profile_state_for
@@ -100,7 +106,7 @@ class FakeAgentClient:
         yield {"author": "coaching_agent", "partial": False, "content": {"parts": [{"text": "Coach reply"}]}}
 
 
-def _build_test_app():
+def build_test_app():
     settings = Settings(
         auth_mode="iap",
         iap_audience=AUDIENCE,
@@ -137,97 +143,3 @@ def _build_test_app():
     app.state.iap_verifier = fake_verify
     app.state.tp_validator = fake_tp_validate
     return app, store, agent
-
-
-def test_unauthenticated_and_unsigned_email_header_rejected():
-    app, _, _ = _build_test_app()
-    with TestClient(app) as client:
-        assert client.get("/api/me").status_code == 401
-        # Unsigned header alone must never be trusted
-        r = client.get("/api/me", headers={"X-Goog-Authenticated-User-Email": f"accounts.google.com:{EMAIL}"})
-        assert r.status_code == 401
-
-
-def test_connect_onboarding_profile_edit_and_chat_sse_flow():
-    app, store, agent = _build_test_app()
-    headers = {"X-Goog-IAP-JWT-Assertion": "valid-jwt"}
-    with TestClient(app) as client:
-        me0 = client.get("/api/me", headers=headers)
-        assert me0.status_code == 200
-        assert "Content-Security-Policy" in me0.headers
-        assert me0.json()["profile_state"] == "none"
-
-        conn = client.post("/api/trainingpeaks/connect", json={"cookie": "validcookie123"}, headers=headers)
-        assert conn.status_code == 200
-        assert conn.json()["profile_state"] == "needs_onboarding"
-
-        edited = client.put(
-            "/api/profile",
-            headers=headers,
-            json={
-                "location": "Utrecht",
-                "goal_type": "single",
-                "training_goal": "Sub-3:30 Marathon",
-                "timeline": "2027-04-11",
-                "shoe_rotation": "Asics Superblast 2",
-            },
-        )
-        assert edited.status_code == 200
-        assert edited.json()["profile_state"] == "ready"
-        assert edited.json()["profile"]["email"] == EMAIL
-
-        assert client.get("/api/session", headers=headers).status_code == 404
-
-        chat = client.post("/api/chat", json={"message": "Checking in"}, headers=headers)
-        assert chat.status_code == 200
-        assert "event: message" in chat.text
-        assert "event: done" in chat.text
-        assert agent.created_sessions == 1
-        assert agent.calls[0]["session_id"] == "sess-new-1"
-        assert agent.calls[0]["user_id"] == f"web_{EMAIL}"
-        assert agent.calls[0]["auth_email"] == EMAIL
-
-        chat2 = client.post(
-            "/api/chat",
-            json={"message": "Follow up", "session_id": "sess-new-1"},
-            headers=headers,
-        )
-        assert chat2.status_code == 200
-        assert agent.created_sessions == 1
-        assert agent.calls[1]["session_id"] == "sess-new-1"
-
-        # Another quick-action button click (no session_id) starts a brand-new session
-        chat3 = client.post(
-            "/api/chat",
-            json={"message": "Analyze today's run"},
-            headers=headers,
-        )
-        assert chat3.status_code == 200
-        assert agent.created_sessions == 2
-        assert agent.calls[2]["session_id"] == "sess-new-2"
-
-        # Clicking "New conversation" creates a new session immediately
-        new_sess = client.post("/api/session/new", headers=headers)
-        assert new_sess.status_code == 200
-        assert new_sess.json()["session_id"] == "sess-new-3"
-        assert agent.created_sessions == 3
-
-        # Next message uses the session created by "New conversation"
-        chat4 = client.post(
-            "/api/chat",
-            json={"message": "Hello in new session", "session_id": "sess-new-3"},
-            headers=headers,
-        )
-        assert chat4.status_code == 200
-        assert agent.created_sessions == 3
-        assert agent.calls[3]["session_id"] == "sess-new-3"
-
-
-def test_connect_conflict_returns_409():
-    app, store, _ = _build_test_app()
-    # Pre-seed an existing profile without email (or belonging to someone else)
-    store.users["cyrille_visser"] = {"firstname": "Cyrille", "lastname": "Visser"}
-    headers = {"X-Goog-IAP-JWT-Assertion": "valid-jwt"}
-    with TestClient(app) as client:
-        resp = client.post("/api/trainingpeaks/connect", json={"cookie": "validcookie123"}, headers=headers)
-        assert resp.status_code == 409

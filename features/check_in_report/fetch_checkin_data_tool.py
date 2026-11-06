@@ -22,10 +22,8 @@ from .helpers.health_flag import health_readiness, recent_hard_effort
 from .helpers.lt_paces import checkin_lt_paces
 from .helpers.metrics_tables import format_fitness_pmc
 from .helpers.north_star_progress import north_star_progress
-from .helpers.projection_evidence import (
-    PROJECTION_WINDOW_DAYS,
-    build_goal_projection,
-)
+from .helpers.projection_evidence import PROJECTION_WINDOW_DAYS
+from .helpers.race_projection import build_goal_projection
 from .helpers.run_weather import fetch_checkin_weather_map
 from .helpers.web_report import CHECKIN_REPORT_STATE_KEY, checkin_report_data
 from .helpers.weekly_totals import annotate_week_progression

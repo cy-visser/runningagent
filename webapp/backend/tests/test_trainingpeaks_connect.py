@@ -1,8 +1,11 @@
-"""Tests for TrainingPeaks Production_tpAuth validation and cookie sanitization."""
+"""Behavioural test for TrainingPeaks cookie sanitization, token exchange, and 409 conflict guard."""
+
+from __future__ import annotations
 
 import asyncio
 import json
 
+from fastapi.testclient import TestClient
 import httpx
 import pytest
 
@@ -11,16 +14,17 @@ from app.trainingpeaks import (
     clean_tp_cookie_input,
     validate_tp_cookie,
 )
+from conftest import build_test_app
 
 
-def test_clean_tp_cookie_input():
+def test_trainingpeaks_cookie_cleaning_token_exchange_and_409_conflict():
+    # Cookie cleaning & validation
     assert clean_tp_cookie_input("  abc123token ") == "abc123token"
     assert clean_tp_cookie_input("foo=1; Production_tpAuth=xyz_987; Path=/") == "xyz_987"
     with pytest.raises(TrainingPeaksValidationError):
         clean_tp_cookie_input("bad value with spaces")
 
-
-def test_validate_tp_cookie_exchanges_token_and_derives_runner_id():
+    # Token exchange + runner_id derivation
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/users/v3/token":
             assert request.headers.get("Cookie") == "Production_tpAuth=validcookie"
@@ -43,3 +47,11 @@ def test_validate_tp_cookie_exchanges_token_and_derives_runner_id():
     assert acc.runner_id == "cyrille_visser"
     assert acc.tp_name == "Cyrille Visser"
     assert acc.tp_athlete_id == 202
+
+    # 409 conflict when existing profile belongs to another account
+    app, store, _ = build_test_app()
+    store.users["cyrille_visser"] = {"firstname": "Cyrille", "lastname": "Visser"}
+    headers = {"X-Goog-IAP-JWT-Assertion": "valid-jwt"}
+    with TestClient(app) as client:
+        resp = client.post("/api/trainingpeaks/connect", json={"cookie": "validcookie123"}, headers=headers)
+        assert resp.status_code == 409

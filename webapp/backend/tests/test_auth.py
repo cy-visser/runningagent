@@ -1,4 +1,4 @@
-"""Tests for Cloud Run IAP ES256 JWT verification and dev-mode startup guards."""
+"""Behavioural test for Cloud Run IAP ES256 JWT verification, dev-mode startup guards, and unsigned header rejection."""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ import time
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi.testclient import TestClient
 from google.auth import crypt, jwt
 import pytest
 
 from app.auth import IAP_ISSUER, verify_iap_assertion_sync
 from app.settings import Settings, validate_startup_settings
-
-AUDIENCE = "/projects/840839653849/locations/europe-west4/services/running-coach-web"
+from conftest import AUDIENCE, EMAIL, build_test_app
 
 
 def _make_es256_signer_and_certs():
@@ -41,7 +41,7 @@ def _make_es256_signer_and_certs():
     return signer, fake_transport
 
 
-def _encode_jwt(signer, *, iss=IAP_ISSUER, aud=AUDIENCE, email="cyrille@cyvisser.altostrat.com", exp_offset=300):
+def _encode_jwt(signer, *, iss=IAP_ISSUER, aud=AUDIENCE, email=EMAIL, exp_offset=300):
     now = int(time.time())
     payload = {
         "iss": iss,
@@ -55,39 +55,34 @@ def _encode_jwt(signer, *, iss=IAP_ISSUER, aud=AUDIENCE, email="cyrille@cyvisser
     return token.decode("utf-8") if isinstance(token, bytes) else token
 
 
-def test_verify_valid_es256_iap_jwt():
+def test_iap_jwt_verification_dev_mode_guard_and_unsigned_header_rejection():
     signer, transport = _make_es256_signer_and_certs()
-    token = _encode_jwt(signer)
-    claims = verify_iap_assertion_sync(token, AUDIENCE, transport=transport, certs_url="https://certs.local/iap")
-    assert claims["email"] == "cyrille@cyvisser.altostrat.com"
 
+    # Valid ES256 IAP JWT
+    valid_token = _encode_jwt(signer)
+    claims = verify_iap_assertion_sync(valid_token, AUDIENCE, transport=transport, certs_url="https://certs.local/iap")
+    assert claims["email"] == EMAIL
 
-def test_rejects_wrong_audience():
-    signer, transport = _make_es256_signer_and_certs()
-    token = _encode_jwt(signer, aud="/projects/999/locations/europe-west4/services/other")
+    # Wrong audience
+    wrong_aud = _encode_jwt(signer, aud="/projects/999/locations/europe-west4/services/other")
     with pytest.raises(ValueError):
-        verify_iap_assertion_sync(token, AUDIENCE, transport=transport, certs_url="https://certs.local/iap")
+        verify_iap_assertion_sync(wrong_aud, AUDIENCE, transport=transport, certs_url="https://certs.local/iap")
 
-
-def test_rejects_wrong_issuer():
-    signer, transport = _make_es256_signer_and_certs()
-    token = _encode_jwt(signer, iss="https://accounts.google.com")
+    # Wrong issuer
+    wrong_iss = _encode_jwt(signer, iss="https://accounts.google.com")
     with pytest.raises(ValueError, match="issuer"):
-        verify_iap_assertion_sync(token, AUDIENCE, transport=transport, certs_url="https://certs.local/iap")
+        verify_iap_assertion_sync(wrong_iss, AUDIENCE, transport=transport, certs_url="https://certs.local/iap")
 
-
-def test_rejects_expired_jwt():
-    signer, transport = _make_es256_signer_and_certs()
-    token = _encode_jwt(signer, exp_offset=-600)
+    # Expired JWT
+    expired = _encode_jwt(signer, exp_offset=-600)
     with pytest.raises(ValueError):
-        verify_iap_assertion_sync(token, AUDIENCE, transport=transport, certs_url="https://certs.local/iap")
+        verify_iap_assertion_sync(expired, AUDIENCE, transport=transport, certs_url="https://certs.local/iap")
 
-
-def test_dev_auth_mode_forbidden_when_k_service_set():
+    # AUTH_MODE=dev forbidden when K_SERVICE is set on Cloud Run
     settings = Settings(
         auth_mode="dev",
         iap_audience=None,
-        dev_user_email="cyrille@cyvisser.altostrat.com",
+        dev_user_email=EMAIL,
         project_id="firestore-cyvisser",
         firestore_database="running-coach",
         tp_cookie_kms_key="key",
@@ -99,3 +94,10 @@ def test_dev_auth_mode_forbidden_when_k_service_set():
     )
     with pytest.raises(RuntimeError, match="AUTH_MODE=dev"):
         validate_startup_settings(settings)
+
+    # Unauthenticated request and unsigned X-Goog-Authenticated-User-Email header rejected with 401
+    app, _, _ = build_test_app()
+    with TestClient(app) as client:
+        assert client.get("/api/me").status_code == 401
+        r = client.get("/api/me", headers={"X-Goog-Authenticated-User-Email": f"accounts.google.com:{EMAIL}"})
+        assert r.status_code == 401

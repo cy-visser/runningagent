@@ -1,8 +1,12 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Optional
 
+from google.adk.tools import ToolContext
+
+from ....shared.athlete_settings import extract_thresholds
 from ....shared.dates import parse_date
-from ....shared.goal_distance import DISTANCE_PROFILES
+from ....shared.goal_distance import DISTANCE_PROFILES, parse_target_time_minutes
+from ....shared.goal_plan import current_goal, goal_race_dates
 from ....shared.hr_pace_fit import (
     MAX_EXTRAPOLATION,
     THRESHOLD_AGREEMENT,
@@ -13,6 +17,7 @@ from ....shared.hr_pace_fit import (
     threshold_lap_stats,
 )
 from ....shared.race_equivalents import riegel_predict
+from ....shared.runner_identity import profile_user_id
 from ....shared.units import format_seconds_hms
 from .goal_trajectory import SAFE_RAMP_PER_WEEK
 from .health_flag import (
@@ -22,7 +27,14 @@ from .health_flag import (
     health_readiness,
     recent_hard_effort,
 )
-from .projection_evidence import _num, classify_run
+from .projection_evidence import (
+    PROJECTION_WINDOW_DAYS,
+    _num,
+    classify_run,
+    completed_runs,
+    load_workout_summaries,
+    select_for_analysis,
+)
 
 # Durability tiers: (strong_min_longest_km, weak_below_longest_km) per distance.
 DURABILITY_LONGEST_KM = {
@@ -380,3 +392,44 @@ def format_drivers_table(projection: Optional[dict]) -> str:
     for driver, evidence, implied in projection["drivers"]:
         lines.append(f"| {driver} | {evidence} | {implied} |")
     return "\n".join(lines)
+
+
+async def build_goal_projection(
+    tool_context: ToolContext,
+    goal_label: Optional[str],
+    profile: dict,
+    all_workouts: list[dict],
+    fitness_data: Optional[dict],
+    settings_raw: Any,
+    dated_metrics: Optional[dict],
+    today_date: Any,
+    refresh_cache: bool = False,
+) -> dict:
+    """Builds the evidence-based goal-race projection payload for compile_checkin_summary."""
+    if not goal_label:
+        return {"goal_label": None, "projection": None}
+    fitness_data = fitness_data or {}
+    runs = completed_runs(
+        all_workouts, today_date - timedelta(days=PROJECTION_WINDOW_DAYS), today_date
+    )
+    summaries = await load_workout_summaries(
+        tool_context, select_for_analysis(runs, goal_label), profile_user_id(profile),
+        refresh=refresh_cache,
+    )
+    goal = current_goal(profile, today_date)
+    projection = project_race(
+        goal_label=goal_label,
+        goal_minutes=parse_target_time_minutes(goal["training_goal"]),
+        runs=runs,
+        summaries=summaries,
+        thresholds=extract_thresholds(settings_raw),
+        daily_pmc=fitness_data.get("history"),
+        fitness=fitness_data,
+        trajectory_info=fitness_data.get("trajectory_info"),
+        dated_metrics=dated_metrics,
+        today=today_date,
+        block_start=goal["goal_set_date"],
+        race_dates=goal_race_dates(profile),
+    )
+    return {"goal_label": goal_label, "projection": projection}
+
