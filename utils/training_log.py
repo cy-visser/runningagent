@@ -39,6 +39,7 @@ class WorkoutBundle:
     thresholds: dict                    # {"lthr", "threshold_speed"} in use when recorded
     weather: Optional[dict]             # get_conditions_at() at the start time
     context: dict                       # workout_context() for the workout day
+    start_position: Optional[dict] = None  # {"lat": float, "lon": float} first GPS fix, if any
 
 
 def workout_context(day: Optional[date], daily_pmc: Optional[list[dict]], dated_metrics: Optional[dict]) -> dict:
@@ -165,6 +166,7 @@ def build_training_record(b: WorkoutBundle, now: datetime) -> Optional[dict]:
         "compliance_pct": _compliance_pct(distance_km, duration_s, planned),
         "context": b.context,
         "weather": b.weather,
+        "start_position": b.start_position,
         "athlete": _athlete(meta),
     }
     if sport.lower() not in RUN_SPORTS:

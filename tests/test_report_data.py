@@ -119,3 +119,5 @@ def test_trend_report_data_json_roundtrip():
     assert week["lt1_pace_s"] == 291 and week["lt2_pace_s"] == 239 and week["lt2_extrapolated"] is True
     assert week["key_decoupling"] == 2.8 and "easy_ef" not in week
     assert decoded["key_run_label"] == "tempo/threshold"
+
+

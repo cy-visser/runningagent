@@ -254,9 +254,48 @@ export interface TrendReportData {
   key_run_label?: string | null;
 }
 
+export type AuditSessionCategory =
+  | "easy"
+  | "quality"
+  | "bike"
+  | "strength"
+  | "other";
+
+export interface AuditSession {
+  date: string | null;
+  sport: string;
+  title: string;
+  category: AuditSessionCategory;
+  km: number;
+  minutes: number;
+  tss: number;
+  completed: boolean;
+}
+
+export interface AuditWeek {
+  week: string | null;
+  date_range?: string | null;
+  km: number;
+  tss: number;
+  easy: number;
+  quality: number;
+  bike: number;
+  strength: number;
+  long_run?: string | null;
+  notes: string[];
+  sessions: AuditSession[];
+}
+
+export interface AuditReportData {
+  version: number;
+  window: { start: string | null; end: string | null };
+  weeks: AuditWeek[];
+}
+
 export type ReportEnvelope =
   | { kind: "checkin"; data: CheckinReportData }
-  | { kind: "trend"; data: TrendReportData };
+  | { kind: "trend"; data: TrendReportData }
+  | { kind: "audit"; data: AuditReportData };
 
 export interface ToolChip {
   name: string;

@@ -169,6 +169,27 @@ resource "google_firestore_field" "workout_analyses_ttl" {
   ttl_config {}
 }
 
+# 7b-sessions. TTL on ADK session data: the agent stamps `expire_at` (last activity + 7 days)
+#              on every session doc and event doc; Firestore deletes both. TTL never cascades
+#              to subcollections, so `events` needs its own policy.
+resource "google_firestore_field" "sessions_ttl" {
+  project    = var.project_id
+  database   = google_firestore_database.default_db.name
+  collection = "sessions"
+  field      = "expire_at"
+
+  ttl_config {}
+}
+
+resource "google_firestore_field" "session_events_ttl" {
+  project    = var.project_id
+  database   = google_firestore_database.default_db.name
+  collection = "events"
+  field      = "expire_at"
+
+  ttl_config {}
+}
+
 # 7c. Index for list_training_records(): range filter on `date` within each runner's
 #     users/{id}/training_log. Enterprise edition has no built-in single-field indexes,
 #     so without this the query scans the whole collection.

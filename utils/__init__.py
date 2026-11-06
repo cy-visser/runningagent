@@ -61,8 +61,10 @@ from .race_readiness import (
     summarize_analysis,
 )
 from .report_data import (
+    AUDIT_REPORT_STATE_KEY,
     CHECKIN_REPORT_STATE_KEY,
     TREND_REPORT_STATE_KEY,
+    audit_report_data,
     checkin_report_data,
     trend_report_data,
 )
@@ -78,6 +80,8 @@ from .trajectory import (
     resolve_goal_distance,
 )
 from .workouts import (
+    NO_WORKOUT_PREFIX,
+    format_no_workout,
     format_workout_analysis,
     is_workout_completed,
     select_primary_workout,
@@ -138,8 +142,10 @@ __all__ = [
     "select_for_analysis",
     "summarize_analysis",
     # Structured report payloads
+    "AUDIT_REPORT_STATE_KEY",
     "CHECKIN_REPORT_STATE_KEY",
     "TREND_REPORT_STATE_KEY",
+    "audit_report_data",
     "checkin_report_data",
     "trend_report_data",
     # Status summary formatters
@@ -152,6 +158,8 @@ __all__ = [
     "parse_target_time_minutes",
     "resolve_goal_distance",
     # Workouts
+    "NO_WORKOUT_PREFIX",
+    "format_no_workout",
     "format_workout_analysis",
     "is_workout_completed",
     "select_primary_workout",

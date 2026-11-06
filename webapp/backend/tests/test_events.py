@@ -42,3 +42,5 @@ def test_translator_whitelists_report_state_and_classifies_checkin():
     assert tr.feed({"author": "coaching_agent", "partial": False, "content": {"parts": [{"text": "## Check-in\nFull"}]}}) == [
         ("message", {"text": "## Check-in\nFull", "kind": "checkin"})
     ]
+
+

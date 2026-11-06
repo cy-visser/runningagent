@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Optional
 
+from .long_run import format_week_long_run
 from .trajectory import (
     DEFAULT_PEAK_CTL,
     DEFAULT_PEAK_RANGE,
@@ -19,6 +20,7 @@ from .trajectory import (
 REPORT_DATA_VERSION = 1
 CHECKIN_REPORT_STATE_KEY = "checkin_report_data"
 TREND_REPORT_STATE_KEY = "trend_report_data"
+AUDIT_REPORT_STATE_KEY = "audit_report_data"
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -289,4 +291,48 @@ def trend_report_data(
         "levels": levels_payload,
         "outlook": outlook_payload,
         "key_run_label": key_run_label,
+    }
+
+
+def audit_report_data(
+    q_start: date,
+    q_end: date,
+    weeks: Optional[list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Structured schedule-audit payload (`audit_report_data`) stored in session state."""
+    weeks_payload = [
+        {
+            "week": _iso(w.get("start_date")),
+            "date_range": w.get("date_range"),
+            "km": _opt_round(w.get("total_distance_km"), 1) or 0.0,
+            "tss": _opt_round(w.get("total_tss"), 0) or 0.0,
+            "easy": int(w.get("easy_count") or 0),
+            "quality": int(w.get("quality_count") or 0),
+            "bike": int(w.get("bike_count") or 0),
+            "strength": int(w.get("strength_count") or 0),
+            "long_run": format_week_long_run(w) or None,
+            "notes": list(w.get("notes") or []),
+            "sessions": [
+                {
+                    "date": _iso(s.get("date")),
+                    "sport": s.get("sport") or "Run",
+                    "title": s.get("title") or (s.get("sport") or "Run"),
+                    "category": s.get("category") or "easy",
+                    "km": _opt_round(s.get("km"), 1) or 0.0,
+                    "minutes": round(float(s.get("minutes") or 0.0)),
+                    "tss": _opt_round(s.get("tss"), 0) or 0.0,
+                    "completed": bool(s.get("completed")),
+                }
+                for s in sorted(
+                    w.get("session_items") or [],
+                    key=lambda item: _iso(item.get("date")) or "",
+                )
+            ],
+        }
+        for w in (weeks or [])
+    ]
+    return {
+        "version": REPORT_DATA_VERSION,
+        "window": {"start": _iso(q_start), "end": _iso(q_end)},
+        "weeks": weeks_payload,
     }

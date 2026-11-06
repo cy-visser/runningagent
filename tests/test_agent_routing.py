@@ -10,17 +10,15 @@ import pytest
 
 import running_coach.agent as agent
 from running_coach.callbacks import (
-    ELIDED_SKILL,
-    ELIDED_TOOL,
     TREND_PLACEHOLDER,
     TREND_TABLES_STATE_KEY,
     apply_thinking_policy,
-    before_model,
-    prune_stale_history,
+    no_workout_reply,
     splice_tables,
 )
 import running_coach.steps as steps
 from running_coach.utils import AUTH_EMAIL_STATE_KEY
+from running_coach.utils.workouts import format_no_workout
 
 EMAIL = "cyrille@cyvisser.altostrat.com"
 PROFILE = {"firstname": "Cyrille", "lastname": "Visser", "email": EMAIL,
@@ -109,58 +107,27 @@ def test_thinking_policy_and_table_splicing():
     assert TREND_PLACEHOLDER not in spliced and "| CTL | 62.5 |" in spliced
 
 
-def _fr(name, payload):
-    return types.Part(function_response=types.FunctionResponse(id=f"id-{name}", name=name, response={"result": payload}))
+def test_no_workout_reply_short_circuits_model():
+    msg = format_no_workout(
+        "2026-11-06",
+        [{"title": "Easy Run", "sport": "Run", "date": "2026-11-06"}],
+        [{"title": "Tempo Run", "sport": "Run", "date": "2026-11-04", "type": "completed"}],
+    )
+    assert "No completed workout on 2026-11-06" in msg
+    assert "Planned that day: Easy Run." in msg
+    assert "Tempo Run on 2026-11-04" in msg
 
+    req = LlmRequest(contents=[types.Content(role="user", parts=[
+        types.Part(function_response=types.FunctionResponse(name="analyze_workout", response={"result": msg}))
+    ])])
+    res = no_workout_reply(FakeContext(), req)
+    assert res is not None and res.content.parts[0].text == msg
 
-def _history():
-    """Earlier check-in turn + current schedule turn, as ADK sends it to the model."""
-    return [
-        types.Content(role="user", parts=[types.Part(text="Checking in")]),
-        types.Content(role="model", parts=[
-            types.Part(function_call=types.FunctionCall(name="load_skill", args={"skill_name": "check-in-report"})),
-            types.Part(function_call=types.FunctionCall(name="fetch_checkin_data", args={})),
-        ]),
-        types.Content(role="user", parts=[_fr("load_skill", "# Check-In Report Skill ..."),
-                                          _fr("fetch_checkin_data", "### Weekly Check-In ...")]),
-        types.Content(role="model", parts=[types.Part(text="### Check-In Overview ...")]),
-        types.Content(role="user", parts=[types.Part(text="Review my plan")]),
-        types.Content(role="model", parts=[
-            types.Part(function_call=types.FunctionCall(name="fetch_schedule_audit_data", args={}))]),
-        types.Content(role="user", parts=[_fr("fetch_schedule_audit_data", "### Training Schedule Audit ...")]),
-    ]
-
-
-def test_prune_stale_history_stubs_only_earlier_turns_without_mutating_session():
-    session_contents = _history()
-    snapshot = [c.model_copy(deep=True) for c in session_contents]
-    req = LlmRequest(contents=list(session_contents), config=types.GenerateContentConfig())
-
-    assert prune_stale_history(req) == 2
-    old = req.contents[2].parts
-    assert old[0].function_response.name == "load_skill"
-    assert old[0].function_response.response == {"result": ELIDED_SKILL}
-    assert old[0].function_response.id == "id-load_skill"
-    assert old[1].function_response.response == {"result": ELIDED_TOOL}
-    # Calls, replies, user messages and the current turn's tool output are untouched.
-    assert req.contents[1] is session_contents[1] and req.contents[3] is session_contents[3]
-    assert req.contents[6].parts[0].function_response.response == {"result": "### Training Schedule Audit ..."}
-    # Session-owned objects are never mutated.
-    assert session_contents == snapshot
-
-
-def test_prune_keeps_current_turn_and_combined_callback_applies_thinking_policy():
-    contents = _history()[:3]  # still inside the check-in turn
-    req = LlmRequest(contents=contents, config=types.GenerateContentConfig())
-    assert prune_stale_history(req) == 0
-
-    req = LlmRequest(contents=_history() + [
-        types.Content(role="model", parts=[types.Part(function_call=types.FunctionCall(name="create_workout", args={}))]),
-        types.Content(role="user", parts=[_fr("create_workout", "ok")]),
-    ], config=types.GenerateContentConfig())
-    before_model(FakeContext(), req)
-    assert req.contents[2].parts[1].function_response.response == {"result": ELIDED_TOOL}
-    assert req.config.thinking_config.thinking_level == types.ThinkingLevel.LOW
+    # Normal workout analysis passes through to the model.
+    ok_req = LlmRequest(contents=[types.Content(role="user", parts=[
+        types.Part(function_response=types.FunctionResponse(name="analyze_workout", response={"result": "### Workout Analysis [1]"}))
+    ])])
+    assert no_workout_reply(FakeContext(), ok_req) is None
 
 
 def test_goal_plan_lens_only_for_goal_plans(monkeypatch):

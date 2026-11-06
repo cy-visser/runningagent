@@ -141,6 +141,22 @@ def format_other_sessions(others: list[dict], date_iso: str) -> str:
     )
 
 
+NO_WORKOUT_PREFIX = "No completed workout"
+
+
+def format_no_workout(date_iso: str, day_workouts: list[dict], recent_workouts: list[dict]) -> str:
+    """Runner-facing reply for a date without a completed workout."""
+    msg = f"{NO_WORKOUT_PREFIX} on {date_iso} in TrainingPeaks."
+    planned = [w.get("title") or w.get("sport") or "Workout" for w in day_workouts]
+    if planned:
+        msg += f" Planned that day: {', '.join(planned)}."
+    done = [w for w in recent_workouts if is_workout_completed(w)]
+    if done:
+        last = max(done, key=_start_ordinal)
+        msg += f" Your most recent completed workout is {last.get('title') or last.get('sport')} on {str(last.get('date'))[:10]}."
+    return msg + " If you've already trained, sync it to TrainingPeaks and ask again, or tell me which date to analyze."
+
+
 
 ALLOWED_DATA_CHANNELS = {
     "HeartRate", "Pace", "Power", "Cadence", "Speed", "Torque",

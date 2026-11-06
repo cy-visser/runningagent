@@ -84,3 +84,30 @@ class TestResolveTpCookie:
         fallback = asyncio.run(tp_credentials.resolve_tp_cookie(synth_state))
         assert fallback == "decrypted-cookie"
         tp_credentials.clear_tp_credential_cache()
+
+
+def test_create_session_always_creates_new_session(monkeypatch):
+    from google.adk.integrations.firestore.firestore_session_service import FirestoreSessionService
+    from google.adk.sessions.session import Session
+    from running_coach.services.session_service import CoachFirestoreSessionService
+
+    created = []
+
+    async def fake_super_create(self, *, app_name, user_id, state=None, session_id=None):
+        sid = session_id or f"generated-{len(created) + 1}"
+        created.append((app_name, user_id, sid, state))
+        return Session(id=sid, app_name=app_name, user_id=user_id, state=dict(state or {}))
+
+    async def fake_append_event(self, session, event):
+        return event
+
+    monkeypatch.setattr(FirestoreSessionService, "create_session", fake_super_create)
+    monkeypatch.setattr(CoachFirestoreSessionService, "append_event", fake_append_event)
+
+    svc = CoachFirestoreSessionService.__new__(CoachFirestoreSessionService)
+    s1 = asyncio.run(svc.create_session(app_name="running_coach", user_id="web_u@x.com", state={"__k": 1}))
+    s2 = asyncio.run(svc.create_session(app_name="running_coach", user_id="web_u@x.com"))
+    assert s1.id == "generated-1" and s2.id == "generated-2"
+    assert s1.state == {"__k": 1}
+    assert len(created) == 2
+

@@ -10,6 +10,24 @@ PROGRESS_BAR_SEGMENTS = 10
 # Typical race-day form (TSB) after a good taper; shown in the CTL row during the taper.
 RACE_DAY_TSB_TARGET = (5, 15)
 
+# Calendar notes can hold multi-page race plans; keep enough context to signal travel/illness/plans.
+NOTE_DESC_MAX_CHARS = 240
+
+
+def truncate_note(text: str, limit: int = NOTE_DESC_MAX_CHARS) -> str:
+    """Collapses whitespace and caps `text` at <= `limit` chars (including the ellipsis)."""
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= limit:
+        return compact
+    cut = compact[: limit - 1].rsplit(" ", 1)[0] or compact[: limit - 1]
+    return cut.rstrip(" ,;:-") + "…"
+
+
+def _run_time_weather(snippet: Optional[str]) -> str:
+    """Hourly conditions when present (drops the redundant `| [Day: ...]`), else the day summary."""
+    return str(snippet).split(" | [Day:", 1)[0] if snippet else ""
+
+
 def format_completed_workouts(
     workouts_past: Optional[list[dict]], 
     weather_map: Optional[dict[str, str]] = None
@@ -23,18 +41,18 @@ def format_completed_workouts(
         sport = w.get("sport", "Workout")
         w_id = w.get("id", "")
         w_title = w.get("title") or sport
-        time_identifier = w.get("start_time") or w.get("date", "")
+        start_time = w.get("start_time")
+        time_identifier = start_time or w.get("date", "")
         time_display = format_display_date(time_identifier)
         dist_km = round(w.get("distance_actual_km") or 0.0, 1)
         dur_hrs = w.get("duration_actual")
         dur_str = f" | Dur: {round(dur_hrs, 2)}h" if dur_hrs and isinstance(dur_hrs, (int, float)) else ""
         dist_str = f": {dist_km}km" if dist_km > 0 else ""
         actual_tss = w.get("tss_actual") or w.get("tss") or 0
-        
-        date_key = str(time_identifier)[:10]
-        wx_snippet = weather_map.get(str(time_identifier)) or weather_map.get(date_key)
-        wx_str = f" [Weather: {wx_snippet}]" if wx_snippet else ""
-        
+
+        wx = _run_time_weather(weather_map.get(str(start_time))) if start_time else ""
+        wx_str = f" [Weather: {wx}]" if wx else ""
+
         completed_items.append(
             f"- [{sport}] '{w_title}' [{w_id}] on {time_display}{dist_str}{dur_str} | TSS: {actual_tss}{wx_str}"
         )
@@ -88,7 +106,7 @@ def format_calendar_notes(notes_list: Optional[list[dict]]) -> str:
         n_date = str(n.get("date", ""))[:10]
         date_display = format_display_date(n_date)
         n_title = n.get("title") or "Note"
-        n_desc = n.get("description") or ""
+        n_desc = truncate_note(n.get("description") or "")
         desc_str = f" | {n_desc}" if n_desc else ""
         notes_summary_list.append(f"- {date_display}: {n_title}{desc_str}")
     return "\n".join(notes_summary_list) if notes_summary_list else "No calendar notes."

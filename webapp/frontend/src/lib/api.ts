@@ -258,7 +258,9 @@ function dispatchSseEvent(
       break;
     case "report":
       if (
-        (obj.kind === "checkin" || obj.kind === "trend") &&
+        (obj.kind === "checkin" ||
+          obj.kind === "trend" ||
+          obj.kind === "audit") &&
         obj.data &&
         typeof obj.data === "object"
       ) {

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Activity, AlertCircle } from "lucide-react";
 import type { ChatMessage } from "../types";
+import { AuditReport } from "./AuditReport";
 import { CheckinReport } from "./CheckinReport";
 import { RichMarkdown } from "./RichMarkdown";
 import { ToolProgress } from "./ToolProgress";
@@ -57,6 +58,7 @@ export function ChatFeed({ messages }: ChatFeedProps) {
         const checkinData =
           msg.report?.kind === "checkin" ? msg.report.data : null;
         const trendData = msg.report?.kind === "trend" ? msg.report.data : null;
+        const auditData = msg.report?.kind === "audit" ? msg.report.data : null;
 
         return (
           <div
@@ -91,6 +93,8 @@ export function ChatFeed({ messages }: ChatFeedProps) {
               <CheckinReport data={checkinData} markdown={msg.text} />
             ) : trendData ? (
               <TrendReport data={trendData} markdown={msg.text} />
+            ) : auditData ? (
+              <AuditReport data={auditData} markdown={msg.text} />
             ) : msg.text ? (
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-card">
                 <RichMarkdown content={msg.text} />

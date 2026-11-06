@@ -47,12 +47,15 @@ def _build_condition_map(
     dates: list[str],
     lat: Optional[float],
     lon: Optional[float],
+    utc: bool = False,
 ) -> tuple[Optional[str], dict[str, str]]:
     """Resolves per-input weather conditions.
 
     Returns (error_message, conditions) where `conditions` maps each input
     date/timestamp to a human-readable conditions string. Exactly one of the two
     is meaningful: on failure the map is empty and an error message is returned.
+    When `utc=True`, timestamp inputs are treated as UTC and converted to the
+    target location's local clock via Open-Meteo's `utc_offset_seconds`.
     """
     if not dates:
         return "No dates provided.", {}
@@ -63,20 +66,19 @@ def _build_condition_map(
             return f"Could not geocode location: {location}", {}
         lat, lon = coords
 
-    parsed_dates = []
-    input_mapping = []  # (input_str, date_str, hour_int)
+    parsed: list[tuple[str, datetime, bool]] = []
     for d in dates:
         dt = parse_iso_timestamp(d)
         if not dt:
             continue
-        parsed_dates.append(dt.date())
         has_hour = ("T" in str(d) or " " in str(d)) and len(str(d)) > 10
-        input_mapping.append((d, dt.strftime("%Y-%m-%d"), dt.hour if has_hour else None))
+        parsed.append((d, dt, has_hour))
 
-    if not parsed_dates:
+    if not parsed:
         return "No valid dates could be parsed.", {}
 
-    min_date, max_date = min(parsed_dates), max(parsed_dates)
+    min_date = min(dt.date() for _, dt, _ in parsed)
+    max_date = max(dt.date() for _, dt, _ in parsed)
     horizon = datetime.now().date() + timedelta(days=FORECAST_HORIZON_DAYS)
     if max_date > horizon:
         return (
@@ -85,15 +87,19 @@ def _build_condition_map(
             f"(requested range: {min_date} to {max_date})."
         ), {}
 
+    # A UTC timestamp near midnight can fall on the previous or next local day.
+    query_start = min_date - timedelta(days=1) if utc else min_date
+    query_end = min(horizon, max_date + timedelta(days=1)) if utc else max_date
     weather_url = (
         "https://api.open-meteo.com/v1/forecast?"
-        f"latitude={lat}&longitude={lon}&start_date={min_date}&end_date={max_date}"
+        f"latitude={lat}&longitude={lon}&start_date={query_start}&end_date={query_end}"
         "&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,"
         "relative_humidity_2m_mean,precipitation_sum,wind_speed_10m_max"
         "&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,wind_speed_10m"
         "&timezone=auto"
     )
     weather_data = _fetch_json(weather_url)
+    offset = timedelta(seconds=int(weather_data.get("utc_offset_seconds") or 0)) if utc else timedelta(0)
 
     daily = weather_data.get("daily", {})
     hourly = weather_data.get("hourly", {})
@@ -142,12 +148,14 @@ def _build_condition_map(
     }
 
     conditions: dict[str, str] = {}
-    for input_str, date_str, hour_int in input_mapping:
+    for input_str, dt, has_hour in parsed:
+        local = (dt + offset) if has_hour else dt
+        date_str = local.strftime("%Y-%m-%d")
         day_str = daily_map.get(date_str)
         if not day_str:
             conditions[input_str] = "No weather data found."
             continue
-        hour_str = hourly_map.get(f"{date_str}T{hour_int:02d}:00") if hour_int is not None else None
+        hour_str = hourly_map.get(f"{date_str}T{local.hour:02d}:00") if has_hour else None
         conditions[input_str] = f"{hour_str} | [{day_str}]" if hour_str else f"[{day_str}]"
 
     return None, conditions
@@ -158,6 +166,7 @@ def get_weather_conditions(
     dates: list[str],
     lat: Optional[float] = None,
     lon: Optional[float] = None,
+    utc: bool = False,
 ) -> dict[str, str]:
     """Returns a {date_or_timestamp: conditions} map, or an empty map on failure.
 
@@ -165,7 +174,7 @@ def get_weather_conditions(
     For narrative text destined for the model, use `get_weather_for_dates`.
     """
     try:
-        error, conditions = _build_condition_map(location, dates, lat, lon)
+        error, conditions = _build_condition_map(location, dates, lat, lon, utc=utc)
     except Exception as e:
         logger.warning("Weather lookup failed for '%s': %s", location, e)
         return {}
@@ -188,6 +197,7 @@ def get_weather_for_dates(
     dates: list[str],
     lat: Optional[float] = None,
     lon: Optional[float] = None,
+    utc: bool = False,
 ) -> str:
     """Fetches weather data (daily and hourly) for a list of dates/timestamps in a single API call.
 
@@ -195,7 +205,7 @@ def get_weather_for_dates(
     human-readable message (this is the ad-hoc tool path).
     """
     try:
-        error, conditions = _build_condition_map(location, dates, lat, lon)
+        error, conditions = _build_condition_map(location, dates, lat, lon, utc=utc)
     except Exception as e:
         logger.warning("Weather lookup failed for '%s': %s", location, e)
         return f"Error fetching weather data: {e}"
@@ -209,24 +219,28 @@ def get_weather_for_dates(
 FORECAST_HISTORY_DAYS = 80
 
 
-def get_conditions_at(lat: float, lon: float, timestamp: str) -> Optional[dict]:
-    """Structured conditions at one local timestamp (YYYY-MM-DDTHH:MM:SS), or None on failure.
+def get_conditions_at(lat: float, lon: float, timestamp: str, utc: bool = False) -> Optional[dict]:
+    """Structured conditions at one timestamp (YYYY-MM-DDTHH:MM:SS), or None on failure.
 
-    Returns {"temp_c", "feels_like_c", "humidity", "wind_kmh"} for the hour of the timestamp.
+    Returns {"temp_c", "feels_like_c", "humidity", "wind_kmh"} for the local hour
+    of the timestamp (`utc=True` converts from UTC via `utc_offset_seconds`).
     """
     dt = parse_iso_timestamp(timestamp)
     if dt is None or lat is None or lon is None:
         return None
-    day = dt.strftime("%Y-%m-%d")
+    start_day = (dt.date() - timedelta(days=1) if utc else dt.date()).isoformat()
+    end_day = (dt.date() + timedelta(days=1) if utc else dt.date()).isoformat()
     old = dt.date() < datetime.now().date() - timedelta(days=FORECAST_HISTORY_DAYS)
     host = "https://archive-api.open-meteo.com/v1/archive" if old else "https://api.open-meteo.com/v1/forecast"
     url = (
-        f"{host}?latitude={lat}&longitude={lon}&start_date={day}&end_date={day}"
+        f"{host}?latitude={lat}&longitude={lon}&start_date={start_day}&end_date={end_day}"
         "&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m&timezone=auto"
     )
     try:
-        hourly = _fetch_json(url).get("hourly") or {}
-        i = (hourly.get("time") or []).index(f"{day}T{dt.hour:02d}:00")
+        payload = _fetch_json(url)
+        local = dt + timedelta(seconds=int(payload.get("utc_offset_seconds") or 0)) if utc else dt
+        hourly = payload.get("hourly") or {}
+        i = (hourly.get("time") or []).index(f"{local.strftime('%Y-%m-%d')}T{local.hour:02d}:00")
         return {
             "temp_c": hourly["temperature_2m"][i],
             "feels_like_c": hourly["apparent_temperature"][i],

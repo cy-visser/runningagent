@@ -7,9 +7,10 @@ from typing import Any, Literal, Optional
 
 MessageKind = Literal["checkin", "trend", "workout", "audit", "nutrition", "chat"]
 
-WHITELISTED_REPORT_KEYS: dict[str, Literal["checkin", "trend"]] = {
+WHITELISTED_REPORT_KEYS: dict[str, Literal["checkin", "trend", "audit"]] = {
     "checkin_report_data": "checkin",
     "trend_report_data": "trend",
+    "audit_report_data": "audit",
 }
 
 TOOL_LABELS: dict[str, str] = {
@@ -39,7 +40,7 @@ def label_for_tool(name: str) -> str:
 
 
 def infer_message_kind(tools_used: set[str], report_kind: Optional[str] = None) -> MessageKind:
-    if report_kind in ("checkin", "trend"):
+    if report_kind in ("checkin", "trend", "audit"):
         return report_kind  # type: ignore[return-value]
     for tool_name in ("fetch_checkin_data", "fetch_trend_data", "analyze_workout", "fetch_schedule_audit_data", "fetch_nutrition_context"):
         if tool_name in tools_used:

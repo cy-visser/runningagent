@@ -33,6 +33,7 @@ def new_week_bucket(day: date) -> dict:
         "strength_count": 0,
         "other_sport_count": 0,
         "sessions": [],
+        "session_items": [],
         "notes": [],
     }
 
@@ -44,8 +45,13 @@ def tally_workout(bucket: dict, workout: dict, w_date: date) -> None:
     """
     sport = (workout.get("sport") or "Run").strip()
     sport_lower = sport.lower()
-    order = ("actual", "planned") if is_workout_completed(workout) else ("planned", "actual")
+    completed = is_workout_completed(workout)
+    order = ("actual", "planned") if completed else ("planned", "actual")
     dist = next((_float(workout.get(f"distance_{k}_km")) for k in order if workout.get(f"distance_{k}_km")), 0.0)
+    duration_h = next(
+        (_float(workout.get(f"duration_{k}")) for k in order if workout.get(f"duration_{k}")),
+        None,
+    )
     tss = next(
         (_float(workout.get(f"tss_{k}")) for k in order if workout.get(f"tss_{k}")),
         _float(workout.get("tss")),
@@ -55,19 +61,31 @@ def tally_workout(bucket: dict, workout: dict, w_date: date) -> None:
     title = workout.get("title") or sport
     if sport_lower in RUN_SPORTS:
         bucket["total_distance_km"] += dist
-        bucket["quality_count" if is_quality_title(title) else "easy_count"] += 1
+        category = "quality" if is_quality_title(title) else "easy"
+        bucket[f"{category}_count"] += 1
         if dist > bucket["long_km"]:
             bucket["long_km"] = dist
-            bucket["long_duration_h"] = next(
-                (_float(workout.get(f"duration_{k}")) for k in order if workout.get(f"duration_{k}")), None
-            )
+            bucket["long_duration_h"] = duration_h
     elif sport_lower in BIKE_SPORTS:
+        category = "bike"
         bucket["bike_count"] += 1
     elif sport_lower in STRENGTH_SPORTS:
+        category = "strength"
         bucket["strength_count"] += 1
     else:
+        category = "other"
         bucket["other_sport_count"] += 1
 
+    bucket["session_items"].append({
+        "date": w_date,
+        "sport": sport,
+        "title": title,
+        "category": category,
+        "km": dist,
+        "minutes": (duration_h or 0.0) * 60.0,
+        "tss": tss,
+        "completed": completed,
+    })
     dist_str = f"{round(dist, 1)}km, " if dist > 0 else ""
     bucket["sessions"].append(
         f"[{sport}] '{title}' on {format_display_date(w_date)} ({dist_str}TSS: {round(tss, 0)})"
@@ -97,13 +115,15 @@ def build_week_buckets(workouts: Optional[list[dict]], start: date, end: date) -
 
 def add_notes_to_weeks(weeks: dict[str, dict], notes: Optional[list[dict]]) -> None:
     """Appends every calendar note to the bucket of its week."""
+    from .status_summary import truncate_note
+
     for n in notes or []:
         n_date = parse_date(n.get("date"))
         bucket = weeks.get(iso_week_key(n_date)) if n_date else None
         if bucket is None:
             continue
         title = n.get("title") or "Note"
-        desc = n.get("description") or ""
+        desc = truncate_note(n.get("description") or "")
         bucket["notes"].append(f"{format_display_date(n_date)}: {title}" + (f" | {desc}" if desc else ""))
 
 

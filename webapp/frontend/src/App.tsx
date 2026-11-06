@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { ConnectTrainingPeaksDialog } from "./components/ConnectTrainingPeaksDialog";
 import { Dashboard } from "./components/Dashboard";
@@ -17,6 +17,8 @@ import type {
   ProfileResponse,
 } from "./types";
 
+const SESSION_IDLE_MS = 4 * 60 * 60 * 1000; // matches agent CONTEXT_WINDOW
+
 export function App() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -25,6 +27,7 @@ export function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [sessionExpiredBanner, setSessionExpiredBanner] = useState(false);
+  const lastActivityRef = useRef(0);
 
   const [profileDrawerOpen, setProfileDrawerOpen] = useState(false);
   const [profileDrawerMode, setProfileDrawerMode] = useState<"view" | "edit">(
@@ -50,6 +53,7 @@ export function App() {
       setMe(meRes);
       setSessionId(null);
       setMessages([]);
+      lastActivityRef.current = 0;
       if (import.meta.env.VITE_DEMO_MODE === "true") {
         const demoView = new URLSearchParams(window.location.search).get("view");
         if (demoView === "checkin" || demoView === "trend") {
@@ -79,23 +83,35 @@ export function App() {
 
   const handleNewSession = async () => {
     if (streaming) return;
+    setMessages([]);
+    setSessionId(null);
+    lastActivityRef.current = 0;
+    setStreaming(true);
     try {
       const created = await createNewSession();
       setSessionId(created.session_id);
-      setMessages([]);
     } catch {
-      setMessages([]);
-      setSessionId(null);
+      // The next message creates the session instead.
+    } finally {
+      setStreaming(false);
     }
   };
 
-  const handleSendPrompt = async (prompt: string) => {
+  const handleSendPrompt = async (prompt: string, newConversation = false) => {
     if (streaming || !me) return;
+    const idle =
+      lastActivityRef.current > 0 &&
+      Date.now() - lastActivityRef.current > SESSION_IDLE_MS;
+    const startFresh = (newConversation || idle) && messages.length > 0;
+    const targetSessionId = startFresh ? null : sessionId;
+    if (startFresh) {
+      setSessionId(null);
+    }
     const userMsgId = `u-${Date.now()}`;
     const assistantMsgId = `a-${Date.now() + 1}`;
 
     setMessages((prev) => [
-      ...prev,
+      ...(startFresh ? [] : prev),
       {
         id: userMsgId,
         role: "user",
@@ -116,7 +132,7 @@ export function App() {
 
     try {
       await streamChat(
-        { message: prompt, sessionId },
+        { message: prompt, sessionId: targetSessionId },
         {
           onSession: (sid) => {
             if (sid) setSessionId(sid);
@@ -180,6 +196,7 @@ export function App() {
             );
           },
           onDone: () => {
+            lastActivityRef.current = Date.now();
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantMsgId

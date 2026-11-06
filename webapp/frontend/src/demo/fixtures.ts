@@ -1,4 +1,5 @@
 import type {
+  AuditReportData,
   CheckinReportData,
   MeResponse,
   ProfileResponse,
@@ -325,3 +326,104 @@ Over the past 26 weeks you have lifted your **proven weekly volume ceiling to 70
 
 ### Strategic Recommendation for Winter Block
 - Consolidate **70–75 km/wk** for two more weeks before a recovery cutback week (~56 km), then step into an **80–84 km/wk** peak marathon block in January.`;
+
+export const DEMO_AUDIT_DATA: AuditReportData = {
+  version: 1,
+  window: { start: "2026-10-26", end: "2026-11-29" },
+  weeks: [
+    {
+      week: "2026-10-26",
+      date_range: "Oct 26 – Nov 1, 2026",
+      km: 73.5,
+      tss: 472,
+      easy: 4,
+      quality: 2,
+      bike: 1,
+      strength: 1,
+      long_run: "Long run: 24.0 km (target 21–24 km · build) ✓",
+      notes: [],
+      sessions: [
+        { date: "2026-10-26", sport: "Strength", title: "Lower-body & Achilles Eccentrics", category: "strength", km: 0, minutes: 40, tss: 25, completed: true },
+        { date: "2026-10-27", sport: "Run", title: "12 km w/ 6×1 km @ 3:46/km", category: "quality", km: 12.0, minutes: 56, tss: 88, completed: true },
+        { date: "2026-10-28", sport: "Run", title: "Easy Aerobic 10 km", category: "easy", km: 10.0, minutes: 50, tss: 52, completed: true },
+        { date: "2026-10-29", sport: "Run", title: "14 km Threshold Cruise (2×20m)", category: "quality", km: 14.0, minutes: 64, tss: 98, completed: true },
+        { date: "2026-10-30", sport: "Bike", title: "Z1 Recovery Spin", category: "bike", km: 0, minutes: 45, tss: 30, completed: true },
+        { date: "2026-10-31", sport: "Run", title: "Easy 13.5 km + 6×20s strides", category: "easy", km: 13.5, minutes: 66, tss: 69, completed: true },
+        { date: "2026-11-01", sport: "Run", title: "Progressive Long Run 24 km", category: "easy", km: 24.0, minutes: 112, tss: 110, completed: true },
+      ],
+    },
+    {
+      week: "2026-11-02",
+      date_range: "Nov 2 – Nov 8, 2026",
+      km: 71.5,
+      tss: 458,
+      easy: 3,
+      quality: 2,
+      bike: 1,
+      strength: 1,
+      long_run: "Long run: 22.0 km (target 21–24 km · build) ✓",
+      notes: ["Nov 06: Keep Friday strides strictly on flat tarmac"],
+      sessions: [
+        { date: "2026-11-03", sport: "Run", title: "12 km w/ 5×1 km @ 3:48/km", category: "quality", km: 12.0, minutes: 55, tss: 86, completed: true },
+        { date: "2026-11-04", sport: "Run", title: "Easy Recovery 11.5 km", category: "easy", km: 11.5, minutes: 58, tss: 58, completed: true },
+        { date: "2026-11-05", sport: "Run", title: "14 km Tempo Cruise (2×20 min @ 4:02/km)", category: "quality", km: 14.0, minutes: 63, tss: 96, completed: true },
+        { date: "2026-11-06", sport: "Strength", title: "Heavy Calf + Single-leg RDL", category: "strength", km: 0, minutes: 35, tss: 22, completed: false },
+        { date: "2026-11-07", sport: "Run", title: "12 km Easy + 6×20s tarmac strides", category: "easy", km: 12.0, minutes: 59, tss: 62, completed: false },
+        { date: "2026-11-07", sport: "Bike", title: "Easy Spin 40 min", category: "bike", km: 0, minutes: 40, tss: 26, completed: false },
+        { date: "2026-11-08", sport: "Run", title: "22 km Progressive Long Run", category: "easy", km: 22.0, minutes: 103, tss: 108, completed: false },
+      ],
+    },
+    {
+      week: "2026-11-09",
+      date_range: "Nov 9 – Nov 15, 2026",
+      km: 76.0,
+      tss: 488,
+      easy: 3,
+      quality: 2,
+      bike: 1,
+      strength: 1,
+      long_run: "Long run: 24.0 km (target 21–24 km · build) ✓",
+      notes: [],
+      sessions: [
+        { date: "2026-11-09", sport: "Strength", title: "Strength & Soleus Load", category: "strength", km: 0, minutes: 40, tss: 24, completed: false },
+        { date: "2026-11-10", sport: "Run", title: "13 km w/ 4×2 km @ 3:56/km", category: "quality", km: 13.0, minutes: 60, tss: 92, completed: false },
+        { date: "2026-11-11", sport: "Run", title: "Easy Aerobic 12 km", category: "easy", km: 12.0, minutes: 60, tss: 60, completed: false },
+        { date: "2026-11-12", sport: "Run", title: "15 km HM-Pace Alternations", category: "quality", km: 15.0, minutes: 68, tss: 104, completed: false },
+        { date: "2026-11-13", sport: "Bike", title: "Z1 Flush Ride", category: "bike", km: 0, minutes: 45, tss: 28, completed: false },
+        { date: "2026-11-14", sport: "Run", title: "Easy 12 km", category: "easy", km: 12.0, minutes: 60, tss: 60, completed: false },
+        { date: "2026-11-15", sport: "Run", title: "Long Run 24 km", category: "easy", km: 24.0, minutes: 112, tss: 120, completed: false },
+      ],
+    },
+    {
+      week: "2026-11-16",
+      date_range: "Nov 16 – Nov 22, 2026",
+      km: 58.0,
+      tss: 360,
+      easy: 3,
+      quality: 1,
+      bike: 1,
+      strength: 1,
+      long_run: "Long run: 18.0 km (target 16–19 km · cutback) ✓",
+      notes: ["Nov 18: Lisbon work trip (warm, hilly)"],
+      sessions: [
+        { date: "2026-11-17", sport: "Run", title: "11 km w/ 6×3 min @ LT2", category: "quality", km: 11.0, minutes: 52, tss: 78, completed: false },
+        { date: "2026-11-18", sport: "Run", title: "Easy Tagus Riverfront 10 km", category: "easy", km: 10.0, minutes: 50, tss: 50, completed: false },
+        { date: "2026-11-19", sport: "Strength", title: "Hotel Mobility & Calf Isometrics", category: "strength", km: 0, minutes: 30, tss: 18, completed: false },
+        { date: "2026-11-20", sport: "Run", title: "Easy 11 km", category: "easy", km: 11.0, minutes: 55, tss: 55, completed: false },
+        { date: "2026-11-21", sport: "Bike", title: "Recovery Spin", category: "bike", km: 0, minutes: 40, tss: 25, completed: false },
+        { date: "2026-11-22", sport: "Run", title: "Cutback Long Run 18 km", category: "easy", km: 18.0, minutes: 86, tss: 92, completed: false },
+      ],
+    },
+  ],
+};
+
+export const DEMO_AUDIT_MARKDOWN = `### Schedule Evaluation
+
+- **🟢 Polarisation & Spacing:** Every build week holds a clean **2 quality / 3–4 easy** split with at least 48h between Tuesday VO2/reps and Thursday threshold work, plus one bike flush and one strength session.
+- **🟢 Progression & Cutback:** Volume stays within a safe **+6% ramp** into Nov 9–15 (**76.0 km**) followed by a well-timed **-24% absorption week** (58.0 km) aligned with the Lisbon work trip.
+- **🟡 Travel & Achilles Watch (Nov 16–22):** Lisbon hills increase Achilles tendon load — stick to the flat Tagus riverfront path for the Nov 18 easy run.
+
+### Recommended Adjustments
+- **Sub goal (Sub-1:26 HM):** Keep Nov 12's 15 km HM-pace alternations capped at LTHR (168 bpm); do not chase pace if windy.
+- **North star (Sub-2:58 Marathon):** Long runs sit squarely in the **22–24 km** build target window, protecting aerobic durability ahead of the January marathon block.`;
+

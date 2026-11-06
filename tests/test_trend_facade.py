@@ -75,14 +75,14 @@ def env(monkeypatch):
     async def fake_update_profile(user_id, update):
         profile_updates.append((user_id, update))
 
-    async def no_weather_text(profile, dates):
+    async def no_weather_text(profile, dates, **_kw):
         return ""
 
     monkeypatch.setattr(tools, "_run_tp_tool", fake_tp)
     monkeypatch.setattr(tools, "list_training_records", fake_list)
     monkeypatch.setattr(tools, "save_training_record", fake_save)
     monkeypatch.setattr(tools, "update_user_profile", fake_update_profile)
-    monkeypatch.setattr(tools, "get_conditions_at", lambda lat, lon, ts: {"feels_like_c": 11.0})
+    monkeypatch.setattr(tools, "get_conditions_at", lambda lat, lon, ts, **_kw: {"feels_like_c": 11.0})
     monkeypatch.setattr(tools, "_fetch_weather_text", no_weather_text)
     monkeypatch.setattr(tools, "get_today_date", lambda: TODAY)
     return {"saved": saved, "profile_updates": profile_updates}

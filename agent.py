@@ -14,7 +14,7 @@ from google.adk.workflow import node
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from .callbacks import before_model, splice_tables
+from .callbacks import apply_thinking_policy, no_workout_reply, splice_tables
 from .services.config import dev_runner_email, web_app_url
 from .services.tp_credentials import has_tp_credential
 from .steps import (
@@ -217,8 +217,7 @@ _ROUTING_RULES = """
     - Review / audit the plan         -> schedule-audit        -> fetch_schedule_audit_data
     - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
     - Create/change workouts or notes -> workout-creator       -> fetch_schedule_audit_data, then create_workout / create_note
-    Do not reload a skill whose instructions are already in THIS turn; just call its data tool. Skill
-    instructions and tool output from earlier turns are elided: reload the skill / re-fetch data when needed.
+    Do not reload a skill whose instructions are already in this conversation; just call its data tool.
     New goal (the runner accepts setting one) -> request_new_goal. Ad-hoc weather -> get_weather.
 
     CHECK-IN vs TREND: route on the time horizon of the question.
@@ -333,9 +332,9 @@ coaching_agent = Agent(
     description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
     instruction=build_coach_instruction,
     tools=coaching_agent_tools,
-    # Prune earlier-turn tool/skill payloads; full reasoning except on post-write confirmations;
+    # Deterministic no-workout reply; full reasoning except on post-write confirmations;
     # check-in / trend tables spliced in verbatim.
-    before_model_callback=before_model,
+    before_model_callback=[no_workout_reply, apply_thinking_policy],
     after_model_callback=splice_tables,
     mode="chat",
 )

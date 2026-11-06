@@ -21,7 +21,7 @@ interface DashboardProps {
   me: MeResponse;
   messages: ChatMessage[];
   streaming: boolean;
-  onSendPrompt: (prompt: string) => void;
+  onSendPrompt: (prompt: string, newConversation?: boolean) => void;
   onViewProfile: () => void;
   onOpenTrainingPeaks: () => void;
 }
@@ -40,6 +40,7 @@ export function Dashboard({
   const firstName =
     me.summary?.firstname || me.display_name.split(" ")[0] || "Runner";
   const canSend = me.tp.connected && !streaming;
+  const startNewConversation = (prompt: string) => onSendPrompt(prompt, true);
 
   const handleComposerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +65,7 @@ export function Dashboard({
       onOpenTrainingPeaks();
       return;
     }
-    onSendPrompt("Let's set up my runner profile");
+    startNewConversation("Let's set up my runner profile");
   };
 
   return (
@@ -103,15 +104,15 @@ export function Dashboard({
 
               {me.summary.goal_type === "plan" &&
                 me.summary.north_star?.goal && (
-                  <button
-                    type="button"
-                    onClick={onViewProfile}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-violet-300 bg-violet-100 px-3.5 py-1.5 text-xs font-semibold text-violet-950 transition hover:border-violet-400 hover:bg-violet-200/80 cursor-pointer"
-                  >
-                    <Compass className="h-3.5 w-3.5 text-violet-700" />
-                    <span>North Star: {me.summary.north_star.goal}</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={onViewProfile}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-violet-300 bg-violet-100 px-3.5 py-1.5 text-xs font-semibold text-violet-950 transition hover:border-violet-400 hover:bg-violet-200/80 cursor-pointer"
+                >
+                  <Compass className="h-3.5 w-3.5 text-violet-700" />
+                  <span>North Star: {me.summary.north_star.goal}</span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -255,7 +256,7 @@ export function Dashboard({
             <button
               type="button"
               disabled={!canSend}
-              onClick={() => onSendPrompt("Analyze today's run")}
+              onClick={() => startNewConversation("Analyze today's run")}
               className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-rose-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
             >
               <div className="flex items-start gap-3.5">
@@ -279,7 +280,7 @@ export function Dashboard({
             <button
               type="button"
               disabled={!canSend}
-              onClick={() => onSendPrompt("Checking in")}
+              onClick={() => startNewConversation("Checking in")}
               className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-indigo-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
             >
               <div className="flex items-start gap-3.5">
@@ -304,7 +305,7 @@ export function Dashboard({
               type="button"
               disabled={!canSend}
               onClick={() =>
-                onSendPrompt("Trend analysis for the past 6 months")
+                startNewConversation("Trend analysis for the past 6 months")
               }
               className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-violet-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
             >
@@ -329,7 +330,9 @@ export function Dashboard({
           <button
             type="button"
             disabled={!canSend}
-            onClick={() => onSendPrompt("Audit my schedule for this week")}
+            onClick={() =>
+              startNewConversation("Audit my schedule for this week")
+            }
             className="group flex w-full items-center justify-between gap-4 rounded-2xl bg-sunset bg-sunset-hover px-6 py-4 text-left text-white shadow-sunset transition disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
           >
             <div className="flex items-center gap-4">

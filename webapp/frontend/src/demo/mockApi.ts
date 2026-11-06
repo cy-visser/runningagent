@@ -8,6 +8,8 @@ import type {
   SessionResponse,
 } from "../types";
 import {
+  DEMO_AUDIT_DATA,
+  DEMO_AUDIT_MARKDOWN,
   DEMO_CHECKIN_DATA,
   DEMO_CHECKIN_MARKDOWN,
   DEMO_ME_ONBOARDING,
@@ -224,9 +226,10 @@ export async function demoStreamChat(
       label: "Auditing weekly schedule & calendar notes",
       state: "done",
     });
+    handlers.onReport?.({ kind: "audit", data: DEMO_AUDIT_DATA });
     handlers.onMessage?.({
       kind: "audit",
-      text: `### Current Week Schedule Audit (Nov 2 – Nov 8)\n\n| Day | Planned Session | Status | Coach Note |\n| :--- | :--- | :--- | :--- |\n| **Tue** | 12 km w/ 5×1 km @ 3:48/km | 🟢 Completed | Nailed splits (3:47 avg), HR peaked at 176 bpm |\n| **Thu** | 14 km Tempo Cruise (2×20 min @ 4:02/km) | 🟢 Balanced | Ideal spacing 48h after Tuesday intervals |\n| **Sat** | 10 km Easy + 6×20s tarmac strides | 🟡 Note | Keep strides strictly flat for Achilles care |\n| **Sun** | 22 km Progressive Long Run | 🟢 Key session | Brings weekly total to **71.5 km** (+0.8 CTL) |`,
+      text: DEMO_AUDIT_MARKDOWN,
     });
   } else {
     handlers.onMessage?.({

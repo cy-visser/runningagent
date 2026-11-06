@@ -29,7 +29,7 @@ The root agent is an ADK `Workflow` with one deterministic router and four nodes
 
 **Goal plans.** A plan stores `north_star` and `sub_goals`, each a full training block with a `start_date` and a finishing race (`race_date`). `utils/goals.py` derives `current_goal` with the same keys as a single goal (`training_goal`, `timeline`, `goal_set_date`), keeping trajectory, taper, and race projection maths unified.
 
-**Session handling.** A custom Firestore session service automatically resumes the runner's previous session (keyed cleanly per surface: `<email>` on Gemini Enterprise and `web_<email>` on the Web App). Every 10 turns, ADK event compaction summarises older history.
+**Session handling.** Sessions are stored in Firestore (keyed per surface: `<email>` on Gemini Enterprise and `web_<email>` on the Web App). In the Web App, clicking "New conversation" or any quick-action button starts a fresh session, while typed follow-ups continue the active conversation. Only events from the last 4 hours are loaded into the model (`GetSessionConfig.after_timestamp`), so a session idle for more than 4 hours starts with a clean context; every 10 turns within an active window, ADK event compaction summarises older history. Firestore TTL (`expire_at`, 7 days after last activity) deletes abandoned session documents and their event subcollections.
 
 ---
 
@@ -56,6 +56,7 @@ The coaching agent uses two layers rather than calling 60+ raw TrainingPeaks MCP
   - `users/{runner_id}/private/trainingpeaks`: KMS ciphertext + metadata (`tp_athlete_id`, `tp_name`, `kms_key_version`).
   - `users/{runner_id}/training_log/{workout_id}`: structured workout history indexed by date (`google_firestore_index.training_log_by_date`).
   - `users/{runner_id}/workout_analyses/{workout_id}`: 90-day TTL projection cache (`google_firestore_field.workout_analyses_ttl`).
+  - `<root>/running_coach/users/{user_id}/sessions/{session_id}` (+ `events` subcollection): ADK sessions with 7-day TTL (`google_firestore_field.sessions_ttl`, `google_firestore_field.session_events_ttl`).
 
 ---
 

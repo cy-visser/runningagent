@@ -82,9 +82,20 @@ class FakeAgentClient:
         return {"id": f"sess-new-{self.created_sessions}", "events": []}
 
     async def stream_run_sse(
-        self, adk_user_id: str, session_id: str, auth_email: str, message: str
+        self,
+        adk_user_id: str,
+        session_id: str,
+        auth_email: str,
+        message: str,
     ) -> AsyncIterator[dict[str, Any]]:
-        self.calls.append({"user_id": adk_user_id, "session_id": session_id, "auth_email": auth_email, "message": message})
+        self.calls.append(
+            {
+                "user_id": adk_user_id,
+                "session_id": session_id,
+                "auth_email": auth_email,
+                "message": message,
+            }
+        )
         yield {"author": "coaching_agent", "partial": True, "content": {"parts": [{"text": "Coach "}]}}
         yield {"author": "coaching_agent", "partial": False, "content": {"parts": [{"text": "Coach reply"}]}}
 
@@ -184,6 +195,32 @@ def test_connect_onboarding_profile_edit_and_chat_sse_flow():
         assert chat2.status_code == 200
         assert agent.created_sessions == 1
         assert agent.calls[1]["session_id"] == "sess-new-1"
+
+        # Another quick-action button click (no session_id) starts a brand-new session
+        chat3 = client.post(
+            "/api/chat",
+            json={"message": "Analyze today's run"},
+            headers=headers,
+        )
+        assert chat3.status_code == 200
+        assert agent.created_sessions == 2
+        assert agent.calls[2]["session_id"] == "sess-new-2"
+
+        # Clicking "New conversation" creates a new session immediately
+        new_sess = client.post("/api/session/new", headers=headers)
+        assert new_sess.status_code == 200
+        assert new_sess.json()["session_id"] == "sess-new-3"
+        assert agent.created_sessions == 3
+
+        # Next message uses the session created by "New conversation"
+        chat4 = client.post(
+            "/api/chat",
+            json={"message": "Hello in new session", "session_id": "sess-new-3"},
+            headers=headers,
+        )
+        assert chat4.status_code == 200
+        assert agent.created_sessions == 3
+        assert agent.calls[3]["session_id"] == "sess-new-3"
 
 
 def test_connect_conflict_returns_409():

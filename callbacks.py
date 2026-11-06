@@ -2,10 +2,9 @@
 
 - Thinking: low reasoning for the confirmation that follows a write tool, default otherwise.
 - Splicing: replaces table placeholders with the tables from `fetch_checkin_data` / `fetch_trend_data`.
-- Pruning: stubs tool output / SKILL.md text from earlier turns out of the outgoing model request.
+- No-workout short-circuit: returns `analyze_workout`'s no-workout reply directly so the model does not retry.
 """
 
-import logging
 from typing import Any, Optional
 
 from google.adk.agents.callback_context import CallbackContext
@@ -13,10 +12,10 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
-logger = logging.getLogger(__name__)
+from .utils.workouts import NO_WORKOUT_PREFIX
 
 # ------------------------------------------------------------------------------
-# Thinking policy
+# Thinking policy & deterministic no-workout reply
 # ------------------------------------------------------------------------------
 # Tools whose response only needs a short confirmation. Anything else (runner messages,
 # facade outputs, get_weather, unknown tools) keeps the model's default reasoning.
@@ -31,6 +30,21 @@ def _last_function_response_names(llm_request: LlmRequest) -> set[str]:
         return set()
     parts = llm_request.contents[-1].parts or []
     return {p.function_response.name for p in parts if p.function_response and p.function_response.name}
+
+
+def no_workout_reply(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> Optional[LlmResponse]:
+    """before_model_callback: returns analyze_workout's 'no workout' reply directly so the LLM cannot retry."""
+    if not llm_request.contents:
+        return None
+    for part in llm_request.contents[-1].parts or []:
+        fr = part.function_response
+        if fr and fr.name == "analyze_workout":
+            result = (fr.response or {}).get("result")
+            if isinstance(result, str) and result.startswith(NO_WORKOUT_PREFIX):
+                return LlmResponse(content=types.Content(role="model", parts=[types.Part(text=result)]))
+    return None
 
 
 def apply_thinking_policy(
@@ -78,53 +92,3 @@ def splice_tables(
             spliced = spliced or new_text != part.text
             part.text = new_text
     return llm_response if spliced else None
-
-
-# ------------------------------------------------------------------------------
-# History pruning
-# ------------------------------------------------------------------------------
-# Raw tool output and SKILL.md text from earlier turns would otherwise be re-sent on every
-# model call until compaction (~7k tokens per call after a check-in). The model's own reply
-# already summarises them, so they are stubbed out of the OUTGOING request only: session
-# events are never mutated (new Content/Part objects are built for pruned entries).
-ELIDED_TOOL = "[Output from an earlier turn elided to save context. Call the tool again if you need fresh data.]"
-ELIDED_SKILL = "[Skill instructions from an earlier turn elided. Call load_skill again to use this skill.]"
-
-
-def _current_turn_start(contents: list[types.Content]) -> int:
-    """Index of the latest runner text message, i.e. the start of the current invocation."""
-    for i in range(len(contents) - 1, -1, -1):
-        c = contents[i]
-        if c.role == "user" and any(p.text and not p.function_response for p in (c.parts or [])):
-            return i
-    return 0
-
-
-def _stub(part: types.Part) -> types.Part:
-    fr = part.function_response
-    text = ELIDED_SKILL if fr.name == "load_skill" else ELIDED_TOOL
-    return types.Part(function_response=types.FunctionResponse(id=fr.id, name=fr.name, response={"result": text}))
-
-
-def prune_stale_history(llm_request: LlmRequest) -> int:
-    """Stubs function responses that precede the current turn. Returns how many were pruned."""
-    contents = llm_request.contents or []
-    pruned = 0
-    for i in range(_current_turn_start(contents)):
-        c = contents[i]
-        parts = c.parts or []
-        if not any(p.function_response for p in parts):
-            continue
-        new_parts = [_stub(p) if p.function_response else p for p in parts]
-        pruned += sum(1 for p in parts if p.function_response)
-        contents[i] = types.Content(role=c.role, parts=new_parts)
-    return pruned
-
-
-def before_model(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
-    """before_model_callback: prune earlier-turn payloads, then apply the thinking policy."""
-    pruned = prune_stale_history(llm_request)
-    if pruned:
-        logger.debug("Pruned %d earlier-turn function responses from the model request", pruned)
-    return apply_thinking_policy(callback_context, llm_request)
-

@@ -1,6 +1,8 @@
 import os
 import sys
+import time
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -14,7 +16,7 @@ if os.path.exists(DOTENV_PATH):
 from google.adk.cli.service_registry import get_service_registry
 from google.adk.integrations.firestore.firestore_session_service import FirestoreSessionService
 from google.adk.sessions.session import Session
-from google.adk.sessions.base_session_service import ListSessionsResponse
+from google.adk.sessions.base_session_service import GetSessionConfig, ListSessionsResponse
 from google.adk.events.event import Event
 from google.cloud import firestore
 import google.adk.cli.utils.service_factory as service_factory
@@ -23,6 +25,12 @@ from .config import firestore_database, gcp_project_id
 from .firestore import make_async_client
 
 logger = logging.getLogger("google_adk.running_coach.services")
+
+# The model only sees events from the last CONTEXT_WINDOW (an idle session starts clean);
+# Firestore TTL (`expire_at`) deletes session docs and events after STORAGE_TTL of inactivity.
+CONTEXT_WINDOW = timedelta(hours=4)
+STORAGE_TTL = timedelta(days=7)
+EXPIRE_AT_FIELD = "expire_at"
 
 # Escapes state keys starting with __ (reserved in Firestore).
 def sanitize_state(state: Any) -> Any:
@@ -52,7 +60,7 @@ def _root_collection_from_uri(uri: Optional[str]) -> Optional[str]:
     return urlparse(uri).netloc or None if uri else None
 
 
-class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
+class CoachFirestoreSessionService(FirestoreSessionService):
     def __init__(self, *args, client: Optional[firestore.AsyncClient] = None, root_collection: Optional[str] = None, **kwargs):
         root_collection = root_collection or _root_collection_from_uri(kwargs.pop("uri", None))
         # Without a configured project, firestore://<name> is used as the project ID.
@@ -74,29 +82,6 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
         state: Optional[dict[str, Any]] = None,
         session_id: Optional[str] = None,
     ) -> Session:
-        if not session_id:
-            logger.info(f"Checking for previous session for app '{app_name}', user '{user_id}'...")
-            try:
-                sessions_ref = self._get_sessions_ref(app_name, user_id)
-                query = sessions_ref.order_by("createTime", direction=firestore.Query.DESCENDING).limit(1)
-                docs = await query.get()
-                if docs:
-                    prev_session_id = docs[0].id
-                    logger.info(f"Found previous session '{prev_session_id}'. Loading...")
-                    session = await self.get_session(
-                        app_name=app_name,
-                        user_id=user_id,
-                        session_id=prev_session_id
-                    )
-                    if session:
-                        logger.info(f"Successfully loaded previous session '{prev_session_id}'")
-                        return session
-                    logger.warning(f"Failed to load previous session '{prev_session_id}'")
-                else:
-                    logger.info("No previous session found in Firestore.")
-            except Exception as e:
-                logger.error(f"Error loading previous session: {e}", exc_info=True)
-
         logger.info("Creating a new session in Firestore...")
         sanitized_state = sanitize_state(state) if state else None
         session = await super().create_session(
@@ -126,6 +111,8 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
         return session
 
     async def get_session(self, *args, **kwargs) -> Optional[Session]:
+        if not kwargs.get("config"):
+            kwargs["config"] = GetSessionConfig(after_timestamp=time.time() - CONTEXT_WINDOW.total_seconds())
         session = await super().get_session(*args, **kwargs)
         if session:
             session.state = desanitize_state(session.state)
@@ -163,10 +150,24 @@ class AutoLoadPreviousSessionFirestoreService(FirestoreSessionService):
             if orig_state_delta is not None:
                 event.actions.state_delta = orig_state_delta
                 
+        if not event.partial:
+            await self._refresh_expiry(session, event)
         return event
 
+    async def _refresh_expiry(self, session: Session, event: Event) -> None:
+        """Pushes the session's Firestore TTL forward and stamps the new event (TTL never cascades)."""
+        expire_at = datetime.now(timezone.utc) + STORAGE_TTL
+        session_ref = self._get_sessions_ref(session.app_name, session.user_id).document(session.id)
+        batch = self.client.batch()
+        batch.update(session_ref, {EXPIRE_AT_FIELD: expire_at})
+        batch.update(session_ref.collection(self.events_collection).document(event.id), {EXPIRE_AT_FIELD: expire_at})
+        try:
+            await batch.commit()
+        except Exception as e:
+            logger.warning(f"Failed to refresh expire_at for session '{session.id}': {e}")
+
 def firestore_session_factory(uri: str, **kwargs):
-    return AutoLoadPreviousSessionFirestoreService(root_collection=_root_collection_from_uri(uri))
+    return CoachFirestoreSessionService(root_collection=_root_collection_from_uri(uri))
 
 get_service_registry().register_session_service("firestore", firestore_session_factory)
 logger.info("Registered 'firestore' session service scheme with state sanitization.")

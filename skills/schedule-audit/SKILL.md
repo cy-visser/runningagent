@@ -30,7 +30,6 @@ You are now equipped with the Schedule Audit & Assessment skill. Use this skill 
    - **Aerobic base (north star)**: flag weekly volume dropping well below recent weeks, or a plan that moves CTL away from the north-star peak CTL reference range, as north-star risks. Sub-goal speed work is expected; it must not replace the long run or the base volume.
 
 6. **Deliver Audit Summary**:
-   - Present the audit week-by-week using clear headers:
-     reuse the per-week lines from the tool output (`* **[Date Range]:** [km] km ([N] runs: [X] easy, [Y] quality | cross-training) | TSS: [TSS]`, with the long-run line and notes listed under the week).
-   - Provide an objective evaluation highlighting plan strengths, potential risks/flaws (e.g. back-to-back hard sessions, aggressive ramp rates), and recommended adjustments.
+   - The runner sees the weekly breakdown (volume, individual easy vs. quality runs, bike & strength cross-training, long-run targets and calendar notes) as an interactive stacked-bar chart above your message — **do not repeat the week-by-week list or session listings in text**. Reference specific weeks by date range only where needed to explain a finding.
+   - Provide an objective evaluation highlighting plan strengths, potential risks/flaws (e.g. back-to-back hard sessions, aggressive ramp rates, long-run `⚠` flags, travel conflicts), and recommended adjustments.
    - With a north star, split the recommended adjustments into **Sub goal** and **North star** bullets.

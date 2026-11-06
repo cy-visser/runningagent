@@ -22,9 +22,11 @@ from .services.tp_mcp import get_tp_tool
 from .services.weather import format_weather_conditions, geocode_location, get_conditions_at, get_weather_conditions, get_weather_for_dates
 from .utils import (
     ANALYSIS_SCHEMA_VERSION,
+    AUDIT_REPORT_STATE_KEY,
     CHECKIN_REPORT_STATE_KEY,
     PROJECTION_WINDOW_DAYS,
     TREND_REPORT_STATE_KEY,
+    audit_report_data,
     checkin_report_data,
     coerce_mcp_payload,
     compile_checkin_summary,
@@ -161,18 +163,43 @@ def _location_args(profile: dict) -> Optional[dict[str, Any]]:
     return {"location": loc or "", "lat": lat, "lon": lon}
 
 
-async def _fetch_weather_map(profile: dict, timestamps: list[str]) -> dict[str, str]:
+def _geo_for_position(profile: dict, position: Optional[dict] = None) -> Optional[dict[str, Any]]:
+    """Returns geo kwargs preferring GPS start coordinates when available, else profile home."""
+    if isinstance(position, dict):
+        lat, lon = position.get("lat"), position.get("lon")
+        if type(lat) in (int, float) and type(lon) in (int, float):
+            return {"location": f"{lat:.2f}, {lon:.2f}", "lat": float(lat), "lon": float(lon)}
+    return _location_args(profile)
+
+
+async def _fetch_weather_map(
+    profile: dict,
+    timestamps: list[str],
+    *,
+    position: Optional[dict] = None,
+    utc: bool = False,
+) -> dict[str, str]:
     """Returns {timestamp: conditions} for the given timestamps, or {} when unavailable."""
-    geo = _location_args(profile)
+    geo = _geo_for_position(profile, position)
     if not geo or not timestamps:
         return {}
-    return await asyncio.to_thread(get_weather_conditions, dates=timestamps, **geo)
+    return await asyncio.to_thread(get_weather_conditions, dates=timestamps, utc=utc, **geo)
 
 
-async def _fetch_weather_text(profile: dict, dates: list[str]) -> str:
+async def _fetch_weather_text(
+    profile: dict,
+    dates: list[str],
+    *,
+    position: Optional[dict] = None,
+    utc: bool = False,
+) -> str:
     """Returns a formatted weather narrative for the given dates, or '' when unavailable."""
-    conditions = await _fetch_weather_map(profile, dates)
-    return format_weather_conditions(profile.get("location", ""), conditions)
+    geo = _geo_for_position(profile, position)
+    if not geo or not dates:
+        return ""
+    conditions = await asyncio.to_thread(get_weather_conditions, dates=dates, utc=utc, **geo)
+    label = geo["location"] if position else profile.get("location", "")
+    return format_weather_conditions(label, conditions)
 
 
 async def _run_tp_tool(tool_context: ToolContext, tool_name: str, **node_input: Any) -> Any:
@@ -216,22 +243,39 @@ async def _gather_labeled(fetches: dict[str, Any]) -> dict[str, Any]:
 
 # Workout analysis ---
 RECOVERY_LOOKBACK_DAYS = 7
+NO_WORKOUT_LOOKBACK_DAYS = 7
 PLANNED_NOTES_MAX_CHARS = 800
 _SERIES_KEYS = ("time", "HeartRate", "Speed", "Power", "Distance")
 
 
-def _load_series(path: Any) -> Optional[list[dict]]:
-    """Reads the time series tp_analyze_workout saved to `data_file` (MCP runs as a local subprocess)."""
+def _extract_start_position(points: list) -> Optional[dict]:
+    """First valid GPS fix from tp_analyze_workout telemetry points, or None."""
+    for p in points:
+        if not isinstance(p, dict):
+            continue
+        lat, lon = p.get("PositionLat"), p.get("PositionLong")
+        if type(lat) in (int, float) and type(lon) in (int, float):
+            if (-90.0 <= lat <= 90.0) and (-180.0 <= lon <= 180.0) and not (lat == 0.0 and lon == 0.0):
+                return {"lat": round(float(lat), 5), "lon": round(float(lon), 5)}
+    return None
+
+
+def _load_analysis_file(path: Any) -> tuple[Optional[list[dict]], Optional[dict]]:
+    """Reads the time series and first GPS fix tp_analyze_workout saved to `data_file`."""
     if not path:
-        return None
+        return None, None
     try:
         with open(str(path), encoding="utf-8") as f:
             points = json.load(f).get("data") or []
     except (OSError, ValueError, AttributeError) as e:
         logger.info("Time series unavailable (%s): %s", path, e)
-        return None
+        return None, None
     series = [{k: p[k] for k in _SERIES_KEYS if k in p} for p in points if isinstance(p, dict)]
-    return series or None
+    return (series or None), _extract_start_position(points)
+
+
+def _load_series(path: Any) -> Optional[list[dict]]:
+    return _load_analysis_file(path)[0]
 
 
 def _planned_notes(meta: dict) -> str:
@@ -285,22 +329,23 @@ async def analyze_workout(
     sport, title, start = "Workout", "", None
     other_sessions: list[dict] = []
 
-    # Resolve the workout from the date.
+    from .utils.workouts import format_no_workout
+    # Resolve the workout from the date (including a 7-day lookback to cite the latest completed session if today has none).
     if not workout_id:
         try:
-            workouts_list = await _fetch_workouts(tool_context, target_iso, target_iso)
+            recent = await _fetch_workouts(
+                tool_context, _iso(target_date - timedelta(days=NO_WORKOUT_LOOKBACK_DAYS)), target_iso
+            )
         except Exception as e:
             logger.error("Failed to look up workout for %s: %s", target_iso, e)
             return f"Error: Failed to find workout for {target_iso}: {e}"
 
+        workouts_list = [
+            w for w in recent if parse_date(w.get("date") or w.get("start_time")) == target_date
+        ]
         completed = [w for w in workouts_list if is_workout_completed(w)]
         if not completed:
-            if workouts_list:
-                titles = ", ".join(
-                    f"'{w.get('title') or w.get('sport', 'Workout')}'" for w in workouts_list
-                )
-                return f"No completed workout found for {target_iso}. Planned sessions found on calendar: {titles}."
-            return f"No completed workouts found on {target_iso}."
+            return format_no_workout(target_iso, workouts_list, recent)
 
         # Pick the day's key session and list the others.
         target_workout, other_sessions = select_primary_workout(completed, sport_hint)
@@ -331,13 +376,16 @@ async def analyze_workout(
             meta = {}
 
         # The workout's own date drives the recovery window and the weather lookup.
+        start_is_utc = bool(data.get("startTimestamp"))
         start = data.get("startTimestamp") or start or meta.get("date") or target_iso
-        workout_date = parse_date(start) or target_date
+        workout_date = parse_date(meta.get("date") or start) or target_date
         sport = meta.get("sport") or sport
         title = meta.get("title") or title or sport
 
         structured = meta.get("structured_workout")
         is_structured = has_structure(structured)
+
+        series, start_pos = await asyncio.to_thread(_load_analysis_file, data.get("data_file"))
 
         # Thresholds, recovery and PMC are always fetched: the training-log record needs them
         # regardless of what this reply displays.
@@ -353,10 +401,10 @@ async def analyze_workout(
             ),
         }
         if include_weather:
-            extras["weather"] = _fetch_weather_text(profile, [str(start)])
-        extra, series = await asyncio.gather(
-            _gather_labeled(extras), asyncio.to_thread(_load_series, data.get("data_file"))
-        )
+            extras["weather"] = _fetch_weather_text(
+                profile, [str(start)], position=start_pos, utc=start_is_utc,
+            )
+        extra = await _gather_labeled(extras)
 
         # Planned vs executed: align laps to the structured steps.
         laps = data.get("lapData") if isinstance(data.get("lapData"), list) else []
@@ -402,6 +450,8 @@ async def analyze_workout(
             dated_metrics=(extract_health_metrics_dated(extra["recovery metrics"])
                            if extra.get("recovery metrics") else None),
             start=str(start),
+            start_position=start_pos,
+            start_is_utc=start_is_utc,
         )
         return "\n\n".join(sections)
     except Exception as e:
@@ -627,9 +677,9 @@ async def fetch_checkin_data(
     }
     user_id = profile_user_id(profile)
     if user_id:
-        # Training log (laps) for the current and previous 4-week LT1/LT2 fits; no gap-fill here.
+        # Training log (laps + start_position) for LT1/LT2 fits and per-workout weather; no gap-fill here.
         fetches["training records"] = list_training_records(
-            user_id, _iso(today_date - timedelta(weeks=2 * LT_FIT_WEEKS)), _iso(today_date)
+            user_id, _iso(min(q_start, today_date - timedelta(weeks=2 * LT_FIT_WEEKS))), _iso(today_date)
         )
     raw = await _gather_labeled(fetches)
 
@@ -669,18 +719,13 @@ async def fetch_checkin_data(
     )["detail"] if dated_metrics else None
 
     # Phase 2: project the goal race (cache-first analyses) while fetching run-time weather.
-    run_timestamps = [
-        str(w.get("start_time") or w.get("date"))
-        for w in workouts_past
-        if (w.get("start_time") or w.get("date"))
-    ]
     race_projection, weather_map = await asyncio.gather(
         _build_goal_projection(
             tool_context, goal_label, profile, all_workouts, fitness_data,
             raw.get("athlete settings"), dated_metrics, today_date,
             refresh_cache=refresh_analysis_cache,
         ),
-        _fetch_weather_map(profile, run_timestamps),
+        _fetch_checkin_weather_map(profile, workouts_past, raw.get("training records")),
     )
 
     # LT1 (top of TP HR zone 2) / LT2 (LTHR) paces, same fit as the trend report.
@@ -764,6 +809,7 @@ async def fetch_schedule_audit_data(
     weeks = build_week_buckets(raw["workouts"], q_start, q_end)
     add_notes_to_weeks(weeks, raw["calendar notes"])
     week_list = annotate_long_runs(list(weeks.values()), profile)
+    tool_context.state[AUDIT_REPORT_STATE_KEY] = audit_report_data(q_start, q_end, week_list)
     daily = coerce_mcp_payload(raw["fitness PMC"]).get("daily_data") or [] if raw["fitness PMC"] else []
     ctl = next((d.get("ctl") for d in reversed(daily) if d.get("ctl") is not None), None)
     return format_schedule_audit_summary(week_list, goal_context=format_goal_context(profile, today_date, ctl))
@@ -991,17 +1037,66 @@ TP_MAX_RANGE_DAYS = 89          # TP list endpoints reject ranges > 90 days
 GAPFILL_CONCURRENCY = 2         # TP's analysis API rate-limits (429) bursts
 
 
-def _weather_at(profile: dict, start: str) -> Optional[dict]:
+async def _fetch_checkin_weather_map(
+    profile: dict,
+    workouts_past: list[dict],
+    training_records: Optional[list[dict]],
+) -> dict[str, str]:
+    """Run-time weather keyed by workout start_time, grouped by recorded GPS start position."""
+    pos_by_id: dict[str, dict] = {}
+    for rec in training_records or []:
+        if not isinstance(rec, dict):
+            continue
+        pos = rec.get("start_position")
+        if isinstance(pos, dict) and type(pos.get("lat")) in (int, float) and type(pos.get("lon")) in (int, float):
+            pos_by_id[str(rec.get("workout_id"))] = pos
+
+    buckets: dict[Optional[tuple[float, float]], list[str]] = {}
+    for w in workouts_past:
+        ts = w.get("start_time")
+        if not ts:
+            continue
+        pos = pos_by_id.get(str(w.get("id")))
+        key = (round(float(pos["lat"]), 2), round(float(pos["lon"]), 2)) if pos else None
+        buckets.setdefault(key, []).append(str(ts))
+
+    if not buckets:
+        return {}
+    maps = await asyncio.gather(*(
+        _fetch_weather_map(
+            profile, timestamps,
+            position=({"lat": key[0], "lon": key[1]} if key else None),
+        )
+        for key, timestamps in buckets.items()
+    ))
+    merged: dict[str, str] = {}
+    for m in maps:
+        if isinstance(m, dict):
+            merged.update(m)
+    return merged
+
+
+def _weather_at(
+    profile: dict,
+    start: str,
+    *,
+    position: Optional[dict] = None,
+    utc: bool = False,
+) -> Optional[dict]:
     """Structured conditions at the run's start (blocking: geocoding + HTTP; call in a thread)."""
-    lat, lon = profile.get("latitude"), profile.get("longitude")
-    if (lat is None or lon is None) and profile.get("location"):
-        lat, lon = geocode_location(profile["location"]) or (None, None)
-    return get_conditions_at(lat, lon, start) if lat is not None and lon is not None else None
+    lat = position.get("lat") if isinstance(position, dict) else None
+    lon = position.get("lon") if isinstance(position, dict) else None
+    if type(lat) not in (int, float) or type(lon) not in (int, float):
+        lat, lon = profile.get("latitude"), profile.get("longitude")
+        if (lat is None or lon is None) and profile.get("location"):
+            lat, lon = geocode_location(profile["location"]) or (None, None)
+    return get_conditions_at(lat, lon, start, utc=utc) if lat is not None and lon is not None else None
 
 
 async def record_workout(
     profile: dict, meta: dict, analysis: Optional[dict], series: Optional[list[dict]], *,
     thresholds: dict, daily_pmc: Optional[list[dict]], dated_metrics: Optional[dict], start: Optional[str],
+    start_position: Optional[dict] = None, start_is_utc: bool = False,
 ) -> Optional[dict]:
     """Builds and saves the training-log record for one workout. Best effort: never raises.
 
@@ -1013,10 +1108,13 @@ async def record_workout(
             return None
         weather = None
         if start and str(meta.get("sport") or "").lower() in RUN_SPORTS:
-            weather = await asyncio.to_thread(_weather_at, profile, start)
+            weather = await asyncio.to_thread(
+                _weather_at, profile, start, position=start_position, utc=start_is_utc,
+            )
         bundle = WorkoutBundle(
             meta=meta, analysis=analysis, series=series, thresholds=thresholds, weather=weather,
             context=workout_context(parse_date(meta.get("date")), daily_pmc, dated_metrics),
+            start_position=start_position,
         )
         record = build_training_record(bundle, datetime.now())
         if record:
@@ -1067,9 +1165,16 @@ async def _gapfill_one(
         analysis = coerce_mcp_payload(raw["analysis"]) if raw.get("analysis") else None
         if meta.get("isError") or (analysis or {}).get("isError"):
             return None
-        series = await asyncio.to_thread(_load_series, analysis.get("data_file")) if analysis else None
+        series, start_pos = (
+            await asyncio.to_thread(_load_analysis_file, analysis.get("data_file"))
+            if analysis else (None, None)
+        )
+        start_is_utc = bool((analysis or {}).get("startTimestamp"))
         start = (analysis or {}).get("startTimestamp") or workout.get("start_time")
-        return await record_workout(profile, meta, analysis, series, start=start, **context)
+        return await record_workout(
+            profile, meta, analysis, series,
+            start=start, start_position=start_pos, start_is_utc=start_is_utc, **context,
+        )
 
 
 # ==============================================================================
