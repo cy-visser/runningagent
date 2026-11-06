@@ -11,7 +11,7 @@ from google.adk.tools import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 from mcp import StdioServerParameters
 
-from ..utils.paths import PACKAGE_DIR
+from ..package_paths import PACKAGE_DIR
 
 logger = logging.getLogger(__name__)
 

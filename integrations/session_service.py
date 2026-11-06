@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from ..utils.paths import DOTENV_PATH
+from .package_paths import DOTENV_PATH
 
 if os.path.exists(DOTENV_PATH):
     load_dotenv(DOTENV_PATH)

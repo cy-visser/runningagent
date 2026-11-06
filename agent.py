@@ -15,8 +15,8 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from .callbacks import apply_thinking_policy, no_workout_reply, splice_tables
-from .services.config import dev_runner_email, web_app_url
-from .services.tp_credentials import has_tp_credential
+from .integrations import config
+from .integrations.trainingpeaks import credentials
 from .steps import (
     PROFILE_EMAIL_CONFLICT,
     PROFILE_NO_NAME,
@@ -355,12 +355,12 @@ PROFILE_UNAVAILABLE_MESSAGE = (
 
 def _caller_email(ctx: Context) -> Optional[str]:
     """Resolves the caller's email from the web app (`user:auth_email`) or local dev."""
-    return normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY)) or dev_runner_email()
+    return normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY)) or config.dev_runner_email()
 
 
 def _not_linked_message(email: Optional[str]) -> str:
     who = f" ({email})" if email else ""
-    url = web_app_url()
+    url = config.web_app_url()
     where = f"open the Running Coach web app ({url})" if url else "open the Running Coach web app"
     return (
         f"No runner profile is linked to your account{who} yet — "
@@ -369,7 +369,7 @@ def _not_linked_message(email: Optional[str]) -> str:
 
 
 def _tp_not_connected_message() -> str:
-    url = web_app_url()
+    url = config.web_app_url()
     where = f"in the Running Coach web app ({url})" if url else "in the Running Coach web app"
     return (
         f"Your runner profile doesn't have an active TrainingPeaks connection yet. "
@@ -393,7 +393,7 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
             return
         try:
             found = await find_profile_by_email(email)
-            connected = bool(found) and await has_tp_credential(found[0])
+            connected = bool(found) and await credentials.has_tp_credential(found[0])
         except Exception:
             logger.exception("Failed to resolve the runner profile for %s", email)
             ctx.route = ROUTE_UNAVAILABLE

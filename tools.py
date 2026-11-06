@@ -10,16 +10,8 @@ from google.adk.skills.prompt import format_skills_as_xml
 from google.adk.tools import FunctionTool, ToolContext
 from google.adk.tools.skill_toolset import SkillToolset
 
-from .services.firestore import (
-    get_cached_workout_analysis,
-    list_training_records,
-    save_training_record,
-    save_workout_analysis,
-    update_user_profile,
-)
-from .services.tp_credentials import resolve_tp_cookie
-from .services.tp_mcp import get_tp_tool
-from .services.weather import format_weather_conditions, geocode_location, get_conditions_at, get_weather_conditions, get_weather_for_dates
+from .integrations import firestore, open_meteo, package_paths
+from .integrations.trainingpeaks import tp_calls
 from .utils import (
     ANALYSIS_SCHEMA_VERSION,
     AUDIT_REPORT_STATE_KEY,
@@ -73,7 +65,6 @@ from .utils.load_capacity import (
 )
 from .utils.long_run import annotate_long_runs, format_goal_context, format_trend_long_run_target
 from .utils.pacing import analyse_pacing, extract_hr_zones, format_pacing_details, format_pacing_tables
-from .utils.paths import SKILLS_DIR
 from .utils.goals import goal_race_dates
 from .utils.race_readiness import (
     HEALTH_BASELINE_DAYS,
@@ -142,7 +133,7 @@ class CompactSkillToolset(SkillToolset):
 
 
 skill_toolset = CompactSkillToolset(
-    skills=[load_skill_from_dir(os.path.join(SKILLS_DIR, name)) for name in SKILL_NAMES],
+    skills=[load_skill_from_dir(os.path.join(package_paths.PACKAGE_DIR, "skills", name)) for name in SKILL_NAMES],
 )
 
 
@@ -183,7 +174,7 @@ async def _fetch_weather_map(
     geo = _geo_for_position(profile, position)
     if not geo or not timestamps:
         return {}
-    return await asyncio.to_thread(get_weather_conditions, dates=timestamps, utc=utc, **geo)
+    return await asyncio.to_thread(open_meteo.get_weather_conditions, dates=timestamps, utc=utc, **geo)
 
 
 async def _fetch_weather_text(
@@ -197,30 +188,9 @@ async def _fetch_weather_text(
     geo = _geo_for_position(profile, position)
     if not geo or not dates:
         return ""
-    conditions = await asyncio.to_thread(get_weather_conditions, dates=dates, utc=utc, **geo)
+    conditions = await asyncio.to_thread(open_meteo.get_weather_conditions, dates=dates, utc=utc, **geo)
     label = geo["location"] if position else profile.get("location", "")
-    return format_weather_conditions(label, conditions)
-
-
-async def _run_tp_tool(tool_context: ToolContext, tool_name: str, **node_input: Any) -> Any:
-    """Resolves a TrainingPeaks MCP tool by name for the active runner and invokes it."""
-    tool = await get_tp_tool(tool_name, await resolve_tp_cookie(tool_context.state))
-    return await tool_context.run_node(tool, node_input=node_input or None)
-
-
-async def _fetch_list(tool_context: ToolContext, tool_name: str, key: str, start: str, end: str) -> list[dict]:
-    """Fetches a dated TP list payload (workouts / notes), returning [] when nothing is available."""
-    raw = await _run_tp_tool(tool_context, tool_name, start_date=start, end_date=end)
-    items = coerce_mcp_payload(raw).get(key) if raw else None
-    return items if isinstance(items, list) else []
-
-
-async def _fetch_workouts(tool_context: ToolContext, start: str, end: str) -> list[dict]:
-    return await _fetch_list(tool_context, "tp_get_workouts", "workouts", start, end)
-
-
-async def _fetch_notes(tool_context: ToolContext, start: str, end: str) -> list[dict]:
-    return await _fetch_list(tool_context, "tp_list_notes", "notes", start, end)
+    return open_meteo.format_weather_conditions(label, conditions)
 
 
 def _result_or_none(result: Any, label: str) -> Any:
@@ -333,7 +303,7 @@ async def analyze_workout(
     # Resolve the workout from the date (including a 7-day lookback to cite the latest completed session if today has none).
     if not workout_id:
         try:
-            recent = await _fetch_workouts(
+            recent = await tp_calls.fetch_workouts(
                 tool_context, _iso(target_date - timedelta(days=NO_WORKOUT_LOOKBACK_DAYS)), target_iso
             )
         except Exception as e:
@@ -360,8 +330,8 @@ async def analyze_workout(
     try:
         # Workout details and telemetry.
         meta_raw, analysis_raw = await asyncio.gather(
-            _run_tp_tool(tool_context, "tp_get_workout", workout_id=workout_id),
-            _run_tp_tool(tool_context, "tp_analyze_workout", workout_id=workout_id),
+            tp_calls.run_tp_tool(tool_context, "tp_get_workout", workout_id=workout_id),
+            tp_calls.run_tp_tool(tool_context, "tp_analyze_workout", workout_id=workout_id),
             return_exceptions=True,
         )
         if isinstance(analysis_raw, Exception):
@@ -390,13 +360,13 @@ async def analyze_workout(
         # Thresholds, recovery and PMC are always fetched: the training-log record needs them
         # regardless of what this reply displays.
         extras: dict[str, Any] = {
-            "athlete settings": _run_tp_tool(tool_context, "tp_get_athlete_settings"),
-            "recovery metrics": _run_tp_tool(
+            "athlete settings": tp_calls.run_tp_tool(tool_context, "tp_get_athlete_settings"),
+            "recovery metrics": tp_calls.run_tp_tool(
                 tool_context, "tp_get_metrics",
                 start_date=_iso(workout_date - timedelta(days=RECOVERY_LOOKBACK_DAYS)),
                 end_date=_iso(workout_date),
             ),
-            "fitness PMC": _run_tp_tool(
+            "fitness PMC": tp_calls.run_tp_tool(
                 tool_context, "tp_get_fitness", start_date=_iso(workout_date), end_date=_iso(workout_date),
             ),
         }
@@ -477,7 +447,7 @@ async def _goal_plan_context(
         try:
             if not user_id:
                 raise ValueError("no runner name in profile")
-            await update_user_profile(user_id, update)
+            await firestore.update_user_profile(user_id, update)
             tool_context.state["user_profile"] = {**profile, **update}
             saved = True
         except Exception as e:
@@ -537,7 +507,7 @@ async def _cache_read(user_id: Optional[str], workout_id: str) -> Optional[dict]
     if not user_id or not workout_id:
         return None
     try:
-        cached = await get_cached_workout_analysis(user_id, workout_id)
+        cached = await firestore.get_cached_workout_analysis(user_id, workout_id)
     except Exception as e:  # Firestore unavailable (e.g. local runs) -> just analyse
         logger.info("Workout analysis cache read failed for %s: %s", workout_id, e)
         return None
@@ -551,7 +521,7 @@ async def _cache_write(user_id: Optional[str], workout_id: str, summary: dict) -
     if not user_id or not workout_id:
         return
     try:
-        await save_workout_analysis(user_id, workout_id, summary)
+        await firestore.save_workout_analysis(user_id, workout_id, summary)
     except Exception as e:
         logger.info("Workout analysis cache write failed for %s: %s", workout_id, e)
 
@@ -574,7 +544,7 @@ async def _load_workout_summaries(
     )
     misses = [i for i, c in enumerate(cached) if c is None and ids[i]]
     raws = await asyncio.gather(
-        *(_run_tp_tool(tool_context, "tp_analyze_workout", workout_id=ids[i]) for i in misses),
+        *(tp_calls.run_tp_tool(tool_context, "tp_analyze_workout", workout_id=ids[i]) for i in misses),
         return_exceptions=True,
     )
     summaries: list[Optional[dict]] = list(cached)
@@ -664,21 +634,21 @@ async def fetch_checkin_data(
 
     # Phase 1: gather calendar, notes, metrics, PMC and athlete thresholds.
     fetches = {
-        "workouts": _fetch_workouts(tool_context, _iso(workouts_start), end_str),
-        "calendar notes": _fetch_notes(tool_context, start_str, end_str),
-        "recovery metrics": _run_tp_tool(
+        "workouts": tp_calls.fetch_workouts(tool_context, _iso(workouts_start), end_str),
+        "calendar notes": tp_calls.fetch_notes(tool_context, start_str, end_str),
+        "recovery metrics": tp_calls.run_tp_tool(
             tool_context, "tp_get_metrics", start_date=_iso(metrics_start), end_date=recovery_end_str,
         ),
-        "fitness PMC": _run_tp_tool(
+        "fitness PMC": tp_calls.run_tp_tool(
             tool_context, "tp_get_fitness", start_date=_iso(history_start), end_date=recovery_end_str,
         ),
         # Athlete settings: LTHR / HR zones for LT1/LT2, thresholds for the goal projection.
-        "athlete settings": _run_tp_tool(tool_context, "tp_get_athlete_settings"),
+        "athlete settings": tp_calls.run_tp_tool(tool_context, "tp_get_athlete_settings"),
     }
     user_id = profile_user_id(profile)
     if user_id:
         # Training log (laps + start_position) for LT1/LT2 fits and per-workout weather; no gap-fill here.
-        fetches["training records"] = list_training_records(
+        fetches["training records"] = firestore.list_training_records(
             user_id, _iso(min(q_start, today_date - timedelta(weeks=2 * LT_FIT_WEEKS))), _iso(today_date)
         )
     raw = await _gather_labeled(fetches)
@@ -800,9 +770,9 @@ async def fetch_schedule_audit_data(
     start_str, end_str = _iso(q_start), _iso(q_end)
 
     raw = await _gather_labeled({
-        "workouts": _fetch_workouts(tool_context, start_str, end_str),
-        "calendar notes": _fetch_notes(tool_context, start_str, end_str),
-        "fitness PMC": _run_tp_tool(tool_context, "tp_get_fitness",
+        "workouts": tp_calls.fetch_workouts(tool_context, start_str, end_str),
+        "calendar notes": tp_calls.fetch_notes(tool_context, start_str, end_str),
+        "fitness PMC": tp_calls.run_tp_tool(tool_context, "tp_get_fitness",
                                     start_date=_iso(today_date - timedelta(days=7)), end_date=_iso(today_date)),
     })
 
@@ -834,7 +804,7 @@ async def fetch_nutrition_context(
     forecast_dates = [_iso(today_date + timedelta(days=i)) for i in range(days_forward + 1)]
 
     upcoming, weather_str = await asyncio.gather(
-        _fetch_workouts(tool_context, _iso(today_date), _iso(end_date)),
+        tp_calls.fetch_workouts(tool_context, _iso(today_date), _iso(end_date)),
         _fetch_weather_text(profile, forecast_dates),
     )
 
@@ -858,7 +828,7 @@ async def _find_existing_workouts(
 ) -> list[dict]:
     """Returns the planned workouts of the same sport on the target date."""
     try:
-        workouts_list = await _fetch_workouts(tool_context, target_iso, target_iso)
+        workouts_list = await tp_calls.fetch_workouts(tool_context, target_iso, target_iso)
     except Exception as e:
         logger.warning("Failed checking existing workouts for %s: %s", target_iso, e)
         return []
@@ -910,7 +880,7 @@ async def _write_workout(
         node_input["structure"] = structure
 
     try:
-        result = await _run_tp_tool(tool_context, spec["tool"], **node_input)
+        result = await tp_calls.run_tp_tool(tool_context, spec["tool"], **node_input)
     except Exception as e:
         logger.error("Failed to %s workout (%s): %s", spec["verb"], date_str, e)
         return f"Error: Failed to {spec['verb']} workout: {e}"
@@ -1016,7 +986,7 @@ async def create_note(
         node_input["description"] = description
 
     try:
-        result = await _run_tp_tool(tool_context, "tp_create_note", **node_input)
+        result = await tp_calls.run_tp_tool(tool_context, "tp_create_note", **node_input)
     except Exception as e:
         logger.error("Failed to create calendar note on %s: %s", date, e)
         return f"Error: Failed to create calendar note: {e}"
@@ -1033,7 +1003,6 @@ create_note_tool = FunctionTool(create_note)
 # ==============================================================================
 # Training log (written by analyze_workout and the trend facade's gap-fill)
 # ==============================================================================
-TP_MAX_RANGE_DAYS = 89          # TP list endpoints reject ranges > 90 days
 GAPFILL_CONCURRENCY = 2         # TP's analysis API rate-limits (429) bursts
 
 
@@ -1089,8 +1058,8 @@ def _weather_at(
     if type(lat) not in (int, float) or type(lon) not in (int, float):
         lat, lon = profile.get("latitude"), profile.get("longitude")
         if (lat is None or lon is None) and profile.get("location"):
-            lat, lon = geocode_location(profile["location"]) or (None, None)
-    return get_conditions_at(lat, lon, start, utc=utc) if lat is not None and lon is not None else None
+            lat, lon = open_meteo.geocode_location(profile["location"]) or (None, None)
+    return open_meteo.get_conditions_at(lat, lon, start, utc=utc) if lat is not None and lon is not None else None
 
 
 async def record_workout(
@@ -1118,36 +1087,11 @@ async def record_workout(
         )
         record = build_training_record(bundle, datetime.now())
         if record:
-            await save_training_record(user_id, record["workout_id"], record)
+            await firestore.save_training_record(user_id, record["workout_id"], record)
         return record
     except Exception as e:
         logger.warning("Training-log record failed for workout %s: %s", (meta or {}).get("id"), e)
         return None
-
-
-def _date_chunks(start: Any, end: Any) -> list[tuple[str, str]]:
-    chunks, cur = [], start
-    while cur <= end:
-        chunk_end = min(end, cur + timedelta(days=TP_MAX_RANGE_DAYS))
-        chunks.append((_iso(cur), _iso(chunk_end)))
-        cur = chunk_end + timedelta(days=1)
-    return chunks
-
-
-async def _fetch_workouts_range(tool_context: ToolContext, start: Any, end: Any) -> list[dict]:
-    parts = await asyncio.gather(*(_fetch_workouts(tool_context, s, e) for s, e in _date_chunks(start, end)))
-    return list({str(w.get("id")): w for part in parts for w in part}.values())
-
-
-async def _fetch_metrics_range(tool_context: ToolContext, start: Any, end: Any) -> dict:
-    raws = await asyncio.gather(*(
-        _run_tp_tool(tool_context, "tp_get_metrics", start_date=s, end_date=e) for s, e in _date_chunks(start, end)
-    ))
-    merged: dict[str, list] = {"sleep": [], "hrv": [], "rhr": []}
-    for raw in raws:
-        for key, values in extract_health_metrics_dated(raw).items():
-            merged[key].extend(values)
-    return merged
 
 
 async def _gapfill_one(
@@ -1157,9 +1101,9 @@ async def _gapfill_one(
     async with sem:
         wid = str(workout.get("id"))
         is_run = str(workout.get("sport") or "").lower() in RUN_SPORTS
-        fetches = {"meta": _run_tp_tool(tool_context, "tp_get_workout", workout_id=wid)}
+        fetches = {"meta": tp_calls.run_tp_tool(tool_context, "tp_get_workout", workout_id=wid)}
         if is_run:
-            fetches["analysis"] = _run_tp_tool(tool_context, "tp_analyze_workout", workout_id=wid)
+            fetches["analysis"] = tp_calls.run_tp_tool(tool_context, "tp_analyze_workout", workout_id=wid)
         raw = await _gather_labeled(fetches)
         meta = coerce_mcp_payload(raw["meta"]) if raw["meta"] else {}
         analysis = coerce_mcp_payload(raw["analysis"]) if raw.get("analysis") else None
@@ -1203,11 +1147,11 @@ async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
     health_start = start - timedelta(days=HEALTH_BASELINE_DAYS)
 
     raw = await _gather_labeled({
-        "workouts": _fetch_workouts_range(tool_context, start, today),
-        "records": list_training_records(user_id, _iso(start), _iso(today)),
-        "fitness PMC": _run_tp_tool(tool_context, "tp_get_fitness", start_date=_iso(start), end_date=_iso(today)),
-        "health": _fetch_metrics_range(tool_context, health_start, today),
-        "athlete settings": _run_tp_tool(tool_context, "tp_get_athlete_settings"),
+        "workouts": tp_calls.fetch_workouts_range(tool_context, start, today),
+        "records": firestore.list_training_records(user_id, _iso(start), _iso(today)),
+        "fitness PMC": tp_calls.run_tp_tool(tool_context, "tp_get_fitness", start_date=_iso(start), end_date=_iso(today)),
+        "health": tp_calls.fetch_metrics_range(tool_context, health_start, today),
+        "athlete settings": tp_calls.run_tp_tool(tool_context, "tp_get_athlete_settings"),
     })
     if raw["records"] is None:
         return "Error: Could not read the training log from Firestore; try again later."
@@ -1307,24 +1251,7 @@ async def get_weather(tool_context: ToolContext, dates: list[str], location: Opt
     geo = {"location": location, "lat": None, "lon": None} if location else _location_args(profile)
     if not geo:
         return "No location on file; ask the runner where they will be running."
-    return await asyncio.to_thread(get_weather_for_dates, dates=dates, **geo)
+    return await asyncio.to_thread(open_meteo.get_weather_for_dates, dates=dates, **geo)
 
 
 get_weather_tool = FunctionTool(get_weather)
-
-
-# ==============================================================================
-# Exports
-# ==============================================================================
-__all__ = [
-    "skill_toolset",
-    "analyze_workout_tool",
-    "fetch_checkin_data_tool",
-    "fetch_trend_data_tool",
-    "fetch_schedule_audit_data_tool",
-    "fetch_nutrition_context_tool",
-    "create_workout_tool",
-    "create_note_tool",
-    "request_new_goal_tool",
-    "get_weather_tool",
-]

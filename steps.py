@@ -4,13 +4,7 @@ from typing import Any, Optional
 
 from google.adk import Context
 
-from .services.firestore import (
-    find_user_profile_by_email,
-    get_user_profile,
-    save_user_profile,
-    update_user_profile,
-)
-from .services.weather import geocode_location
+from .integrations import firestore, open_meteo
 from .utils import (
     AUTH_EMAIL_STATE_KEY,
     merge_profile_data,
@@ -46,12 +40,12 @@ async def _ensure_cached_coordinates(user_id: str, profile: dict) -> None:
     if not location:
         return
 
-    coords = await asyncio.to_thread(geocode_location, location)
+    coords = await asyncio.to_thread(open_meteo.geocode_location, location)
     if not coords:
         return
 
     profile["latitude"], profile["longitude"] = coords
-    await update_user_profile(user_id, {"latitude": coords[0], "longitude": coords[1]})
+    await firestore.update_user_profile(user_id, {"latitude": coords[0], "longitude": coords[1]})
     logger.info("Cached coordinates %s for %s", coords, user_id)
 
 
@@ -60,7 +54,7 @@ async def find_profile_by_email(email: str) -> Optional[tuple[str, dict]]:
 
     Raises on Firestore errors or duplicate mappings so callers can fail closed.
     """
-    found = await find_user_profile_by_email(email)
+    found = await firestore.find_user_profile_by_email(email)
     logger.info("Firestore email lookup for %r: exists=%s", email, found is not None)
     return found
 
@@ -101,7 +95,7 @@ async def create_profile_step(ctx: Context) -> str:
         logger.error("Refusing to save a profile without a runner name.")
         return PROFILE_NO_NAME
 
-    existing = await get_user_profile(user_id)
+    existing = await firestore.get_user_profile(user_id)
     if existing is not None:
         existing_email = normalize_email(existing.get("email"))
         if existing_email != incoming_email:
@@ -116,7 +110,7 @@ async def create_profile_step(ctx: Context) -> str:
     location = onboarding_answers.get("location") or temp_data.get("location") or ""
     lat, lon = None, None
     if location:
-        coords = await asyncio.to_thread(geocode_location, location)
+        coords = await asyncio.to_thread(open_meteo.geocode_location, location)
         if coords:
             lat, lon = coords
 
@@ -128,7 +122,7 @@ async def create_profile_step(ctx: Context) -> str:
         location=location,
     )
 
-    await save_user_profile(user_id, profile)
+    await firestore.save_user_profile(user_id, profile)
     sync_profile_to_state(ctx, profile)
 
     ctx.state["temp_onboarding_data"] = None
