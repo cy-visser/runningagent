@@ -9,15 +9,18 @@ ISO_DATETIME_FMT = "%Y-%m-%dT%H:%M:%S"
 ISO_DATETIME_NO_SECONDS_FMT = "%Y-%m-%dT%H:%M"
 
 
+_now = datetime.now
+
+
 def get_today_date() -> date:
     """Returns today's date."""
-    return datetime.now().date()
+    return _now().date()
 
 
 def get_today_str(with_weekday: bool = False) -> str:
     """Returns today's date formatted as YYYY-MM-DD or YYYY-MM-DD (Weekday)."""
     fmt = "%Y-%m-%d (%A)" if with_weekday else ISO_DATE_FMT
-    return datetime.now().strftime(fmt)
+    return _now().strftime(fmt)
 
 
 def get_past_date_str(days: int = 14) -> str:
