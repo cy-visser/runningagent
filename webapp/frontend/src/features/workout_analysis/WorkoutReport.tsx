@@ -362,9 +362,13 @@ export function WorkoutReport({ data, markdown }: WorkoutReportProps) {
     <div className="space-y-4">
       <WorkoutBanner data={data} />
       {body && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-card space-y-3">
-          {assessment && <RichMarkdown content={assessment} />}
-          {takeaways && <RichMarkdown content={takeaways} bulletStyle="recommendation" />}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-card">
+          {assessment && <RichMarkdown content={assessment} spacing="relaxed" />}
+          {takeaways && (
+            <div data-testid="workout-takeaways" className={assessment ? "mt-8 border-t border-slate-100 pt-6" : ""}>
+              <RichMarkdown content={takeaways} bulletStyle="recommendation" spacing="relaxed" />
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,4 +1,4 @@
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useId } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -29,10 +29,24 @@ import {
 /** "recommendation" swaps list bullets for indigo icon squares (Flag / Star / Lightbulb). */
 export type BulletStyle = "default" | "recommendation";
 
+/** "relaxed" gives sections more air (used by the workout analysis). */
+export type MarkdownSpacing = "normal" | "relaxed";
+
 interface RichMarkdownProps {
   content: string;
   bulletStyle?: BulletStyle;
+  spacing?: MarkdownSpacing;
 }
+
+/** Heading margins per spacing; relaxed sections also get a hairline above (not on the first). */
+const SECTION_CLASS: Record<MarkdownSpacing, { section: string; sub: string; root: string }> = {
+  normal: { section: "mt-4 first:mt-0", sub: "mt-3.5 first:mt-0", root: "space-y-3" },
+  relaxed: {
+    section: "mt-8 border-t border-slate-100 pt-6 first:mt-0 first:border-t-0 first:pt-0",
+    sub: "mt-5 first:mt-0",
+    root: "space-y-4",
+  },
+};
 
 /* ---------- Status badge (style B: outline chip) ---------- */
 
@@ -214,9 +228,63 @@ interface BulletContextValue {
   style: BulletStyle;
   /** Kind inherited from a parent "Sub goal" / "North star" item. */
   inherited: RecommendationKind | null;
+  /** Nesting depth of the list currently being rendered (0 = top level). */
+  depth: number;
+  /** True inside an ordered list (items get a number badge instead of a sparkle). */
+  ordered: boolean;
 }
 
-const BulletContext = createContext<BulletContextValue>({ style: "default", inherited: null });
+const BulletContext = createContext<BulletContextValue>({
+  style: "default",
+  inherited: null,
+  depth: 0,
+  ordered: false,
+});
+
+/* ---------- Default bullet markers (gradient sparkle / number badge) ---------- */
+
+const SPARKLE_PATH =
+  "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z";
+
+/** Sunset-gradient sparkle replacing a plain bullet; nested levels use a smaller outlined sparkle. */
+export function BulletIcon({ depth = 0 }: { depth?: number }) {
+  const gradientId = `sparkle-${useId().replace(/:/g, "")}`;
+  if (depth > 0) {
+    return (
+      <span data-testid="bullet-icon" data-depth={depth} aria-hidden="true" className="mt-[6px] flex-none">
+        <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="#fb923c" strokeWidth={2.2} strokeLinejoin="round">
+          <path d={SPARKLE_PATH} />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span data-testid="bullet-icon" data-depth={0} aria-hidden="true" className="mt-[4px] flex-none">
+      <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" strokeWidth={1} strokeLinejoin="round">
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#f97316" />
+            <stop offset="100%" stopColor="#ec4899" />
+          </linearGradient>
+        </defs>
+        <path d={SPARKLE_PATH} fill={`url(#${gradientId})`} stroke={`url(#${gradientId})`} />
+      </svg>
+    </span>
+  );
+}
+
+/** Soft orange circle with the item number, replacing "1." in ordered lists. */
+export function NumberBadge({ n }: { n: number }) {
+  return (
+    <span
+      data-testid="number-badge"
+      aria-hidden="true"
+      className="mt-[3px] inline-flex h-5 min-w-5 flex-none items-center justify-center rounded-full border border-orange-200 bg-orange-50 px-1 text-[0.6875rem] font-bold text-orange-700 tabular-nums"
+    >
+      {n}
+    </span>
+  );
+}
 
 /* ---------- Markdown helpers ---------- */
 
@@ -357,25 +425,48 @@ function MdParagraph({ children }: { children?: React.ReactNode }) {
   );
 }
 
-function MdListItem({ children }: { children?: React.ReactNode }) {
+function MdListItem({
+  children,
+  className,
+  ordinal,
+}: {
+  children?: React.ReactNode;
+  className?: string;
+  /** Item number, injected by MdList for ordered lists. */
+  ordinal?: number;
+}) {
   const bullet = useContext(BulletContext);
   if (bullet.style === "recommendation") {
     return <RecommendationListItem inherited={bullet.inherited}>{children}</RecommendationListItem>;
   }
+  // GFM task list item ("- [ ] …"): keep the checkbox as its marker.
+  if (className?.includes("task-list-item")) {
+    return <li className={`leading-relaxed ${className}`}>{children}</li>;
+  }
   const arr = React.Children.toArray(children);
   const firstEl = arr.find((c) => !(typeof c === "string" && !c.trim()));
-  // Loose list items wrap their text in a paragraph; MdParagraph handles those.
-  const stripped =
-    React.isValidElement(firstEl) && firstEl.type === MdParagraph
-      ? null
-      : stripLeadingStatusEmoji(children);
-  if (!stripped) {
-    return <li className="leading-relaxed">{children}</li>;
+  const isLoose = React.isValidElement(firstEl) && firstEl.type === MdParagraph;
+  // Loose list items wrap their text in a paragraph; MdParagraph draws the status chip itself.
+  const looseStatus =
+    isLoose && stripLeadingStatusEmoji((firstEl as ElementWithChildren).props.children) !== null;
+  const stripped = isLoose ? null : stripLeadingStatusEmoji(children);
+
+  let marker: React.ReactNode = null;
+  if (stripped) {
+    marker = <StatusChip tone={stripped.info.tone} icon={stripped.info.icon} />;
+  } else if (!looseStatus) {
+    marker = bullet.ordered && ordinal !== undefined
+      ? <NumberBadge n={ordinal} />
+      : <BulletIcon depth={bullet.depth} />;
   }
   return (
-    <li className="leading-relaxed [ul>&]:list-none">
-      <StatusChip tone={stripped.info.tone} icon={stripped.info.icon} />
-      {stripped.rest}
+    <li className="flex items-start gap-2.5 leading-relaxed [&>[data-testid=status-chip]]:mr-0 [&>[data-testid=status-chip]]:mt-[3px]">
+      {marker}
+      <div className="min-w-0 flex-1 [&>p]:my-0 [&>p+p]:mt-2">
+        <BulletContext.Provider value={{ ...bullet, depth: bullet.depth + 1 }}>
+          {stripped ? stripped.rest : children}
+        </BulletContext.Provider>
+      </div>
     </li>
   );
 }
@@ -398,6 +489,7 @@ function RecommendationListItem({
   children?: React.ReactNode;
   inherited: RecommendationKind | null;
 }) {
+  const bullet = useContext(BulletContext);
   // A leading status emoji keeps its status chip instead of a recommendation icon.
   const stripped = stripLeadingStatusEmoji(children);
   const kind = recommendationKindFromText(ownItemText(children)) ?? inherited ?? "tip";
@@ -410,7 +502,7 @@ function RecommendationListItem({
       )}
       <div className="min-w-0 flex-1 [&>p]:my-0">
         <BulletContext.Provider
-          value={{ style: "recommendation", inherited: kind === "tip" ? inherited : kind }}
+          value={{ ...bullet, style: "recommendation", inherited: kind === "tip" ? inherited : kind }}
         >
           {stripped ? stripped.rest : children}
         </BulletContext.Provider>
@@ -419,23 +511,36 @@ function RecommendationListItem({
   );
 }
 
-function MdList({ children, ordered }: { children?: React.ReactNode; ordered?: boolean }) {
+function MdList({ children, ordered, start }: { children?: React.ReactNode; ordered?: boolean; start?: number }) {
   const bullet = useContext(BulletContext);
   if (bullet.style === "recommendation") {
     return <ul className="my-2 list-none space-y-2 pl-0 text-slate-700">{children}</ul>;
   }
-  if (ordered) {
-    return <ol className="my-2 list-decimal space-y-1.5 pl-5 text-slate-700">{children}</ol>;
-  }
-  return <ul className="my-2 list-disc space-y-1.5 pl-5 text-slate-700">{children}</ul>;
+  const Tag = ordered ? "ol" : "ul";
+  // Number the items ourselves (honouring `start`) so each one can draw its badge.
+  let n = typeof start === "number" ? start : 1;
+  const items = ordered
+    ? React.Children.map(children, (c) =>
+        React.isValidElement(c) && c.type === MdListItem
+          ? React.cloneElement(c as React.ReactElement<{ ordinal?: number }>, { ordinal: n++ })
+          : c,
+      )
+    : children;
+  return (
+    <BulletContext.Provider value={{ ...bullet, ordered: Boolean(ordered) }}>
+      <Tag className={`my-2 list-none space-y-1.5 pl-0 text-slate-700 ${bullet.depth > 0 ? "mt-1.5" : ""}`}>
+        {items}
+      </Tag>
+    </BulletContext.Provider>
+  );
 }
 
 function MdUl({ children }: { children?: React.ReactNode }) {
   return <MdList>{children}</MdList>;
 }
 
-function MdOl({ children }: { children?: React.ReactNode }) {
-  return <MdList ordered>{children}</MdList>;
+function MdOl({ children, start }: { children?: React.ReactNode; start?: number }) {
+  return <MdList ordered start={start}>{children}</MdList>;
 }
 
 export function SunsetProgressBar({ percent }: { percent: number }) {
@@ -458,12 +563,13 @@ export function SunsetProgressBar({ percent }: { percent: number }) {
   );
 }
 
-export function RichMarkdown({ content, bulletStyle = "default" }: RichMarkdownProps) {
+export function RichMarkdown({ content, bulletStyle = "default", spacing = "normal" }: RichMarkdownProps) {
   const segments = splitReportPlaceholders(content);
+  const sp = SECTION_CLASS[spacing];
 
   return (
-    <BulletContext.Provider value={{ style: bulletStyle, inherited: null }}>
-    <div className="space-y-3 text-base leading-relaxed text-slate-700">
+    <BulletContext.Provider value={{ style: bulletStyle, inherited: null, depth: 0, ordered: false }}>
+    <div data-spacing={spacing} className={`${sp.root} text-base leading-relaxed text-slate-700`}>
       {segments.map((seg, idx) => {
         if (seg.type === "placeholder") {
           return (
@@ -489,17 +595,17 @@ export function RichMarkdown({ content, bulletStyle = "default" }: RichMarkdownP
                 </h1>
               ),
               h2: ({ children }) => (
-                <h2 className="font-display text-lg font-bold text-slate-900 mt-4 mb-2 first:mt-0">
+                <h2 className={`font-display text-lg font-bold text-slate-900 mb-2 ${sp.section}`}>
                   {withLeadingChip(children)}
                 </h2>
               ),
               h3: ({ children }) => (
-                <h3 className="font-display text-base font-bold text-slate-900 mt-4 mb-1.5 first:mt-0">
+                <h3 className={`font-display text-base font-bold text-slate-900 mb-1.5 ${sp.section}`}>
                   {withLeadingChip(children)}
                 </h3>
               ),
               h4: ({ children }) => (
-                <h4 className="font-display text-[0.9375rem] font-semibold text-slate-800 mt-3.5 mb-1 first:mt-0">
+                <h4 className={`font-display text-[0.9375rem] font-semibold text-slate-800 mb-1 ${sp.sub}`}>
                   {withLeadingChip(children)}
                 </h4>
               ),

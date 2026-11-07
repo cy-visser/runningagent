@@ -56,8 +56,12 @@ describe("workout analysis feature", () => {
     // The "---" rules sit at the edges of the assessment / takeaways parts, so they are trimmed.
     expect(container.querySelectorAll("hr")).toHaveLength(0);
     expect(screen.getAllByTestId("status-chip")).toHaveLength(3);
+    // Plain Execution bullets get the gradient sparkle; Key Takeaways keep their goal icons.
+    expect(screen.getByText("Rep splits:").closest("li")?.querySelector("[data-testid=bullet-icon]")).not.toBeNull();
     const icons = screen.getAllByTestId("recommendation-icon");
     expect(icons.map((i) => i.dataset.icon)).toEqual(["subgoal", "northstar"]);
+    // Key Takeaways sit in their own block, separated from the assessment.
+    expect(screen.getByTestId("workout-takeaways")).toHaveClass("mt-8", "border-t", "pt-6");
   });
 
   it("renders a bike banner without missing sections", () => {

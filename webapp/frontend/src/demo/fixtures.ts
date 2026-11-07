@@ -586,6 +586,7 @@ export const DEMO_WORKOUT_MARKDOWN = `## Tempo 3x10' @ Threshold
 
 #### Pacing & Quality Execution
 * ✅ **Threshold blocks:** all three reps landed at 4:12–4:15/km against the 4:10–4:20/km target.
+* **Rep splits:** 4:12 → 4:14 → 4:15/km, HR 164 → 167 → 169 bpm.
 * ⚠️ **Recoveries:** HR only dropped to 148 bpm in the 2' floats; take them truly easy next time.
 
 #### Heart Rate Dynamics & Aerobic Stability

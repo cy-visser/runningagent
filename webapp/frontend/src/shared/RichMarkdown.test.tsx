@@ -125,10 +125,59 @@ describe("recommendation bullet style", () => {
     expect(icons).toEqual(["northstar", "northstar", "northstar", "subgoal", "subgoal"]);
   });
 
-  it("default style keeps plain bullets", () => {
+  it("default style uses the sparkle, not recommendation icons", () => {
     render(<RichMarkdown content={"- **Sub goal:** x"} />);
     expect(screen.queryByTestId("recommendation-icon")).toBeNull();
-    expect(document.querySelector("ul")?.className).toContain("list-disc");
+    expect(screen.getByTestId("bullet-icon")).toBeInTheDocument();
+    expect(document.querySelector("ul")?.className).not.toContain("list-disc");
+  });
+});
+
+describe("default bullet icons", () => {
+  it("replaces every plain bullet with a gradient sparkle, smaller and outlined when nested", () => {
+    render(<RichMarkdown content={"- Rep 1: 4:53/km\n- Rep 2: 4:53/km\n  - spread 1 s/km\n- Rep 3: 4:54/km"} />);
+    const icons = screen.getAllByTestId("bullet-icon");
+    expect(icons.map((i) => i.dataset.depth)).toEqual(["0", "0", "1", "0"]);
+    expect(icons[0].querySelector("linearGradient")).not.toBeNull();
+    expect(icons[2].querySelector("linearGradient")).toBeNull();
+    expect(document.querySelector("ul")?.className).toContain("list-none");
+    expect(screen.getByText("Rep 1: 4:53/km").closest("li")).toHaveClass("flex");
+  });
+
+  it("numbers ordered lists with badges and honours the start number", () => {
+    render(<RichMarkdown content={"1. Warm up\n2. 3 x 2 km\n\ntext\n\n3. Cool down\n4. Stretch"} />);
+    const badges = screen.getAllByTestId("number-badge").map((b) => b.textContent);
+    expect(badges).toEqual(["1", "2", "3", "4"]);
+    expect(screen.queryByTestId("bullet-icon")).toBeNull();
+    expect(document.querySelector("ol")?.className).not.toContain("list-decimal");
+  });
+
+  it("status-emoji items keep only their status chip", () => {
+    render(<RichMarkdown content={"- ✅ Hit\n- plain"} />);
+    expect(screen.getAllByTestId("status-chip")).toHaveLength(1);
+    expect(screen.getAllByTestId("bullet-icon")).toHaveLength(1);
+  });
+
+  it("loose list items with a status emoji get no extra sparkle", () => {
+    render(<RichMarkdown content={"- ⚠️ Watch HRV\n\n- plain loose item"} />);
+    expect(screen.getAllByTestId("status-chip")).toHaveLength(1);
+    expect(screen.getAllByTestId("bullet-icon")).toHaveLength(1);
+    expect(screen.getByText("plain loose item").closest("li")?.querySelector("[data-testid=bullet-icon]")).not.toBeNull();
+  });
+
+  it("task list items keep their checkbox", () => {
+    render(<RichMarkdown content={"- [ ] book physio\n- [x] buy gels"} />);
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(screen.queryByTestId("bullet-icon")).toBeNull();
+  });
+
+  it("relaxed spacing gives sections more room and a hairline above all but the first", () => {
+    render(<RichMarkdown spacing="relaxed" content={"### A\n\ntext\n\n### B\n\n#### Sub\n\nmore"} />);
+    const [a, b] = screen.getAllByRole("heading", { level: 3 });
+    expect(b).toHaveClass("mt-8", "border-t", "pt-6");
+    expect(a).toHaveClass("first:border-t-0");
+    expect(screen.getByRole("heading", { level: 4 })).toHaveClass("mt-5");
+    expect(document.querySelector("[data-spacing=relaxed]")).toHaveClass("space-y-4");
   });
 });
 
