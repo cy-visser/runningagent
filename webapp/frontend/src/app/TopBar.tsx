@@ -4,7 +4,7 @@ import { UserMenu } from "./UserMenu";
 
 interface TopBarProps {
   me: MeResponse;
-  hasMessages: boolean;
+  newSessionDisabled?: boolean;
   onHome: () => void;
   onNewSession: () => void;
   onViewProfile: () => void;
@@ -14,7 +14,7 @@ interface TopBarProps {
 
 export function TopBar({
   me,
-  hasMessages,
+  newSessionDisabled = false,
   onHome,
   onNewSession,
   onViewProfile,
@@ -63,16 +63,15 @@ export function TopBar({
         </div>
 
         <div className="flex items-center gap-2.5">
-          {hasMessages && (
-            <button
-              type="button"
-              onClick={onNewSession}
-              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 cursor-pointer"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">New conversation</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onNewSession}
+            disabled={newSessionDisabled}
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-2xs transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">New conversation</span>
+          </button>
 
           <UserMenu
             me={me}

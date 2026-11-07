@@ -5,64 +5,70 @@ description: Short-horizon (last 14 days + next 7) check-in from TrainingPeaks w
 
 # Check-In Report Skill
 
-Call `fetch_checkin_data` (same step as `load_skill`). Every number, badge, verdict, projection,
-equivalent and gap in its output is pre-computed: quote it exactly; never re-add, recompute or
-re-derive it. Goal plans end with a **North Star Progress** section (Pillar 5); single goals skip Pillar 5.
+Call `fetch_checkin_data` (same step as `load_skill`). Its numbers (CTL, LT paces, projection,
+equivalents, gaps, deltas) are measured facts: never alter or invent them. The tool gives no verdicts;
+you draw every conclusion. You may derive your own estimates (e.g. a build time or a pace adjustment) if
+you say they are yours and how you derived them. Reason toward the current goal and, when one is set,
+the north star. Goal plans end with a **North Star Progress** section (Pillar 5); single goals skip Pillar 5.
 
 ## Analysis
 
 **Pillar 1: Intensity & Execution.** Separate easy/recovery runs (Zone 1/2 discipline) from structured
-work (intervals, tempo, threshold, races, MP). Judge the ~80/20 balance from the weekly `Split`.
+work (intervals, tempo, threshold, races, MP). Judge the intensity balance from the weekly `Split` for
+this runner and the goal race distance.
 
 **Pillar 2: Volume.** Use **Weekly Totals** (`Volume vs prior week`). There is no fixed % limit: judge
 each change for this runner from CTL, the recent weekly volume they have held, training age and race
 background (e.g. previous marathon builds) and the recovery markers (HRV, RHR, sleep). Call a step an
 overuse risk only with its % and the runner-specific reason; never cite a generic "10% rule". Planned
-cutback / return-to-baseline weeks are fine. Never compare `Partial week` lines as a drop or spike.
+cutback / return-to-baseline weeks are fine. Never compare `Partial week` lines as a drop or spike. Say
+what the volume trend means for the goal race and, with a north star, for the north-star volume it needs.
 
-**Pillar 3: Physiology & Environment.** Read load against recovery (HRV, RHR, sleep, `5-day vs 28-day
-baseline`). ATL/TSB on the `Load context` line are for reasoning only, never table rows. Low or negative
-TSB is productive overload or overreaching depending on HRV, RHR and sleep, not a fixed threshold.
-Explain variances with heat, humidity, travel and **Calendar Notes** (work stress, illness, fatigue).
+**Pillar 3: Physiology & Environment.** Read load against recovery (HRV, RHR, sleep and the `5-day vs
+28-day baseline` facts line). ATL/TSB on the `Load context` line are for reasoning only, never table rows.
+Low or negative TSB is productive overload or overreaching depending on HRV, RHR and sleep, not a fixed
+threshold. Interpret the health deltas together with the recent hard effort listed there (how many days
+ago, distance, TSS) and the load (TSB, ATL:CTL): decide yourself whether a dip is expected recovery,
+training-induced or unexplained (illness/stress?), and whether it needs an action. Explain variances with
+heat, humidity, travel and **Calendar Notes** (work stress, illness, fatigue).
 
 **Pillar 4: Goal Trajectory.**
 - Target peak CTL and range follow from the goal distance and time.
-- **LT1 / LT2 pace** (last 4 wk vs previous 4 wk): 5K/10K → judge progress mainly on the LT2 trend,
-  LT1 as the aerobic-base check; CTL at target is only a floor, never "on track" from CTL % alone.
-  HM/Marathon → CTL is primary, LT1/LT2 support it. `⚠️ extrapolated` = indicative only (for LT2: depends
-  on the TrainingPeaks LTHR). Missing row or `no prior 4-wk fit` → say there are not enough steady laps.
-- **`Req. Ramp` badge** (build ends where the taper starts): 🟢 safe → 🟢 On Track; 🟡 aggressive →
-  🟡 Build Focus Needed, achievable only if HRV/sleep/RHR are stable; 🔴 high risk → 🔴 Adjustment
-  Recommended (adjust timeline, weekly mileage or goal).
-- **`🏁 Taper phase`** (replaces `Req. Ramp`): a gradual CTL decline is expected, never lost fitness; do
-  not recommend raising CTL or cite a ramp. Judge fitness on the **peak CTL banked** (the projection is
-  anchored to it and only moves on new race-pace evidence or the health flag). Judge execution on TSB
-  rising toward the +5 to +15 race-day target, volume ~40-60% below peak, short race-pace work kept and
-  HRV/RHR/sleep recovering. Banked peak in range → 🟢 On Track; below → adjust goal pace / race strategy,
-  never cram load.
+- **LT1 / LT2 pace** (last 4 wk vs previous 4 wk, signed change in s/km and %): decide which matters
+  most for this goal distance (e.g. LT2 for 5K/10K with LT1 as the aerobic-base check; CTL and LT1 for
+  HM/Marathon) and whether the change is meaningful. CTL at target alone does not show race fitness.
+  `(HR outside the fitted HR range: extrapolated)` = less reliable (for LT2 it also depends on the
+  TrainingPeaks LTHR). Missing row or `no prior 4-wk fit` → say there are not enough steady laps.
+- **Required CTL build** (pts/wk over the build weeks to the taper start): judge it against this runner's
+  own CTL history (the PMC trend and the weekly volume they have absorbed), recovery markers and weeks
+  left. Decide whether it is realistic, and if not what should change (timeline, volume or goal).
+- **Taper phase** (replaces the required build): CTL declines by design. Read taper status from the
+  peak CTL banked vs target, today's CTL, TSB and ATL, and the recovery trends (HRV/RHR/sleep), plus
+  volume and race-pace work in the weekly totals. Judge for this runner and race distance whether the
+  taper is shedding fatigue while keeping sharpness; never recommend cramming load.
 - **Projected goal-race time** (Today → Race day, from the **Projection drivers** table; easy runs never
-  count as race efforts): name the limiting drivers and why (e.g. MP block at 90% LTHR, long-run
-  decoupling > 5%, durability `weak`, no threshold laps confirming the TP setting), tying `Goal-pace work`
-  and `Threshold anchor` evidence to sessions by date. Use the Today → Race day gap, read with TSB
-  (deeply negative TSB = today understates fitness), to say what the build must deliver and whether the
-  race-day gap is realistically closable.
-- **Health flag**: 🟡 training-induced → normal under load, monitor, do not alarm. 🟡 recovery after
-  '<race or session>' → expected dip, not illness/stress; easy running until the window ends. 🔴 outside
-  race week → not explained by load or a race (illness/stress?): make it an action item. 🔴 in race week
-  (race-day penalty included) → prioritise rest, sleep and conservative pacing.
-- Confidence **Low** or `⚠️ stale evidence` → prescribe a test: 5K/10K a 3 or 5 km time trial / parkrun or
-  2 × 15' @ threshold; HM 3 × 3 km @ HM pace; Marathon 2 × 20' @ threshold and a long run with 10-14 km
-  @ goal MP. `Insufficient recent run data` / `No race distance in goal` → say so and suggest how to get
-  a baseline.
+  count as race efforts): name the drivers that limit the projection and why, from their facts (e.g. %LTHR
+  at goal pace, long-run Pa:Hr, longest run, no threshold laps confirming the TP setting), tying
+  `Goal-pace work` and `Threshold anchor` evidence to sessions by date. Use the Today → Race day gap, read
+  with TSB (deeply negative TSB = today understates fitness), to say what the build must deliver and
+  whether the race-day gap is realistically closable.
+- **Trust in the projection**: decide it yourself from the `Evidence:` facts (number and kind of signals,
+  newest evidence age, whether it predates the block, candidate spread) and the drivers. Decide whether a
+  test session is worth it now given the goal, the phase and the week's load, and if so which (e.g. a time
+  trial or threshold / race-pace session suited to the goal distance). `Insufficient recent run data` /
+  `No race distance in goal` → say so and suggest how to get a baseline.
 - Distinguish a planned recovery/cutback week from falling behind, then give your own verdict badge
-  (`🟢 On Track` / `🟡 Build Focus Needed` / `🔴 Adjustment Recommended`) with rationale.
+  (`🟢 On Track` / `🟡 Build Focus Needed` / `🔴 Adjustment Recommended`) with rationale tied to the goal.
 
 **Pillar 5: North Star** (only with a North Star Progress section). Pillars 1-4 judge the current block;
 here judge the same evidence against the north star: the equivalents trend across completed sub goals
-(the GOAL PLAN table in your instructions) and the current projection mapped onto the north star. Check that the block protects what the north star
-needs (aerobic base vs the north-star CTL range, long runs kept in short-distance blocks). A sub goal shown
-as `missing: ask the runner` → ask how it went and offer `analyze_workout` for that date (saves the
-result); no run in TrainingPeaks → ask the runner to upload or sync it.
+(the GOAL PLAN table in your instructions) and the current projection mapped onto the north star. Judge
+whether the block protects what the north star needs (the aerobic-base trajectory toward the north-star CTL range,
+which is where CTL should peak for the north-star race, so judge it with the time left; long-run
+durability, weekly volume). When the sub goal and the north star pull apart, say so and which you
+prioritise and why. A sub goal shown as `missing: ask the runner` → ask how it went and offer
+`analyze_workout` for that date (saves the result); no run in TrainingPeaks → ask the runner to upload or
+sync it.
 
 ## Output
 

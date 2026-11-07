@@ -1,12 +1,12 @@
 from google.adk import Workflow
 from google.adk.apps import App
 from google.adk.apps.app import EventsCompactionConfig
-from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
 from google.adk.plugins.auto_tracing_plugin import AutoTracingPlugin
 
 from .coach.coaching.coaching_agent import coaching_node
 from .coach.coaching.quick_actions import QuickActionPlugin
 from .coach.model_config import ONBOARDING_MODEL, build_model
+from .coach.report_memory import ReportMemorySummarizer
 from .coach.onboarding.onboarding_agent import onboarding_node
 from .coach.profile_router import (
     ROUTE_COACHING,
@@ -42,14 +42,12 @@ app = App(
     root_agent=root_agent,
     # QuickActionPlugin: web quick actions arrive as a message part (Agent Runtime drops state_delta).
     plugins=[AutoTracingPlugin(), QuickActionPlugin()],
-    # Compact session history; a Workflow root needs an explicit summarizer model.
-    # Token threshold first (prompt >= 30k tokens, keep the last 10 raw events), else every
-    # 5 runner messages with a 2-invocation overlap.
+    # Compact session history every 10 runner messages, with a 2-invocation overlap (no token
+    # trigger); a Workflow root needs an explicit summarizer model. The summary keeps the latest
+    # report output verbatim (coach/report_memory.py).
     events_compaction_config=EventsCompactionConfig(
-        compaction_interval=5,
+        compaction_interval=10,
         overlap_size=2,
-        token_threshold=30_000,
-        event_retention_size=10,
-        summarizer=LlmEventSummarizer(llm=build_model(ONBOARDING_MODEL)),
+        summarizer=ReportMemorySummarizer(llm=build_model(ONBOARDING_MODEL)),
     ),
 )

@@ -18,18 +18,20 @@ logger = logging.getLogger(__name__)
 async def record_workout(
     profile: dict, meta: dict, analysis: Optional[dict], series: Optional[list[dict]], *,
     thresholds: dict, daily_pmc: Optional[list[dict]], dated_metrics: Optional[dict], start: Optional[str],
-    start_position: Optional[dict] = None, start_is_utc: bool = False,
+    start_position: Optional[dict] = None, start_is_utc: bool = False, weather: Optional[dict] = None,
 ) -> Optional[dict]:
     """Builds and saves the training-log record for one workout. Best effort: never raises.
 
     The single write path for the training log; analyze_workout and gap-fill both call it.
+    `weather`: conditions at the start already fetched by the caller (runs only); fetched here when omitted.
     """
     try:
         user_id = profile_user_id(profile)
         if not user_id or not meta:
             return None
-        weather = None
-        if start and str(meta.get("sport") or "").lower() in RUN_SPORTS:
+        if not (start and str(meta.get("sport") or "").lower() in RUN_SPORTS):
+            weather = None
+        elif weather is None:
             weather = await asyncio.to_thread(
                 weather_at, profile, start, position=start_position, utc=start_is_utc,
             )

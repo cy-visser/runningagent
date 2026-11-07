@@ -100,6 +100,12 @@ interface DashboardProps {
   onSendPrompt: (prompt: string, newConversation?: boolean, action?: QuickAction) => void;
   onViewProfile: () => void;
   onOpenTrainingPeaks: () => void;
+  appliedStagedIds?: ReadonlySet<string>;
+  applyingStagedId?: string | null;
+  onApplyStaged?: (stagedId: string) => void;
+  /** Composer text, owned by the parent so it can be cleared on New conversation. */
+  draft?: string;
+  onDraftChange?: (value: string) => void;
 }
 
 export function Dashboard({
@@ -109,15 +115,24 @@ export function Dashboard({
   onSendPrompt,
   onViewProfile,
   onOpenTrainingPeaks,
+  appliedStagedIds,
+  applyingStagedId,
+  onApplyStaged,
+  draft,
+  onDraftChange,
 }: DashboardProps) {
-  const [input, setInput] = useState("");
+  const [localInput, setLocalInput] = useState("");
+  const input = draft ?? localInput;
+  const setInput = onDraftChange ?? setLocalInput;
 
   const isReady = me.profile_state === "ready";
   const firstName =
     me.summary?.firstname || me.display_name.split(" ")[0] || "Runner";
   const canSend = me.tp.connected && !streaming;
-  const startNewConversation = (prompt: string, action?: QuickAction) =>
+  const startNewConversation = (prompt: string, action?: QuickAction) => {
+    setInput("");
     onSendPrompt(prompt, true, action);
+  };
   const audit = auditScheduleAction(me.summary);
 
   const handleComposerSubmit = (e: React.FormEvent) => {
@@ -439,7 +454,13 @@ export function Dashboard({
       )}
 
       {/* Conversation Feed */}
-      <ChatFeed messages={messages} />
+      <ChatFeed
+        messages={messages}
+        streaming={streaming}
+        appliedStagedIds={appliedStagedIds}
+        applyingStagedId={applyingStagedId}
+        onApplyStaged={onApplyStaged}
+      />
 
       {/* Coach Input Composer */}
       <section aria-label="Ask coach" className="space-y-2.5">

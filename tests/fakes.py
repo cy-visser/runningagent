@@ -120,6 +120,8 @@ class FakeRunnerEnv:
         self.profile_updates: list[tuple[str, dict]] = []
         self.tp_calls: list[tuple[str, dict]] = []
         self.rate_limited_workout_ids: set[str] = set()
+        # Optional per-workout TrainingPeaks builder (tp_get_workout); runs default to the Canova builder.
+        self.builders: dict[str, dict | None] = {}
         self.workouts, self.daily_pmc, self.metrics, self.notes = self._build_data()
 
     def ctx(self, profile: dict | None = None, state: dict | None = None, user_id: str | None = None) -> FakeContext:
@@ -220,7 +222,7 @@ class FakeRunnerEnv:
                 "rpe": 6,
                 "feeling": 7,
                 "new_comment": "Felt strong and controlled",
-                "structured_workout": CANOVA["structured_workout"] if is_run else None,
+                "structured_workout": self.builders.get(wid, CANOVA["structured_workout"] if is_run else None),
                 "metrics": {
                     "duration_actual": w.get("duration_actual", 1.0),
                     "distance_actual_km": w.get("distance_actual_km", 10.0),

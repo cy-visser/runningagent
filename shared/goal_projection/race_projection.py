@@ -118,6 +118,7 @@ def durability(runs: list[dict], summaries: list[dict], goal_label: str) -> dict
         "longest_km": longest,
         "long_pa_hr": long_pa,
         "evidence": f"Longest {longest:.0f} km, {pa_str} -> {tier}",
+        "evidence_text": f"Longest {longest:.0f} km, {pa_str}",
     }
 
 
@@ -181,7 +182,11 @@ def goal_pace_candidate(segments: list[dict]) -> Optional[dict]:
     n_support = sum(1 for seg in segments if seg["supporting"])
     evidence = (f"{', '.join(parts)} ({_fmt_day(best['date'])}) {mark}; "
                 f"{n_support}/{len(segments)} segments supporting")
-    return {"speed": speed, "evidence": evidence, "date": max(seg["date"] or date.min for seg in segments)}
+    n_seg = len(segments)
+    evidence_text = (f"{', '.join(parts)} ({_fmt_day(best['date'])}); "
+                     f"{n_seg} segment{'s' if n_seg != 1 else ''} near goal pace")
+    return {"speed": speed, "evidence": evidence, "evidence_text": evidence_text,
+            "date": max(seg["date"] or date.min for seg in segments)}
 
 
 def hr_efficiency_candidate(summaries: list[dict], goal_label: str, lthr: Optional[float]) -> Optional[dict]:
@@ -245,10 +250,13 @@ def _fitness_adjust(candidate: Optional[dict], daily_pmc, ctl_now) -> Optional[d
         return None
     factor = detraining_factor(ctl_on(daily_pmc, candidate.get("date")), ctl_now)
     if factor > 1.0:
+        adj = f" (fitness-adj. +{(factor - 1) * 100:.1f}%)"
         candidate = candidate | {
             "speed": candidate["speed"] / factor,
-            "evidence": f"{candidate['evidence']} (fitness-adj. +{(factor - 1) * 100:.1f}%)",
+            "evidence": f"{candidate['evidence']}{adj}",
         }
+        if candidate.get("evidence_text"):
+            candidate["evidence_text"] += adj
     return candidate
 
 
@@ -318,6 +326,7 @@ def project_race(
         level = 0
     newest = max((c.get("date") for c in active.values() if c.get("date")), default=None)
     block = parse_date(block_start)
+    before_block = bool(block and newest and newest < block)
     stale = newest is None or (today - newest).days > STALE_EVIDENCE_DAYS or bool(block and newest < block)
     if health["confidence_drop"]:
         level -= 1
@@ -327,7 +336,9 @@ def project_race(
     goal_s = goal_minutes * 60 if goal_minutes else None
     labels = {"threshold": "Threshold anchor", "goal_pace": "Goal-pace work",
               "hr_efficiency": "HR efficiency", "race": "Race efforts"}
-    drivers = []
+    # `drivers` feeds the web payload (badges and tiers kept); `drivers_text` is the fact-only
+    # version rendered into the coach's tool text.
+    drivers, drivers_text = [], []
     for key in ("threshold", "goal_pace", "hr_efficiency", "race"):
         c = candidates.get(key)
         if c:
@@ -335,15 +346,21 @@ def project_race(
             if key == "threshold":
                 implied += f" (×{dur['ratio']})"
             drivers.append((labels[key], c["evidence"], implied))
+            drivers_text.append((labels[key], c.get("evidence_text") or c["evidence"], implied))
     drivers.append(("Durability", dur["evidence"], f"ratio {dur['ratio']}"))
+    drivers_text.append(("Durability", dur["evidence_text"], f"ratio {dur['ratio']}"))
     if ctl_now:
         tsb_str = f", TSB {tsb_now:+.0f}" if tsb_now is not None else ""
         load_evidence = (
             f"Taper: peak CTL {ctl_ref:.0f} banked (now {ctl_now:.0f}){tsb_str}" if in_taper
             else f"CTL {ctl_now:.0f} → ~{load['ctl_race']:.0f} race day{tsb_str}"
         )
-        drivers.append(("Load", load_evidence, f"race-day {(load['time_factor'] - 1) * 100:+.1f}%"))
+        load_row = ("Load", load_evidence, f"race-day {(load['time_factor'] - 1) * 100:+.1f}%")
+        drivers.append(load_row)
+        drivers_text.append(load_row)
     drivers.append(("Health", health["detail"], f"{health['flag']} readiness"))
+    drivers_text.append(("Health", health.get("facts") or health["detail"],
+                         f"race-day {health['penalty'] * 100:+.1f}%"))
 
     return {
         "goal_label": goal_label,
@@ -358,7 +375,41 @@ def project_race(
         "durability": dur["tier"],
         "signals": sorted(active),
         "drivers": drivers,
+        "drivers_text": drivers_text,
+        # Evidence facts for the coach (it judges trustworthiness itself; no confidence label).
+        "n_signals": len(active),
+        "newest_evidence_days": (today - newest).days if newest else None,
+        "newest_before_block": before_block,
+        "spread_pct": round(spread * 100, 1),
     }
+
+
+_SIGNAL_NAMES = {"threshold": "threshold", "goal_pace": "goal pace", "hr_efficiency": "HR efficiency",
+                 "race": "race"}
+
+
+def format_projection_evidence(projection: Optional[dict]) -> str:
+    """'Evidence: 3 signals (threshold, goal pace, race), newest 9 days old, candidate spread 2.4%'.
+
+    Facts the coach uses to judge how far to trust the projection (no confidence label).
+    """
+    if not projection:
+        return ""
+    present = projection.get("signals") or []
+    names = [_SIGNAL_NAMES[s] for s in SIGNAL_WEIGHTS if s in present]
+    n = projection.get("n_signals")
+    if n is None:
+        n = len(names)
+    if not n:
+        return ""
+    parts = [f"Evidence: {n} signal{'s' if n != 1 else ''}" + (f" ({', '.join(names)})" if names else "")]
+    days = projection.get("newest_evidence_days")
+    parts.append(f"newest {days} day{'s' if days != 1 else ''} old" if days is not None else "newest evidence undated")
+    if projection.get("newest_before_block"):
+        parts.append("newest evidence predates the current block start")
+    if n > 1 and projection.get("spread_pct") is not None:
+        parts.append(f"candidate spread {projection['spread_pct']:.1f}%")
+    return ", ".join(parts)
 
 
 def _gap(gap_s: float) -> str:
@@ -375,12 +426,11 @@ def format_projection_row(projection: Optional[dict], goal_label: Optional[str],
     goal_cell = f"Goal: `{format_seconds_hms(projection['goal_s'])}`" if projection.get("goal_s") else "Goal: -"
     gap = f"Gap (race day): `{_gap(projection['gap_s'])}` · " if projection.get("gap_s") is not None else ""
     lo, hi = projection["range_s"]
-    stale = " · ⚠️ stale evidence" if projection.get("stale") else ""
     return (
         f"| **Projected {goal_label}** | Today `{format_seconds_hms(projection['today_s'])}` → "
         f"Race day `{format_seconds_hms(projection['race_day_s'])}` | {goal_cell}{weeks_str} | "
         f"{gap}Range `{format_seconds_hms(lo)}–{format_seconds_hms(hi)}` · "
-        f"Confidence: {projection['confidence']} · Readiness {projection['readiness']}{stale} |\n"
+        f"{format_projection_evidence(projection)} |\n"
     )
 
 
@@ -389,7 +439,7 @@ def format_drivers_table(projection: Optional[dict]) -> str:
     if not projection:
         return ""
     lines = ["**Projection drivers:**", "", "| Driver | Evidence | Implied pace / effect |", "|---|---|---|"]
-    for driver, evidence, implied in projection["drivers"]:
+    for driver, evidence, implied in projection.get("drivers_text") or projection["drivers"]:
         lines.append(f"| {driver} | {evidence} | {implied} |")
     return "\n".join(lines)
 

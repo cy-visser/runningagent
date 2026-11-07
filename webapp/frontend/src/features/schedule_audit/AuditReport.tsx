@@ -1,8 +1,8 @@
 import { Suspense, lazy } from "react";
-import { CalendarCheck } from "lucide-react";
+import { CalendarCheck, Scale } from "lucide-react";
 import { formatShortDate } from "../../shared/format";
 import type { AuditReportData } from "../../shared/types";
-import { RichMarkdown, StatusPill } from "../../shared/RichMarkdown";
+import { RichMarkdown, StatusBadge } from "../../shared/RichMarkdown";
 
 const AuditCharts = lazy(() => import("./AuditCharts"));
 
@@ -11,10 +11,29 @@ interface AuditReportProps {
   markdown: string;
 }
 
+const RECOMMENDATIONS_HEADING_RE = /^#{1,6}[^\n\w]*Recommendations\b.*$/im;
+
+/**
+ * Splits the coach's audit markdown at the "Recommendations" heading (heading kept in the
+ * second part). Without that heading everything stays in `assessment`.
+ */
+export function splitRecommendations(markdown: string): {
+  assessment: string;
+  recommendations: string;
+} {
+  const m = RECOMMENDATIONS_HEADING_RE.exec(markdown);
+  if (!m) return { assessment: markdown, recommendations: "" };
+  return {
+    assessment: markdown.slice(0, m.index).trim(),
+    recommendations: markdown.slice(m.index).trim(),
+  };
+}
+
 export function AuditReport({ data, markdown }: AuditReportProps) {
   const totalKm = data.weeks.reduce((acc, w) => acc + w.km, 0);
   const totalQuality = data.weeks.reduce((acc, w) => acc + w.quality, 0);
   const totalEasy = data.weeks.reduce((acc, w) => acc + w.easy, 0);
+  const { assessment, recommendations } = splitRecommendations(markdown);
 
   return (
     <div className="space-y-4">
@@ -48,8 +67,9 @@ export function AuditReport({ data, markdown }: AuditReportProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <StatusPill
+            <StatusBadge
               tone="slate"
+              icon={Scale}
               label={`${totalEasy} easy · ${totalQuality} quality`}
             />
             <span className="rounded-full bg-white/90 px-3 py-0.5 text-sm font-semibold text-slate-800 border border-slate-200 tabular-nums">
@@ -70,8 +90,11 @@ export function AuditReport({ data, markdown }: AuditReportProps) {
 
       {/* Coaching Evaluation */}
       {markdown && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-card">
-          <RichMarkdown content={markdown} />
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-card space-y-3">
+          {assessment && <RichMarkdown content={assessment} />}
+          {recommendations && (
+            <RichMarkdown content={recommendations} bulletStyle="recommendation" />
+          )}
         </div>
       )}
     </div>

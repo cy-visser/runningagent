@@ -1,6 +1,19 @@
 import { Suspense, lazy } from "react";
-import { Activity, Flame, Gauge, HeartPulse, Timer } from "lucide-react";
 import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Flame,
+  Gauge,
+  HeartPulse,
+  Info,
+  Timer,
+  TrendingDown,
+  TrendingUp,
+  XCircle,
+} from "lucide-react";
+import {
+  extractLeadingStatus,
   formatDuration,
   formatShortDate,
   formatSignedGap,
@@ -12,7 +25,7 @@ import type {
   CheckinReportData,
 } from "../../shared/types";
 import { CollapsibleSection } from "./CollapsibleSection";
-import { RichMarkdown, StatusPill } from "../../shared/RichMarkdown";
+import { RichMarkdown, StatusBadge } from "../../shared/RichMarkdown";
 
 const CheckinCharts = lazy(() => import("./CheckinCharts"));
 
@@ -114,6 +127,13 @@ function ThresholdPacesCard({ lt }: { lt: CheckinLtPaces }) {
   );
 }
 
+/** Leading status emoji in a driver cell ("🟢 readiness") renders as a small badge. */
+function ImpliedCell({ text }: { text: string }) {
+  const status = text ? extractLeadingStatus(text) : null;
+  if (!status || status.restText) return <>{text}</>;
+  return <StatusBadge tone={status.tone} icon={status.icon} label={status.badgeText} size="sm" />;
+}
+
 /** Evidence behind the race projection (rendered from the payload, never typed by the coach). */
 function ProjectionDrivers({ drivers }: { drivers: CheckinDriver[] }) {
   return (
@@ -138,7 +158,7 @@ function ProjectionDrivers({ drivers }: { drivers: CheckinDriver[] }) {
                 </td>
                 <td className="py-1.5 pr-3 text-slate-600">{d.evidence}</td>
                 <td className="py-1.5 text-slate-700 tabular-nums whitespace-nowrap">
-                  {d.implied}
+                  <ImpliedCell text={d.implied} />
                 </td>
               </tr>
             ))}
@@ -154,12 +174,16 @@ export function CheckinReport({ data, markdown }: CheckinReportProps) {
 
   const rampBadge =
     ctl.ramp_tier === "safe"
-      ? { tone: "emerald" as const, label: "Safe Ramp" }
+      ? { tone: "emerald" as const, label: "Safe Ramp", icon: TrendingUp }
       : ctl.ramp_tier === "aggressive"
-        ? { tone: "amber" as const, label: "Aggressive Ramp" }
+        ? { tone: "amber" as const, label: "Aggressive Ramp", icon: AlertTriangle }
         : ctl.ramp_tier === "high_risk"
-          ? { tone: "rose" as const, label: "High-Risk Ramp" }
-          : { tone: "slate" as const, label: ctl.phase ? `${ctl.phase} phase` : "Active Block" };
+          ? { tone: "rose" as const, label: "High-Risk Ramp", icon: XCircle }
+          : {
+              tone: "slate" as const,
+              label: ctl.phase ? `${ctl.phase} phase` : "Active Block",
+              icon: Info,
+            };
 
   const gapInfo = formatSignedGap(projection?.gap_s);
   const gapTone =
@@ -170,6 +194,15 @@ export function CheckinReport({ data, markdown }: CheckinReportProps) {
         : gapInfo.tone === "danger"
           ? ("rose" as const)
           : ("slate" as const);
+  // Ahead / on goal = check; behind = trending down (amber) or x (rose).
+  const gapIcon =
+    gapTone === "emerald"
+      ? CheckCircle2
+      : gapTone === "amber"
+        ? TrendingDown
+        : gapTone === "rose"
+          ? XCircle
+          : Info;
 
   return (
     <div className="space-y-4">
@@ -206,7 +239,7 @@ export function CheckinReport({ data, markdown }: CheckinReportProps) {
             </div>
           </div>
 
-          <StatusPill tone={rampBadge.tone} label={rampBadge.label} />
+          <StatusBadge tone={rampBadge.tone} label={rampBadge.label} icon={rampBadge.icon} />
         </div>
       </div>
 
@@ -261,7 +294,7 @@ export function CheckinReport({ data, markdown }: CheckinReportProps) {
                 )}
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <StatusPill tone={gapTone} label={gapInfo.label} />
+                <StatusBadge tone={gapTone} label={gapInfo.label} icon={gapIcon} />
                 {projection.today_s != null && (
                   <span className="text-xs text-slate-500 tabular-nums">
                     Today eq. {formatDuration(projection.today_s)}

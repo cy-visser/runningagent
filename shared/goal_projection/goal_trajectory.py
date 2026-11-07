@@ -23,7 +23,8 @@ TAPER_WEEKS_BY_DISTANCE = {
 }
 # CTL can't be meaningfully built in a partial week: floor the ramp divisor.
 MIN_BUILD_WEEKS = 1.0
-# Weekly CTL ramp tiers (pts/week): <= SAFE is sustainable, <= MAX is aggressive, above is high risk.
+# Weekly CTL ramp tiers (pts/week). SAFE is the ramp the race projection assumes for race-day CTL;
+# SAFE/MAX also drive the web ramp badge. Never rendered into the coach's tool text.
 SAFE_RAMP_PER_WEEK = 3.5
 MAX_RAMP_PER_WEEK = 5.0
 # Banked fitness: peak CTL from this many days before the taper start up to today.
@@ -43,17 +44,6 @@ def peak_ctl(daily_pmc: Optional[list[dict]], start: Any, end: Any) -> Optional[
             continue
         best = val if best is None else max(best, val)
     return best
-
-
-def ramp_status(required_ramp_rate: Optional[float]) -> Optional[str]:
-    """Status badge for a required weekly CTL ramp rate (single source for the check-in tiers)."""
-    if required_ramp_rate is None:
-        return None
-    if required_ramp_rate <= SAFE_RAMP_PER_WEEK:
-        return f"🟢 safe (<= {SAFE_RAMP_PER_WEEK})"
-    if required_ramp_rate <= MAX_RAMP_PER_WEEK:
-        return f"🟡 aggressive ({SAFE_RAMP_PER_WEEK}-{MAX_RAMP_PER_WEEK})"
-    return f"🔴 high risk (> {MAX_RAMP_PER_WEEK})"
 
 
 def resolve_taper_weeks(goal_text: Optional[str], override: Any = None) -> float:

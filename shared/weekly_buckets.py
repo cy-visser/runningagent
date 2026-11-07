@@ -87,8 +87,12 @@ def tally_workout(bucket: dict, workout: dict, w_date: date) -> None:
         "completed": completed,
     })
     dist_str = f"{round(dist, 1)}km, " if dist > 0 else ""
+    # Same `[workout_id]` format as the check-in, so the coach can stage changes from an audit
+    # without calling a report tool as a lookup.
+    w_id = workout.get("id") or workout.get("workout_id")
+    id_str = f" [{w_id}]" if w_id else ""
     bucket["sessions"].append(
-        f"[{sport}] '{title}' on {format_display_date(w_date)} ({dist_str}TSS: {round(tss, 0)})"
+        f"[{sport}] '{title}'{id_str} on {format_display_date(w_date)} ({dist_str}TSS: {round(tss, 0)})"
     )
 
 

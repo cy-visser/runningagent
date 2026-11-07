@@ -36,3 +36,20 @@ def test_check_in_report_populates_sections_tables_and_web_payload(runner):
     assert [d["driver"] for d in drivers][-2:] == ["Load", "Health"]
     assert all({"driver", "evidence", "implied"} == set(d) for d in drivers)
     assert len(report["weeks"]) >= 2
+
+    # The coach's text is facts only: no coded verdicts, tiers or badges (the coach draws the conclusions).
+    for verdict in ("🟢", "🟡", "🔴", "⚪", "✅", "⚠️", "safe (", "aggressive", "high risk", "Confidence:",
+                    "Readiness", "-> weak", "-> moderate", "-> strong", "race-day target",
+                    "hold fitness, shed fatigue"):
+        assert verdict not in out, verdict
+    if report["ctl"].get("phase") == "build":
+        assert "required CTL build" in out
+    assert "Evidence:" in out
+    assert "signal" in out.split("Evidence:", 1)[1].split("|", 1)[0]
+
+    # The web payload is unchanged: drivers keep their tiers and readiness badge for the UI.
+    by_name = {d["driver"]: d for d in drivers}
+    assert "readiness" in by_name["Health"]["implied"]
+    assert "->" in by_name["Durability"]["evidence"]
+    assert report["projection"]["confidence"] in ("Low", "Medium", "High")
+    assert report["projection"]["readiness"] in ("🟢", "🟡", "🔴", "⚪")

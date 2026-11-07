@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { render, screen, within } from "@testing-library/react";
 import { DEMO_AUDIT_DATA, DEMO_AUDIT_MARKDOWN } from "../../demo/fixtures";
-import { AuditReport } from "./AuditReport";
+import { AuditReport, splitRecommendations } from "./AuditReport";
 
 vi.mock("./AuditCharts", () => ({
   default: () => <div data-testid="audit-charts" />,
@@ -17,6 +17,30 @@ describe("schedule audit feature", () => {
     expect(screen.getByText("279.0 km total")).toBeInTheDocument();
     expect(screen.getByText("Assessment")).toBeInTheDocument();
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
+  });
+
+  it("uses status chips for the assessment and goal icons for recommendations", () => {
+    render(
+      <AuditReport data={DEMO_AUDIT_DATA} markdown={DEMO_AUDIT_MARKDOWN} />,
+    );
+    expect(screen.getAllByTestId("status-chip")).toHaveLength(3);
+    const icons = screen.getAllByTestId("recommendation-icon");
+    expect(icons.map((i) => i.dataset.icon)).toEqual(["subgoal", "northstar"]);
+    for (const icon of icons) {
+      expect(icon.closest("li")).not.toHaveTextContent("Polarisation");
+    }
+  });
+
+  it("splitRecommendations keeps everything in assessment without the heading", () => {
+    expect(splitRecommendations("### Assessment\n- 🟢 ok")).toEqual({
+      assessment: "### Assessment\n- 🟢 ok",
+      recommendations: "",
+    });
+    const { assessment, recommendations } = splitRecommendations(
+      "### Assessment\n- a\n\n### 💡 Recommendations\n- b",
+    );
+    expect(assessment).toBe("### Assessment\n- a");
+    expect(recommendations).toBe("### 💡 Recommendations\n- b");
   });
 });
 

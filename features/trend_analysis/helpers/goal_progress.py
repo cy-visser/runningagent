@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from ....shared.goal_distance import DISTANCE_PROFILES, resolve_goal_distance, resolve_target_peak_ctl
 from ....shared.goal_plan import KIND_NORTH_STAR, KIND_SUB_GOAL, blocks, current_goal, north_star, race_day
+from ....shared.goal_projection.race_projection import format_projection_evidence
 from ....shared.north_star_targets import (
     RECOVERY_EVERY_WEEKS,
     RECOVERY_SHARE,
@@ -57,6 +58,12 @@ def _projection(race_projection: Optional[dict]) -> Optional[dict]:
         "range_s": [round(rng[0]), round(rng[1])] if isinstance(rng, (list, tuple)) and len(rng) == 2 else None,
         "confidence": proj.get("confidence"),
         "stale": bool(proj.get("stale")),
+        # Evidence facts for the coach's goal-context line (format_projection_evidence).
+        "signals": proj.get("signals"),
+        "n_signals": proj.get("n_signals"),
+        "newest_evidence_days": proj.get("newest_evidence_days"),
+        "newest_before_block": bool(proj.get("newest_before_block")),
+        "spread_pct": proj.get("spread_pct"),
     }
 
 
@@ -212,11 +219,11 @@ def format_goal_context(progress: dict, profile: dict, today: date) -> str:
     if p and p.get("race_day_s"):
         rng = f"; range {format_seconds_hms(p['range_s'][0])}-{format_seconds_hms(p['range_s'][1])}" if p.get("range_s") else ""
         gap = f"; gap {format_gap(p['gap_s'])}" if p.get("gap_s") is not None else ""
-        stale = "; stale evidence" if p.get("stale") else ""
+        evidence = format_projection_evidence(p)
         lines.append(
             f"- Goal projection ({g['label']}): today {format_seconds_hms(p['today_s'])} -> race day "
-            f"{format_seconds_hms(p['race_day_s'])}; goal {format_seconds_hms(g.get('goal_s'))}{gap}{rng}; "
-            f"confidence {p.get('confidence')}{stale}."
+            f"{format_seconds_hms(p['race_day_s'])}; goal {format_seconds_hms(g.get('goal_s'))}{gap}{rng}"
+            f"{'; ' + evidence if evidence else ''}."
         )
     else:
         lines.append("- Goal projection: insufficient recent run data.")

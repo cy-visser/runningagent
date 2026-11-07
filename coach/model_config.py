@@ -3,7 +3,7 @@ import os
 from google.adk.models.google_llm import Gemini
 from google.genai import types
 
-COACH_MODEL = os.getenv("COACH_MODEL", "gemini-3.8-flash")
+COACH_MODEL = os.getenv("COACH_MODEL", "gemini-3.6-flash")
 ONBOARDING_MODEL = os.getenv("ONBOARDING_MODEL", "gemini-3.1-flash-lite")
 
 # Retry 429s at the model call so tool side effects are never replayed.

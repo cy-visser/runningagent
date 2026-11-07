@@ -17,17 +17,10 @@ MAX_EXTRAPOLATION_LTHR = 0.05       # zone-2 paces further outside the fitted HR
 # Intent bands by the step target midpoint (% of threshold pace).
 BANDS = (("easy", 0, 80), ("steady", 80, 87), ("marathon", 87, 93), ("threshold", 93, 102), ("vo2", 102, 1000))
 WORKOUT_BANDS = ("marathon", "threshold", "vo2")
-HR_CEILING = {"marathon": 0.87, "threshold": 0.92}   # max median %LTHR for "room to go faster"
-MIN_SESSIONS = 3
 MIN_REP_S = 60                      # shorter reps (strides) are neuromuscular, not pace work
-HIT_RATE_ROOM = 0.8
-DECOUPLING_ROOM = 3.0
-DECOUPLING_TOO_HARD = 5.0
-MAX_SPEEDUP = 0.03                  # suggested speed-up is capped at 3%
 PACE_RATIOS = (("Marathon", 0.91), ("Threshold", 1.00), ("VO2max", 1.07))
-# LTHR evidence (Friel): a sustained effort of >= 20 min at >= 97% LTHR confirms the setting.
+# LTHR evidence: the highest average HR of any lap or step of >= 20 min (a lower bound for LTHR).
 LTHR_EVIDENCE_MIN_S = 20 * 60
-LTHR_CONFIRMED_PCT = 0.97
 
 
 def recent_runs(records: list[dict], today: date, weeks: int = PACING_WEEKS) -> list[dict]:
@@ -61,7 +54,16 @@ def easy_pace_range(model: Optional[dict], zones: list[dict], lthr: Optional[flo
     margin = MAX_EXTRAPOLATION_LTHR * lthr
     extrapolated = z2["min"] < model["hr_min"] - margin or z2["max"] > model["hr_max"] + margin
     return {"hr_lo": z2["min"], "hr_hi": z2["max"], "fast_s": fast, "slow_s": slow,
-            "extrapolated": extrapolated, "laps": model["n"]}
+            "extrapolated": extrapolated, "laps": model["n"],
+            "fit_hr_min": model["hr_min"], "fit_hr_max": model["hr_max"]}
+
+
+def slope_s_per_pct_lthr(model: Optional[dict], lthr: Optional[float]) -> Optional[float]:
+    """Pace change (s/km, negative = faster) for +1% LTHR around the model's mean HR."""
+    if not model or not lthr:
+        return None
+    base, faster = model["my"], model["my"] + model["slope"] * 0.01 * lthr
+    return 1000.0 / faster - 1000.0 / base if base > 0 and faster > 0 else None
 
 
 def easy_discipline(runs: list[dict], zones: list[dict], lthr: Optional[float]) -> Optional[dict]:
@@ -101,8 +103,7 @@ def threshold_estimate(runs: list[dict], lthr: Optional[float], tp_speed: Option
 def lthr_evidence(runs: list[dict], lthr: Optional[float]) -> Optional[dict]:
     """Highest average HR over any lap or structured step >= 20 min, compared with the TP LTHR.
 
-    Sustained training efforts are a lower bound for LTHR: 'confirmed' when one reached
-    >= 97% LTHR, otherwise 'unconfirmed' (the setting may be too high; test to be sure).
+    Sustained training efforts are a lower bound for LTHR; the coach judges what the gap means.
     """
     if not lthr:
         return None
@@ -113,10 +114,8 @@ def lthr_evidence(runs: list[dict], lthr: Optional[float]) -> Optional[dict]:
             if hr and d >= LTHR_EVIDENCE_MIN_S and (best is None or hr > best["best_hr"]):
                 best = {"best_hr": hr, "duration_s": d, "date": r.get("date"), "title": r.get("title") or ""}
     if best is None:
-        return {"lthr": lthr, "best_hr": None, "best_pct": None, "status": "unconfirmed"}
-    pct = best["best_hr"] / lthr
-    return {"lthr": lthr, **best, "best_pct": pct,
-            "status": "confirmed" if pct >= LTHR_CONFIRMED_PCT else "unconfirmed"}
+        return {"lthr": lthr, "best_hr": None, "best_pct": None}
+    return {"lthr": lthr, **best, "best_pct": best["best_hr"] / lthr}
 
 
 def intent_band(pct: Optional[float]) -> Optional[str]:
@@ -131,9 +130,15 @@ def _target_slow_end(interval: dict, threshold_speed: Optional[float]) -> Option
     return 1000.0 / threshold_speed / (lo / 100.0) if lo and threshold_speed else None
 
 
+def _target_fast_end(interval: dict, threshold_speed: Optional[float]) -> Optional[float]:
+    hi = (interval.get("target") or {}).get("hi")
+    return 1000.0 / threshold_speed / (hi / 100.0) if hi and threshold_speed else None
+
+
 def workout_calibration(runs: list[dict]) -> dict[str, dict]:
     """Per workout band: sessions, reps, pace hit rate, median %LTHR / decoupling / pace / HR."""
     groups: dict[str, list[tuple[str, dict, Optional[float]]]] = {}
+    fast_ends: dict[str, list[float]] = {}
     for r in runs:
         thr_speed = (r.get("thresholds") or {}).get("threshold_speed")
         for iv in r.get("work_intervals") or []:
@@ -144,6 +149,9 @@ def workout_calibration(runs: list[dict]) -> dict[str, dict]:
             band = intent_band((target["lo"] + target["hi"]) / 2)
             if band in WORKOUT_BANDS:
                 groups.setdefault(band, []).append((r["workout_id"], iv, _target_slow_end(iv, thr_speed)))
+                fast = _target_fast_end(iv, thr_speed)
+                if fast:
+                    fast_ends.setdefault(band, []).append(fast)
     out = {}
     for band, items in groups.items():
         judged = [(iv, slow) for _, iv, slow in items if iv.get("pace_s") and slow]
@@ -151,6 +159,7 @@ def workout_calibration(runs: list[dict]) -> dict[str, dict]:
         decs = [iv["decoupling"] for _, iv, _ in items if iv.get("decoupling") is not None]
         paces = [iv["pace_s"] for _, iv, _ in items if iv.get("pace_s")]
         hrs = [iv["hr"] for _, iv, _ in items if iv.get("hr")]
+        slows = [slow for _, _, slow in items if slow]
         out[band] = {
             "sessions": len({wid for wid, _, _ in items}),
             "reps": len(items),
@@ -159,28 +168,10 @@ def workout_calibration(runs: list[dict]) -> dict[str, dict]:
             "median_decoupling": median(decs) if decs else None,
             "median_pace_s": median(paces) if paces else None,
             "median_hr": median(hrs) if hrs else None,
+            "target_fast_s": median(fast_ends[band]) if fast_ends.get(band) else None,
+            "target_slow_s": median(slows) if slows else None,
         }
     return out
-
-
-def headroom(band: str, cal: dict, model: Optional[dict], lthr: Optional[float]) -> dict:
-    """Deterministic verdict: 'room to go faster' / 'on target' / 'too hard' / 'insufficient' / 'n/a'."""
-    ceiling = HR_CEILING.get(band)
-    if ceiling is None:
-        return {"verdict": "n/a (no HR rule for short reps)"}
-    pct, dec, hit = cal.get("median_pct_lthr"), cal.get("median_decoupling"), cal.get("hit_rate")
-    if cal["sessions"] < MIN_SESSIONS or pct is None:
-        return {"verdict": "insufficient"}
-    if pct > ceiling or (dec is not None and dec > DECOUPLING_TOO_HARD):
-        return {"verdict": "too hard"}
-    if hit is not None and hit >= HIT_RATE_ROOM and (dec is None or dec < DECOUPLING_ROOM):
-        suggestion = None
-        if model and lthr and cal.get("median_pace_s") and cal.get("median_hr"):
-            speed = 1000.0 / cal["median_pace_s"]
-            gain = min(MAX_SPEEDUP * speed, max(0.0, model["slope"] * (ceiling * lthr - cal["median_hr"])))
-            suggestion = round(cal["median_pace_s"] - 1000.0 / (speed + gain))
-        return {"verdict": "room to go faster", "faster_s_per_km": suggestion}
-    return {"verdict": "on target"}
 
 
 def training_paces(threshold_speed: Optional[float], easy: Optional[dict]) -> list[tuple[str, str]]:
@@ -202,11 +193,6 @@ def analyse_pacing(records: list[dict], thresholds: dict, zones: list[dict], tod
     thr = threshold_estimate(runs, lthr, tp_speed)
     cal = workout_calibration(runs)
     lthr_check = lthr_evidence([r for r in records if r.get("kind") and r.get("laps")], lthr)
-    verdicts = {b: {**c, **headroom(b, c, model, lthr)} for b, c in cal.items()}
-    if lthr_check and lthr_check["status"] == "unconfirmed":
-        for v in verdicts.values():
-            if v["verdict"] == "room to go faster":
-                v["verdict"] = "room to go faster (LTHR unconfirmed)"
     return {
         "runs": len(runs),
         "model": model,
@@ -214,13 +200,21 @@ def analyse_pacing(records: list[dict], thresholds: dict, zones: list[dict], tod
         "discipline": easy_discipline(runs, zones, lthr),
         "threshold": thr,
         "lthr_check": lthr_check,
-        "calibration": verdicts,
+        "calibration": cal,
+        "slope_s_per_pct": slope_s_per_pct_lthr(model, lthr),
         "paces": training_paces(thr["speed"] if thr else None, easy),
     }
 
 
 def _pct(v: Optional[float]) -> str:
     return f"{v * 100:.0f}%" if v is not None else "-"
+
+
+def _target_range(c: dict) -> str:
+    fast, slow = c.get("target_fast_s"), c.get("target_slow_s")
+    if fast and slow:
+        return f"{fmt_pace(fast)[:-3]}–{fmt_pace(slow)}"
+    return fmt_pace(slow or fast) if (slow or fast) else "-"
 
 
 def format_pacing_tables(p: dict) -> str:
@@ -230,25 +224,36 @@ def format_pacing_tables(p: dict) -> str:
                   "| Pace | Target |", "|---|---|"]
         lines += [f"| {name} | {pace} |" for name, pace in p["paces"]]
     if p["calibration"]:
-        lines += ["", "**Workout calibration** (structured steps by target, last 6 weeks):", "",
-                  "| Band | Sessions (reps) | Pace hit | Median %LTHR | Median Pa:Hr | Verdict |",
-                  "|---|---|---|---|---|---|"]
+        lines += ["", "**Workout calibration** (structured steps by target, last 6 weeks; target range = median "
+                  "target pace range from the threshold in use then; pace hit = share of reps at or faster than "
+                  "the slow end of the target):", "",
+                  "| Band | Sessions (reps) | Target range | Pace hit | Median pace | Median HR | Median %LTHR "
+                  "| Median Pa:Hr |",
+                  "|---|---|---|---|---|---|---|---|"]
         for band in WORKOUT_BANDS:
             c = p["calibration"].get(band)
             if not c:
                 continue
-            verdict = c["verdict"] + (f" (~{c['faster_s_per_km']} s/km)" if c.get("faster_s_per_km") else "")
             dec = f"{c['median_decoupling']:.1f}%" if c["median_decoupling"] is not None else "-"
-            lines.append(f"| {band.capitalize()} | {c['sessions']} ({c['reps']}) | {_pct(c['hit_rate'])} "
-                         f"| {_pct(c['median_pct_lthr'])} | {dec} | {verdict} |")
+            pace = fmt_pace(c["median_pace_s"]) if c["median_pace_s"] else "-"
+            hr = f"{c['median_hr']:.0f} bpm" if c["median_hr"] else "-"
+            lines.append(f"| {band.capitalize()} | {c['sessions']} ({c['reps']}) | {_target_range(c)} "
+                         f"| {_pct(c['hit_rate'])} | {pace} | {hr} | {_pct(c['median_pct_lthr'])} | {dec} |")
     return "\n".join(lines)
 
 
 def format_pacing_details(p: dict) -> str:
     lines = [f"Pacing evidence: {p['runs']} runs with laps in the last {PACING_WEEKS} weeks."]
+    m = p.get("model")
+    if m:
+        slope = p.get("slope_s_per_pct")
+        slope_txt = f"; ≈ {slope:+.1f} s/km per +1% LTHR around {fmt_pace(1000.0 / m['my'])}" if slope else ""
+        lines.append(f"- HR->pace model: {m['n']} steady laps (hot runs excluded), fitted HR range "
+                     f"{m['hr_min']:.0f}-{m['hr_max']:.0f} bpm{slope_txt}")
     e = p["easy"]
     if e:
-        flag = " (extrapolated beyond the fitted HR range)" if e["extrapolated"] else ""
+        flag = (f" (extrapolated: zone 2 extends more than {MAX_EXTRAPOLATION_LTHR * 100:.0f}% LTHR beyond the "
+                f"fitted HR range {e['fit_hr_min']:.0f}-{e['fit_hr_max']:.0f} bpm)") if e["extrapolated"] else ""
         lines.append(f"- Easy pace (TP zone 2 {int(e['hr_lo'])}-{int(e['hr_hi'])} bpm, {e['laps']} steady laps, "
                      f"hot runs excluded): {fmt_pace(e['fast_s'])} to {fmt_pace(e['slow_s'])}{flag}")
     else:
@@ -260,20 +265,19 @@ def format_pacing_details(p: dict) -> str:
     lc = p.get("lthr_check")
     if lc:
         if lc["best_hr"]:
-            evidence = (f"highest 20+ min effort {lc['best_hr']:.0f} bpm ({lc['best_pct'] * 100:.0f}%) on "
-                        f"{lc['date']} '{lc['title']}'")
+            evidence = (f"best 20+ min effort {lc['best_hr']:.0f} bpm ({lc['best_pct'] * 100:.1f}%), "
+                        f"{lc['duration_s'] / 60:.0f} min, {lc['date']} '{lc['title']}'")
         else:
             evidence = "no lap or step of 20+ min with HR"
-        advice = "" if lc["status"] == "confirmed" else (
-            f"; no sustained effort >= {LTHR_CONFIRMED_PCT * 100:.0f}%: confirm with a 30-min time trial or a 10K race")
-        lines.append(f"- LTHR check: TP LTHR {lc['lthr']:.0f} bpm; {evidence} -> {lc['status']}{advice}")
+        lines.append(f"- LTHR check: TP LTHR {lc['lthr']:.0f} bpm; {evidence}")
     t = p["threshold"]
     if t:
         if t["observed_speed"] and t["tp_speed"]:
-            direction = "too fast" if t["diff_pct"] < 0 else "too slow"
-            agree = "agrees" if abs(t["diff_pct"]) <= THRESHOLD_AGREEMENT else f"TP setting ~{abs(t['diff_pct']) * 100:.0f}% {direction}"
+            pace_diff = t["tp_speed"] / t["observed_speed"] - 1
+            used = ("the mean of both" if abs(t["diff_pct"]) <= THRESHOLD_AGREEMENT else "the observed pace")
             lines.append(f"- Threshold: observed {fmt_pace(1000 / t['observed_speed'])} over {t['minutes']} min of "
-                         f"threshold laps (latest {t['latest']}) vs TP setting {fmt_pace(1000 / t['tp_speed'])} -> {agree}")
+                         f"threshold laps (latest {t['latest']}) vs TP setting {fmt_pace(1000 / t['tp_speed'])} "
+                         f"(pace diff {pace_diff * 100:+.1f}%); training paces use {used}")
         elif t["tp_speed"]:
-            lines.append(f"- Threshold: TP setting {fmt_pace(1000 / t['tp_speed'])}; no threshold laps in the window to confirm it")
+            lines.append(f"- Threshold: TP setting {fmt_pace(1000 / t['tp_speed'])}; no threshold laps in the window")
     return "\n".join(lines)

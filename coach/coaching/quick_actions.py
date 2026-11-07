@@ -30,6 +30,7 @@ from ...features.schedule_audit.fetch_schedule_audit_data_tool import (
 )
 from ...features.trend_analysis.fetch_trend_data_tool import fetch_trend_data_tool
 from ...features.workout_analysis.analyze_workout_tool import analyze_workout_tool
+from ...features.workout_creator.apply_staged_changes_tool import apply_staged_changes_tool
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,12 @@ QUICK_ACTIONS = {
     "trend-analysis": (fetch_trend_data_tool, frozenset({"weeks"})),
     "schedule-audit": (fetch_schedule_audit_data_tool, frozenset({"start_date", "end_date"})),
     "workout-analysis": (analyze_workout_tool, frozenset({"date_str", "sport"})),
+    # "Update TrainingPeaks" button: applies the staged changes in code. The follow-up model call is
+    # answered by `write_confirmation_reply`, so this action makes no LLM call at all.
+    "workout-creator": (apply_staged_changes_tool, frozenset({"staged_id"})),
 }
+# Actions that only execute code: no skill instructions are loaded for them.
+SKILL_FREE_ACTIONS = frozenset({"workout-creator"})
 
 LOAD_SKILL = "load_skill"
 # Gemini 3 validates thought signatures on the current turn's function calls; calls that were not
@@ -90,7 +96,8 @@ def quick_action_calls(action: Any, llm_request: LlmRequest) -> list[types.Part]
     tool, allowed = QUICK_ACTIONS[skill]
     raw_args = action.get("args") if isinstance(action.get("args"), dict) else {}
     args = {k: v for k, v in raw_args.items() if k in allowed and v is not None}
-    calls = [] if _skill_loaded(llm_request, skill) else [(LOAD_SKILL, {"skill_name": skill})]
+    skip_skill = skill in SKILL_FREE_ACTIONS or _skill_loaded(llm_request, skill)
+    calls = [] if skip_skill else [(LOAD_SKILL, {"skill_name": skill})]
     calls.append((tool.name, args))
     return [
         types.Part(

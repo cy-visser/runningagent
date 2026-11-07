@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 
 from running_coach.features.schedule_audit.fetch_schedule_audit_data_tool import (
     fetch_schedule_audit_data,
@@ -24,6 +25,10 @@ def test_schedule_audit_surfaces_goal_context_long_run_facts_and_web_payload(run
     for computed in ("north-star floor", "Long-run rule", "cap 1", "target 24", "below target"):
         assert computed not in out
     assert "Work trip to Berlin" in out
+    # Session lines carry the TrainingPeaks workout id (same format as the check-in), so the coach can
+    # stage changes after an audit without calling a report tool as a lookup.
+    session_lines = [ln for ln in out.splitlines() if ln.lstrip().startswith("- [Run] '")]
+    assert session_lines and all(re.search(r"'\s\[[^\]]+\] on ", ln) for ln in session_lines)
 
     # Weekly volume: 10K block target = 72% of the 100 km/week north-star peak; completed and
     # transition weeks have no path; planned weeks report facts only (vs prior week, vs path), never a

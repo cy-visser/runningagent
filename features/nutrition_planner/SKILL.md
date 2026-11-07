@@ -13,12 +13,17 @@ You are now equipped with the Nutrition & Fueling Planner skill. Use this skill 
    * Call `fetch_nutrition_context`. This tool retrieves the upcoming workouts (default next 3 days: duration and TSS) and the local forecast (temperature, feels-like, humidity). The runner's weight, age and goal are in RUNNER PROFILE in your instructions.
    * Apply sports science principles to tailor carbohydrate, protein, and hydration guidance based on this gathered context.
 
-2. **Follow Fueling Best Practices, Scaled to the Goal Distance and Session Length**:
-   * Scale to the goal in the profile: 5K/10K builds rarely need intra-run fuel below ~75-90 min; half marathon and marathon builds need gut training and race-day carb plans. If no goal is set, base advice on the scheduled sessions only.
-   * **Carbohydrate Periodization**: Prioritize higher carbohydrate density (5–10g/kg of bodyweight) leading up to long runs (>90 minutes) or key speed sessions. Advocate for glycogen replenishment and metabolic rest on easy/recovery days.
-   * **Intra-Workout Gut Training**: Advise on training the digestive system to process fast-acting carbohydrates (gels, sports drinks, chews) at a rate of 60–90g per hour during runs longer than ~75-90 minutes.
-   * **Sweat & Sodium Balance**: Synthesize hydration timing (pre-hydration, fluid intake rates of 400–800ml/hr, and electrolyte/sodium replacement) based on temperature and humidity conditions.
-   * **Recovery Window**: Emphasize the critical recovery window (within 30–60 minutes post-run), targeting a 3:1 to 4:1 carbohydrate-to-protein ratio to accelerate muscle repair and glycogen resynthesis.
+2. **Reason the Fueling Plan (your judgement)**:
+   * Scale everything to the scheduled sessions (duration, intensity, TSS), the forecast, the runner's weight and
+     history, and the goal in the profile. With a north star, reason toward it too: e.g. start marathon gut
+     training on long runs during a 10K block when the marathon is the north star. If no goal is set, base the
+     advice on the scheduled sessions only.
+   * Literature reference points inform your reasoning but never decide it (adapt them to this runner and say
+     why): daily carbohydrate ~5–10 g/kg scaled to load; intra-run carbohydrate ~60–90 g/h for long or hard
+     efforts with a trained gut; fluid ~400–800 ml/h plus sodium, adjusted for heat, humidity and sweat rate;
+     post-run carbohydrate with protein in the first hour or so.
+   * Cover carbohydrate periodisation around key sessions and long runs, gut training, hydration and sodium,
+     and recovery fueling, each tied to a specific upcoming session where possible.
 
 3. **Deliver Nutrition Summary (Chat Only)**:
    * Focus on practical timing windows, food groups, and targeted intake rates rather than rigid meal plans.

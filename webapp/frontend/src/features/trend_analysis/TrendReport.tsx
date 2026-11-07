@@ -1,5 +1,15 @@
 import { Suspense, lazy } from "react";
-import { CheckCircle2, Compass, Gauge, Layers, Target, TrendingUp } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CircleDashed,
+  Compass,
+  Gauge,
+  Layers,
+  Target,
+  TrendingUp,
+  type LucideIcon,
+} from "lucide-react";
 import { extractLeadingStatus, formatDuration, formatShortDate } from "../../shared/format";
 import type { StatusPillTone } from "../../shared/format";
 import type {
@@ -8,8 +18,9 @@ import type {
   TrendNorthStar,
   TrendPaceRow,
   TrendReportData,
+  TrendTargetItem,
 } from "../../shared/types";
-import { RichMarkdown, StatusPill } from "../../shared/RichMarkdown";
+import { RichMarkdown, StatusBadge, StatusPill, directionFromArrow } from "../../shared/RichMarkdown";
 
 const TrendCharts = lazy(() => import("./TrendCharts"));
 const GoalCharts = lazy(() => import("./GoalCharts"));
@@ -33,6 +44,16 @@ function gapPill(gapS: number | null | undefined, targetS: number | null | undef
         ? `${formatDuration(-gapS)} ahead`
         : `+${formatDuration(gapS)} behind`;
   return { tone, label };
+}
+
+/** Target chip: proven / ready = check, within reach = alert, untested / far = dashed circle. */
+function targetBadge(t: TrendTargetItem): { tone: StatusPillTone; icon: LucideIcon } {
+  const status = (t.status ?? "").toLowerCase();
+  if (status === "proven" || (!status && t.gap_km <= 0)) {
+    return { tone: "emerald", icon: CheckCircle2 };
+  }
+  if (status === "within reach") return { tone: "amber", icon: AlertTriangle };
+  return { tone: "slate", icon: CircleDashed };
 }
 
 /**
@@ -205,9 +226,11 @@ export function TrendReport({ data, markdown }: TrendReportProps) {
                 <div className="mt-2 flex items-center justify-between gap-2 text-[0.6875rem] text-slate-500">
                   <span className="tabular-nums">Start: {item.first || "—"}</span>
                   {parsedVerdict ? (
-                    <StatusPill
+                    <StatusBadge
                       tone={parsedVerdict.tone}
                       label={parsedVerdict.badgeText}
+                      size="sm"
+                      direction={directionFromArrow(item.arrow)}
                     />
                   ) : item.verdict ? (
                     <span className="font-medium text-slate-700">
@@ -253,17 +276,21 @@ export function TrendReport({ data, markdown }: TrendReportProps) {
             </div>
             {outlook.targets.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 text-[0.6875rem] text-slate-600">
-                {outlook.targets.map((t) => (
-                  <span
-                    key={t.target}
-                    className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 font-medium tabular-nums"
-                  >
-                    {t.target} km:{" "}
-                    <strong className="text-slate-900">
-                      {t.gap_km <= 0 ? "Ready now" : `+${Math.round(t.gap_km)} km to go`}
-                    </strong>
-                  </span>
-                ))}
+                {outlook.targets.map((t) => {
+                  const badge = targetBadge(t);
+                  return (
+                    <StatusBadge
+                      key={t.target}
+                      tone={badge.tone}
+                      icon={badge.icon}
+                      size="sm"
+                      className="tabular-nums"
+                      label={`${t.target} km: ${
+                        t.gap_km <= 0 ? "Ready now" : `+${Math.round(t.gap_km)} km to go`
+                      }`}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
@@ -305,13 +332,9 @@ export function TrendReport({ data, markdown }: TrendReportProps) {
                       {lv.weeks > 0 ? `${lv.weeks}w (${lv.streak}w streak)` : "not run yet"}
                     </span>
                     {lv.proven ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[0.6875rem] font-semibold text-emerald-700 border border-emerald-200">
-                        <CheckCircle2 className="h-3 w-3" /> Proven
-                      </span>
+                      <StatusBadge tone="emerald" icon="check" label="Proven" size="sm" />
                     ) : (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6875rem] font-medium text-slate-500 border border-slate-200">
-                        Next tier
-                      </span>
+                      <StatusBadge tone="slate" icon={CircleDashed} label="Next tier" size="sm" />
                     )}
                   </div>
                 </div>

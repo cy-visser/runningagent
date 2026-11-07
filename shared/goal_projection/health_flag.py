@@ -90,6 +90,25 @@ def recent_hard_effort(
     return None
 
 
+def format_effort_fact(effort: Optional[dict]) -> Optional[str]:
+    """"last hard effort 'Schoorl 10K' 6 days ago, 10.0 km, TSS 95" (a fact, no verdict)."""
+    if not effort:
+        return None
+    days = effort["days_ago"]
+    ago = "today" if days == 0 else f"{days} day{'s' if days != 1 else ''} ago"
+    return (f"last hard effort '{effort['title']}' {ago} ({_fmt_day(effort['date'])}), "
+            f"{effort['km']:.1f} km, TSS {effort['tss']:.0f}")
+
+
+def _load_facts(tsb: Optional[float], atl: Optional[float], ctl: Optional[float]) -> list[str]:
+    facts = []
+    if tsb is not None:
+        facts.append(f"TSB {tsb:+.0f}")
+    if atl and ctl:
+        facts.append(f"ATL:CTL {atl / ctl:.2f}")
+    return facts
+
+
 def health_readiness(
     dated_metrics: Optional[dict[str, list[tuple[date, float]]]],
     today: date,
@@ -102,9 +121,12 @@ def health_readiness(
     """S6: 5-day HRV/RHR/sleep vs 28-day baseline; load-aware in build, time-affecting in race week.
 
     `recent_effort` (from recent_hard_effort) explains poor markers during its recovery window.
+    `flag`/`detail` feed the web payload and `penalty`/`confidence_drop` the model; `facts` is the
+    verdict-free text for the coach (deltas, the recent hard effort, TSB and ATL:CTL).
     """
     if not dated_metrics:
-        return {"flag": "⚪", "markers": 0, "confidence_drop": False, "penalty": 0.0, "detail": "no health data"}
+        return {"flag": "⚪", "markers": 0, "confidence_drop": False, "penalty": 0.0, "detail": "no health data",
+                "facts": "no health data"}
     recent_start = today - timedelta(days=HEALTH_WINDOW_DAYS - 1)
     base_start = today - timedelta(days=HEALTH_BASELINE_DAYS)
 
@@ -131,11 +153,22 @@ def health_readiness(
         markers += bool(sl_b) and (sl_b - sl_r) >= SLEEP_DROP_H
 
     if not parts:
-        return {"flag": "⚪", "markers": 0, "confidence_drop": False, "penalty": 0.0, "detail": "no health data"}
+        return {"flag": "⚪", "markers": 0, "confidence_drop": False, "penalty": 0.0, "detail": "no health data",
+                "facts": "no health data"}
 
     heavy = (tsb is not None and tsb <= HEAVY_TSB) or (bool(atl) and bool(ctl) and atl / ctl >= HEAVY_ATL_CTL)
     race_week = days_to_race is not None and 0 <= days_to_race <= RACE_WEEK_DAYS
     detail = ", ".join(parts)
+    effort_fact = format_effort_fact(recent_effort)
+    facts = "; ".join([detail] + ([effort_fact] if effort_fact else []) + _load_facts(tsb, atl, ctl))
+    result = _readiness_verdict(markers, race_week, heavy, recent_effort, detail)
+    result["facts"] = facts
+    return result
+
+
+def _readiness_verdict(markers: int, race_week: bool, heavy: bool, recent_effort: Optional[dict],
+                       detail: str) -> dict:
+    """Web flag/detail and model penalty/confidence_drop (never rendered into the coach's text)."""
     if markers >= 2:
         if race_week:
             penalty = min(MAX_HEALTH_PENALTY, MAX_HEALTH_PENALTY * markers / 3)

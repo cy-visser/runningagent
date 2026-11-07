@@ -518,7 +518,8 @@ class TestUpdateWorkout:
         put_payload = mock_instance.put.call_args[1]["json"]
         assert put_payload["totalTimePlanned"] == 90 / 60.0
         assert put_payload["tssPlanned"] == 77
-        assert "ifPlanned" not in put_payload
+        # IF consistent with the explicit TSS and duration: sqrt(77 / (1.5 h * 100)).
+        assert put_payload["ifPlanned"] == pytest.approx(0.716, abs=0.001)
 
     @pytest.mark.asyncio
     async def test_update_with_invalid_structure_returns_validation_error(self):
@@ -1046,3 +1047,66 @@ class TestWorkoutNote:
         result = await tp_set_workout_note("abc", "note")
         assert result["isError"] is True
         assert result["error_code"] == "VALIDATION_ERROR"
+
+
+class TestPlannedIntensityFactor:
+    """ifPlanned stays consistent with TSS and duration (TSS = hours x IF^2 x 100)."""
+
+    STRUCTURED_WORKOUT = {
+        "structure": [],
+        "polyline": [],
+        "primaryLengthMetric": "distance",
+        "primaryIntensityMetric": "percentOfThresholdPace",
+        "primaryIntensityTargetOrRange": "range",
+    }
+
+    @staticmethod
+    async def _update(existing: dict, **kwargs) -> dict:
+        with patch("tp_mcp.tools.workouts.TPClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.ensure_athlete_id = AsyncMock(return_value=123)
+            mock_instance.get = AsyncMock(return_value=APIResponse(success=True, data=dict(existing)))
+            mock_instance.put = AsyncMock(return_value=APIResponse(success=True, data=None))
+            mock_client.return_value.__aenter__.return_value = mock_instance
+            result = await tp_update_workout(workout_id="1001", **kwargs)
+        assert result["success"] is True
+        return mock_instance.put.call_args[1]["json"]
+
+    @pytest.mark.asyncio
+    async def test_create_with_tss_and_duration_sets_consistent_if(self):
+        create_response = APIResponse(success=True, data={"workoutId": 7100, "title": "Easy"})
+        with patch("tp_mcp.tools.workouts.TPClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.ensure_athlete_id = AsyncMock(return_value=123)
+            mock_instance.post = AsyncMock(return_value=create_response)
+            mock_client.return_value.__aenter__.return_value = mock_instance
+            result = await tp_create_workout(
+                date_str="2026-11-19", sport="Run", title="6km Easy Run", duration_minutes=36, tss_planned=41.0,
+            )
+        assert result["success"] is True
+        payload = mock_instance.post.call_args[1]["json"]
+        assert payload["ifPlanned"] == pytest.approx(0.827, abs=0.001)
+
+    @pytest.mark.asyncio
+    async def test_update_with_structured_workout_replaces_stale_if(self):
+        put_payload = await self._update(
+            {"workoutId": 1001, "ifPlanned": 0.78, "tssPlanned": 50.0, "totalTimePlanned": 0.75},
+            structured_workout=self.STRUCTURED_WORKOUT, duration_minutes=55, tss_planned=63.0,
+        )
+        assert put_payload["ifPlanned"] == pytest.approx(0.829, abs=0.001)
+
+    @pytest.mark.asyncio
+    async def test_tss_only_update_uses_existing_duration(self):
+        put_payload = await self._update(
+            {"workoutId": 1001, "ifPlanned": 0.78, "tssPlanned": 36.5, "totalTimePlanned": 0.6},
+            tss_planned=41.0,
+        )
+        assert put_payload["ifPlanned"] == pytest.approx(0.827, abs=0.001)
+
+    @pytest.mark.asyncio
+    async def test_title_only_update_keeps_existing_if(self):
+        put_payload = await self._update(
+            {"workoutId": 1001, "ifPlanned": 0.78, "tssPlanned": 41.0, "totalTimePlanned": 0.6},
+            title="Renamed",
+        )
+        assert put_payload["ifPlanned"] == 0.78

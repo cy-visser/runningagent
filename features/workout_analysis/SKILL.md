@@ -25,7 +25,7 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
      - Look for 'gray zone' (Zone 3/4) creep where recovery runs are executed too fast, compromising metabolic recovery.
      - Reference lap data if pacing surges or significant cardiac drift are present across splits.
    - **For Structured Workouts (Intervals, Tempo, Threshold, Race, Progressive, MP Blocks, Reps)**:
-     - If a **Planned structure & execution** section is present, judge execution **step by step against the planned targets** (the Check column), then use the **Repeated blocks** summary for rep-to-rep pace consistency and HR drift at matched pace. Judge the quality block by its own **Decoupling per work block** value (`[key block]` marks the highest-intensity block), not by the whole session.
+     - If a **Planned structure & execution** section is present, the `Δ vs target` column gives each step's signed distance to its planned range (0 = inside; negative pace = faster than the range). Judge execution against the session's intent yourself: rep-to-rep consistency and HR drift from the **Repeated blocks** facts, and the quality block's own **Decoupling per work block** value (`[highest target intensity]` identifies the hardest block) rather than the whole session.
      - Otherwise analyze the **Laps Breakdown**: evaluate individual work intervals vs. recovery laps for pacing consistency (even/negative splits vs. fading), heart rate response, recovery lap HR drop, and cadence stability.
      - Long runs with embedded race-pace blocks: evaluate that block's pace discipline and decoupling separately from the easy kilometres.
    - **Elevation & Terrain Impact**:
@@ -41,9 +41,9 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
        - Literature reference points (e.g. Friel's ~5% for steady aerobic efforts, ~3.5% in aerobic-threshold tests) can inform the reasoning but are not verdicts.
    - **Physiological Recovery & Readiness Context**:
      - Cross-reference run execution against morning recovery metrics from `analyze_workout` (Sleep duration, HRV baseline stability, and Resting Heart Rate trends) to assess readiness and strain.
-   - **Goal Alignment**: Connect the run execution to long-term goal pacing and phase progression.
+   - **Goal Alignment** (see GOAL REASONING in your instructions): say what this run means for the current goal (if set) and, with a north star, for the north star too (e.g. a threshold session's value for a 10K block and what it adds or costs for the marathon's aerobic base and durability).
      - **Goal plans** (the tool output contains a **Goal plan** or **Sub-goal race** line): judge the run on both levels, the current sub-goal block and the north star.
-     - **Sub-goal race day**: congratulate the runner, then frame the finish time as progress toward the north star using the north-star equivalent and gap exactly as provided (not pass/fail). When the line says the result was saved, mention it in one short sentence. Riegel equivalents are optimistic for the marathon without marathon-specific volume: say so. Never offer onboarding for a sub-goal race.
+     - **Sub-goal race day**: congratulate the runner, then frame the finish time as progress toward the north star using the north-star equivalent and gap provided (not pass/fail). When the line says the result was saved, mention it in one short sentence. Riegel equivalents are optimistic for the marathon without marathon-specific volume: say so. Never offer onboarding for a sub-goal race.
 
 3. **Deliver Workout Summary**:
    - Deliver an objective, data-backed assessment in clean standard Markdown:
@@ -56,7 +56,7 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
    - **Easy & Recovery Runs → Concise format** (short and to the point: Execution + Key Takeaways together under ~120 words):
      1. **Session Overview**: four bullets, omitting unavailable items: **Date & Title** (plus other same-day sessions, if any); **Volume** (distance | duration | pace (NGP)); **Physiological Load** (HR avg (max) | cadence | Pa:Hr | rTSS); **Environment** (location | temperature (feels like), humidity, wind, terrain +gain / -loss).
      2. **🎯 Execution**: three one-line bullets, each opening with ✅ (on target), ⚠️ (watch) or ❌ (missed), then the verdict with its key number:
-        - **Intensity**: HR zone discipline vs. the plan (pace/HR target, if any). Running slightly slower than the planned pace at a truly easy HR is correct execution: say so in a few words.
+        - **Intensity**: HR zone discipline vs. the plan (pace/HR target, if any), judged against the session's intent.
         - **Aerobic stability**: Pa:Hr with a few words of context (conditions, terrain).
         - **Readiness**: the morning HRV / RHR / sleep signal (omit if no recovery data).
         - Add a **Mechanics** or **Terrain** bullet only when the data shows something notable (e.g. cadence fade, ground-contact spike, hilly route). Address athlete feedback (RPE/comment) in the relevant bullet.

@@ -136,7 +136,8 @@ describe("app shell & conversation lifecycle", () => {
       expect.any(Object),
     );
 
-    // Clicking another quick-action button clears the feed and starts a fresh session (sessionId: null -> sess-2)
+    // Clicking another quick-action button clears the feed, clears any typed draft, and starts a fresh session (sessionId: null -> sess-2)
+    fireEvent.change(textarea, { target: { value: "unsent draft" } });
     fireEvent.click(screen.getByText("Analyze Today's Run"));
     await waitFor(() =>
       expect(screen.getByText("Reply sess-2")).toBeInTheDocument(),
@@ -150,11 +151,24 @@ describe("app shell & conversation lifecycle", () => {
       expect.any(Object),
     );
     expect(screen.queryByText("What about Tuesday?")).not.toBeInTheDocument();
+    expect(textarea).toHaveValue("");
 
-    // Clicking "New conversation" creates a new session immediately via /api/session/new (fresh-1) and clears the feed
+    // Clicking "New conversation" creates a new session immediately via /api/session/new (fresh-1),
+    // clears the feed and the typed draft, and the button stays visible
+    fireEvent.change(textarea, { target: { value: "another unsent draft" } });
     fireEvent.click(screen.getByText("New conversation"));
     await waitFor(() => expect(createNewSessionSpy).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("Reply sess-2")).not.toBeInTheDocument();
+    expect(textarea).toHaveValue("");
+    await waitFor(() =>
+      expect(screen.getByText("New conversation").closest("button")).toBeEnabled(),
+    );
+
+    // Clicking it again on the already-fresh session only clears the draft — no duplicate session
+    fireEvent.change(textarea, { target: { value: "draft on fresh session" } });
+    fireEvent.click(screen.getByText("New conversation"));
+    expect(textarea).toHaveValue("");
+    expect(createNewSessionSpy).toHaveBeenCalledTimes(1);
 
     // Clicking a quick-action button on the already-empty feed uses fresh-1 without creating a duplicate session
     fireEvent.click(screen.getByText("Trend Analysis"));

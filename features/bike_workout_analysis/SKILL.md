@@ -41,8 +41,9 @@ You are now equipped with the **Bike Workout Analysis** skill. Use this skill wh
      - Synthesize the ride execution against morning recovery metrics from `analyze_workout`:
        - Did low morning HRV or elevated Resting Heart Rate (RHR) correspond with exaggerated HR drift (`Pw:Hr`) or a high RPE / low feeling score in the **Athlete feedback** line?
        - Was sleep duration adequate to support the glycogen demand and metabolic workload of the session (use Work kJ if reported)?
+   - **Goal Alignment** (see GOAL REASONING in your instructions): the athlete is a runner. Say what this ride means for the current running goal (if set) and, with a north star, for the north star: aerobic load gained without impact, and the fatigue it may carry into the next key run or long run.
    - **Lap & Interval Breakdown**:
-     - If a **Planned structure & execution** section is present, judge each step against its planned watts (the Check column) and use the **Repeated blocks** summary and the per-block `Pw:Hr` (`[key block]`) for interval execution.
+     - If a **Planned structure & execution** section is present, the `Δ vs target` column gives each step's signed distance to its planned watts (0 = inside the range). Judge interval execution against the session's intent yourself, using the **Repeated blocks** facts and the per-block `Pw:Hr` (`[highest target intensity]` identifies the hardest block).
      - Otherwise analyze structured work intervals versus recovery laps for average/max power stability, heart rate response, recovery lap HR drop, and pedal cadence consistency.
 
 3. **Deliver Bike Workout Summary**:

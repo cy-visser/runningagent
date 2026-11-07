@@ -6,7 +6,7 @@ from typing import Any, Optional
 from google.adk.tools import FunctionTool, ToolContext
 
 from ...integrations.trainingpeaks import tp_calls
-from ...shared.athlete_settings import extract_thresholds, sport_thresholds
+from ...shared.athlete_settings import extract_hr_zones, extract_thresholds, sport_thresholds
 from ...shared.dates import get_today_date, iso_date, parse_date
 from ...shared.health_metrics import (
     extract_health_metrics,
@@ -14,7 +14,7 @@ from ...shared.health_metrics import (
     format_recovery_metrics,
 )
 from ...shared.parallel_fetch import gather_labeled, result_or_none
-from ...shared.runner_weather import fetch_weather_text
+from ...shared.runner_weather import fetch_weather_text, weather_at
 from ...shared.tp_payloads import coerce_mcp_payload, parse_mcp_response
 from ...shared.training_log.record_writer import record_workout
 from ...shared.training_log.telemetry_file import load_analysis_file
@@ -33,6 +33,7 @@ from .helpers.session_selection import (
     select_primary_workout,
 )
 from .helpers.sub_goal_race_result import goal_plan_context
+from .helpers.web_report import WORKOUT_REPORT_STATE_KEY, workout_report_data
 from .helpers.workout_summary_text import format_workout_analysis
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ async def analyze_workout(
             meta = {}
 
         # The workout's own date drives the recovery window and the weather lookup.
+        local_start = start  # the workout list's local start time (UTC startTimestamp replaces it below)
         start_is_utc = bool(data.get("startTimestamp"))
         start = data.get("startTimestamp") or start or meta.get("date") or target_iso
         workout_date = parse_date(meta.get("date") or start) or target_date
@@ -143,7 +145,14 @@ async def analyze_workout(
             extras["weather"] = fetch_weather_text(
                 profile, [str(start)], position=start_pos, utc=start_is_utc,
             )
+            # Structured conditions for the web banner and the training-log record.
+            extras["start conditions"] = asyncio.to_thread(
+                weather_at, profile, str(start), position=start_pos, utc=start_is_utc,
+            )
         extra = await gather_labeled(extras)
+        dated_metrics = (
+            extract_health_metrics_dated(extra["recovery metrics"]) if extra.get("recovery metrics") else None
+        )
 
         # Planned vs executed: align laps to the structured steps.
         laps = data.get("lapData") if isinstance(data.get("lapData"), list) else []
@@ -182,15 +191,27 @@ async def analyze_workout(
         )
         if goal_context:
             sections.append(goal_context)
+        try:  # web banner only: never let it break the analysis
+            tool_context.state[WORKOUT_REPORT_STATE_KEY] = workout_report_data(
+                data, meta,
+                profile=profile, sport=sport, title=title, workout_date=workout_date,
+                local_start=local_start, series=series, alignment=alignment,
+                hr_zones=extract_hr_zones(extra.get("athlete settings"), sport),
+                weather=extra.get("start conditions"),
+                dated_metrics=dated_metrics if include_recovery else None,
+                start_position=start_pos, structured=is_structured, other_sessions=other_sessions,
+            )
+        except Exception as e:
+            logger.warning("Workout banner payload failed for %s: %s", workout_id, e)
         await record_workout(
             profile, meta, data, series,
             thresholds=extract_thresholds(extra.get("athlete settings")),
             daily_pmc=(coerce_mcp_payload(extra["fitness PMC"]).get("daily_data") if extra.get("fitness PMC") else None),
-            dated_metrics=(extract_health_metrics_dated(extra["recovery metrics"])
-                           if extra.get("recovery metrics") else None),
+            dated_metrics=dated_metrics,
             start=str(start),
             start_position=start_pos,
             start_is_utc=start_is_utc,
+            weather=extra.get("start conditions"),
         )
         return "\n\n".join(sections)
     except Exception as e:

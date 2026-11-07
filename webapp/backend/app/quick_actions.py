@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 QUICK_ACTION_STATE_KEY = "temp:quick_action"
 # Message part carrying the action (Agent Runtime's /api/run_sse drops state_delta): prefix + JSON.
 QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
-QUICK_ACTION_SKILLS = ("check-in-report", "trend-analysis", "schedule-audit", "workout-analysis")
+QUICK_ACTION_SKILLS = ("check-in-report", "trend-analysis", "schedule-audit", "workout-analysis", "workout-creator")
 
 IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 
@@ -49,7 +49,14 @@ class WorkoutAction(_Action):
     sport: Literal["run", "bike"] = "run"
 
 
+class ApplyStagedAction(_Action):
+    """'Update TrainingPeaks' button: applies the staged workout changes in code (no LLM call)."""
+
+    skill: Literal["workout-creator"]
+    staged_id: str = Field(..., pattern=r"^[0-9a-f-]{36}$")
+
+
 QuickAction = Annotated[
-    Union[CheckinAction, TrendAction, AuditAction, WorkoutAction],
+    Union[CheckinAction, TrendAction, AuditAction, WorkoutAction, ApplyStagedAction],
     Field(discriminator="skill"),
 ]

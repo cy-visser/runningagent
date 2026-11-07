@@ -29,7 +29,14 @@ describe("trend analysis feature", () => {
       tone: "emerald",
       badgeText: "On track",
       restText: "36s buffer",
+      icon: "check",
     });
+    expect(extractLeadingStatus("⚠️ Watch: Achilles")).toMatchObject({
+      tone: "amber",
+      badgeText: "Watch",
+      icon: "alert",
+    });
+    expect(extractLeadingStatus("❌ Missed")).toMatchObject({ tone: "rose", icon: "x" });
 
     render(
       <TrendReport data={DEMO_TREND_DATA} markdown={DEMO_TREND_MARKDOWN} />,

@@ -62,8 +62,7 @@ def format_patterns(patterns: list[dict]) -> str:
     for p in patterns:
         parts = []
         for label, o in ((p["a"], p["a_out"]), (p["b"], p["b_out"])):
-            tag = " INSUFFICIENT" if o["insufficient"] else ""
-            parts.append(f"{label}: n={o['n']}{tag}, EF {_f(o['ef_change_pct'], '{:+.1f}', '%')}, "
+            parts.append(f"{label}: n={o['n']}, EF {_f(o['ef_change_pct'], '{:+.1f}', '%')}, "
                          f"HRV {_f(o['next_hrv_pct'], '{:+.0f}', '%')}, RPE {_f(o['rpe'], '{:.1f}')}")
         lines.append("- " + " | ".join(parts))
     return "\n".join(lines)

@@ -38,12 +38,15 @@ def extract_thresholds(settings_raw: Any) -> dict[str, Optional[float]]:
     }
 
 
-def extract_hr_zones(settings_raw: Any) -> list[dict]:
-    """Run HR zones [{"label", "min", "max"}] from tp_get_athlete_settings (run group, else default)."""
+def extract_hr_zones(settings_raw: Any, sport: Optional[str] = None) -> list[dict]:
+    """HR zones [{"label", "min", "max"}] from tp_get_athlete_settings (sport group, else default).
+
+    Without a sport the run group is used, as before.
+    """
     payload = coerce_mcp_payload(settings_raw) if settings_raw else {}
     settings = payload.get("settings", payload) if isinstance(payload, dict) else {}
     groups = {g.get("workoutTypeId"): g for g in settings.get("heartRateZones") or [] if isinstance(g, dict)}
-    for type_id in (3, 0):
+    for type_id in _TYPE_IDS[sport_family(sport)]:
         zones = (groups.get(type_id) or {}).get("zones")
         if isinstance(zones, list) and zones:
             return [{"label": z.get("label"), "min": as_float(z.get("minimum")), "max": as_float(z.get("maximum"))}

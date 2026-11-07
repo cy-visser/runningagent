@@ -3,15 +3,30 @@ import { Activity, AlertCircle } from "lucide-react";
 import type { ChatMessage } from "../shared/types";
 import { AuditReport } from "../features/schedule_audit/AuditReport";
 import { CheckinReport } from "../features/check_in_report/CheckinReport";
+import {
+  StagedChangesCard,
+  type StagedStatus,
+} from "../features/workout_creator/StagedChangesCard";
 import { RichMarkdown } from "../shared/RichMarkdown";
 import { ToolProgress } from "./ToolProgress";
 import { TrendReport } from "../features/trend_analysis/TrendReport";
+import { WorkoutReport } from "../features/workout_analysis/WorkoutReport";
 
 interface ChatFeedProps {
   messages: ChatMessage[];
+  streaming?: boolean;
+  appliedStagedIds?: ReadonlySet<string>;
+  applyingStagedId?: string | null;
+  onApplyStaged?: (stagedId: string) => void;
 }
 
-export function ChatFeed({ messages }: ChatFeedProps) {
+export function ChatFeed({
+  messages,
+  streaming = false,
+  appliedStagedIds,
+  applyingStagedId = null,
+  onApplyStaged,
+}: ChatFeedProps) {
   const latestTurnRef = useRef<HTMLDivElement | null>(null);
   const mountedCountRef = useRef<number | null>(null);
 
@@ -32,6 +47,15 @@ export function ChatFeed({ messages }: ChatFeedProps) {
   if (messages.length === 0) {
     return null;
   }
+
+  // Only the most recent staged set can be applied; older cards show "Replaced".
+  const latestStagedId = [...messages].reverse().find((m) => m.staged)?.staged?.staged_id;
+  const stagedStatus = (stagedId: string): StagedStatus => {
+    if (appliedStagedIds?.has(stagedId)) return "applied";
+    if (stagedId !== latestStagedId) return "replaced";
+    if (streaming && applyingStagedId === stagedId) return "applying";
+    return "pending";
+  };
 
   return (
     <section
@@ -59,6 +83,7 @@ export function ChatFeed({ messages }: ChatFeedProps) {
           msg.report?.kind === "checkin" ? msg.report.data : null;
         const trendData = msg.report?.kind === "trend" ? msg.report.data : null;
         const auditData = msg.report?.kind === "audit" ? msg.report.data : null;
+        const workoutData = msg.report?.kind === "workout" ? msg.report.data : null;
 
         return (
           <div
@@ -95,6 +120,8 @@ export function ChatFeed({ messages }: ChatFeedProps) {
               <TrendReport data={trendData} markdown={msg.text} />
             ) : auditData ? (
               <AuditReport data={auditData} markdown={msg.text} />
+            ) : workoutData ? (
+              <WorkoutReport data={workoutData} markdown={msg.text} />
             ) : msg.text ? (
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-card">
                 <RichMarkdown content={msg.text} />
@@ -106,6 +133,15 @@ export function ChatFeed({ messages }: ChatFeedProps) {
                 <div className="h-2.5 w-3/4 rounded-full bg-slate-200/70" />
               </div>
             ) : null}
+
+            {msg.staged && onApplyStaged && (
+              <StagedChangesCard
+                staged={msg.staged}
+                status={stagedStatus(msg.staged.staged_id)}
+                busy={streaming}
+                onApply={onApplyStaged}
+              />
+            )}
           </div>
         );
       })}

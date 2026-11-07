@@ -27,6 +27,7 @@ export function App() {
   const [loadingBoot, setLoadingBoot] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
+  const [draft, setDraft] = useState("");
   const [sessionExpiredBanner, setSessionExpiredBanner] = useState(false);
   const lastActivityRef = useRef(0);
 
@@ -35,6 +36,8 @@ export function App() {
     "view",
   );
   const [tpDialogOpen, setTpDialogOpen] = useState(false);
+  const [appliedStagedIds, setAppliedStagedIds] = useState<ReadonlySet<string>>(new Set());
+  const [applyingStagedId, setApplyingStagedId] = useState<string | null>(null);
 
   useEffect(() => {
     onSessionExpired(() => {
@@ -57,7 +60,7 @@ export function App() {
       lastActivityRef.current = 0;
       if (import.meta.env.VITE_DEMO_MODE === "true") {
         const demoView = new URLSearchParams(window.location.search).get("view");
-        if (demoView === "checkin" || demoView === "trend" || demoView === "audit") {
+        if (demoView === "checkin" || demoView === "trend" || demoView === "audit" || demoView === "workout") {
           const mod = await import("../demo/mockApi");
           const demoSess = await mod.demoFetchSession();
           setSessionId(demoSess.session_id);
@@ -84,6 +87,9 @@ export function App() {
 
   const handleNewSession = async () => {
     if (streaming) return;
+    setDraft("");
+    // Already on a fresh, empty session — nothing else to reset.
+    if (messages.length === 0 && sessionId) return;
     setMessages([]);
     setSessionId(null);
     lastActivityRef.current = 0;
@@ -107,7 +113,9 @@ export function App() {
     const idle =
       lastActivityRef.current > 0 &&
       Date.now() - lastActivityRef.current > SESSION_IDLE_MS;
-    const startFresh = (newConversation || idle) && messages.length > 0;
+    // Applying staged changes must stay in the session that holds them.
+    const isApply = action?.skill === "workout-creator";
+    const startFresh = !isApply && (newConversation || idle) && messages.length > 0;
     const targetSessionId = startFresh ? null : sessionId;
     if (startFresh) {
       setSessionId(null);
@@ -186,6 +194,14 @@ export function App() {
               ),
             );
           },
+          onStaged: (staged) => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantMsgId ? { ...m, staged } : m)),
+            );
+          },
+          onApplied: (applied) => {
+            setAppliedStagedIds((prev) => new Set(prev).add(applied.staged_id));
+          },
           onMessage: ({ text, kind }) => {
             setMessages((prev) =>
               prev.map((m) =>
@@ -238,7 +254,17 @@ export function App() {
       );
     } finally {
       setStreaming(false);
+      if (isApply) setApplyingStagedId(null);
     }
+  };
+
+  const handleApplyStaged = (stagedId: string) => {
+    if (streaming) return;
+    setApplyingStagedId(stagedId);
+    void handleSendPrompt("Update TrainingPeaks", false, {
+      skill: "workout-creator",
+      staged_id: stagedId,
+    });
   };
 
   const handleTpConnected = async (res: ConnectTpResponse) => {
@@ -307,7 +333,7 @@ export function App() {
 
       <TopBar
         me={me}
-        hasMessages={messages.length > 0}
+        newSessionDisabled={streaming}
         onHome={() => window.scrollTo({ top: 0, behavior: "smooth" })}
         onNewSession={handleNewSession}
         onViewProfile={() => {
@@ -326,6 +352,11 @@ export function App() {
         messages={messages}
         streaming={streaming}
         onSendPrompt={handleSendPrompt}
+        draft={draft}
+        onDraftChange={setDraft}
+        appliedStagedIds={appliedStagedIds}
+        applyingStagedId={applyingStagedId}
+        onApplyStaged={handleApplyStaged}
         onViewProfile={() => {
           setProfileDrawerMode("view");
           setProfileDrawerOpen(true);

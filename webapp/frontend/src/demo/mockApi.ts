@@ -17,6 +17,8 @@ import {
   DEMO_PROFILE_RESPONSE,
   DEMO_TREND_DATA,
   DEMO_TREND_MARKDOWN,
+  DEMO_WORKOUT_DATA,
+  DEMO_WORKOUT_MARKDOWN,
 } from "./fixtures";
 
 function currentDemoPreset(): string {
@@ -178,6 +180,22 @@ export async function demoFetchSession(): Promise<SessionResponse> {
         report: { kind: "audit", data: DEMO_AUDIT_DATA },
       },
     );
+  } else if (preset === "workout") {
+    messages.push(
+      {
+        id: "u-4",
+        role: "user",
+        text: "Analyze today's run",
+        kind: "chat",
+      },
+      {
+        id: "a-4",
+        role: "assistant",
+        text: DEMO_WORKOUT_MARKDOWN,
+        kind: "workout",
+        report: { kind: "workout", data: DEMO_WORKOUT_DATA },
+      },
+    );
   }
   return {
     session_id: "demo-session-1",
@@ -247,6 +265,20 @@ export async function demoStreamChat(
       kind: "audit",
       text: DEMO_AUDIT_MARKDOWN,
     });
+  } else if (lower.includes("analy") || lower.includes("workout") || lower.includes("run today")) {
+    handlers.onTool?.({
+      name: "analyze_workout",
+      label: "Analysing workout telemetry & recovery",
+      state: "start",
+    });
+    await new Promise((r) => setTimeout(r, 240));
+    handlers.onTool?.({
+      name: "analyze_workout",
+      label: "Analysing workout telemetry & recovery",
+      state: "done",
+    });
+    handlers.onReport?.({ kind: "workout", data: DEMO_WORKOUT_DATA });
+    handlers.onMessage?.({ kind: "workout", text: DEMO_WORKOUT_MARKDOWN });
   } else {
     handlers.onMessage?.({
       kind: "chat",

@@ -1,30 +1,224 @@
-import React from "react";
+import React, { createContext, useContext } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  AlertTriangle,
+  CheckCircle2,
+  CircleDashed,
+  Flag,
+  Info,
+  Lightbulb,
+  Minus,
+  Star,
+  TrendingDown,
+  TrendingUp,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  DEFAULT_TONE_ICON,
   extractLeadingStatus,
+  matchLeadingStatusEmoji,
   parseAsciiProgressBar,
   splitReportPlaceholders,
+  type StatusEmojiInfo,
+  type StatusIconKey,
   type StatusPillTone,
 } from "./format";
 
+/** "recommendation" swaps list bullets for indigo icon squares (Flag / Star / Lightbulb). */
+export type BulletStyle = "default" | "recommendation";
+
 interface RichMarkdownProps {
   content: string;
+  bulletStyle?: BulletStyle;
 }
 
-const PILL_STYLES: Record<StatusPillTone, string> = {
-  emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  amber: "bg-amber-50 text-amber-800 border-amber-200",
-  rose: "bg-rose-50 text-rose-700 border-rose-200",
-  slate: "bg-slate-100 text-slate-700 border-slate-200",
+/* ---------- Status badge (style B: outline chip) ---------- */
+
+const STATUS_ICONS: Record<StatusIconKey, LucideIcon> = {
+  check: CheckCircle2,
+  alert: AlertTriangle,
+  x: XCircle,
+  info: Info,
+  up: TrendingUp,
+  down: TrendingDown,
+  flat: Minus,
+  dashed: CircleDashed,
 };
 
-const PILL_DOT: Record<StatusPillTone, string> = {
-  emerald: "bg-emerald-500",
-  amber: "bg-amber-500",
-  rose: "bg-rose-500",
-  slate: "bg-slate-400",
+const BADGE_BORDER: Record<StatusPillTone, string> = {
+  emerald: "border-emerald-300",
+  amber: "border-amber-300",
+  rose: "border-rose-300",
+  slate: "border-slate-300",
 };
+
+const BADGE_ICON: Record<StatusPillTone, string> = {
+  emerald: "text-emerald-600",
+  amber: "text-amber-600",
+  rose: "text-rose-600",
+  slate: "text-slate-500",
+};
+
+/** Solid fill for the small status chip so it stands out on white cards. */
+const CHIP_FILL: Record<StatusPillTone, string> = {
+  emerald: "bg-emerald-600 border-emerald-700",
+  amber: "bg-amber-500 border-amber-600",
+  rose: "bg-rose-600 border-rose-700",
+  slate: "bg-slate-500 border-slate-600",
+};
+
+const BADGE_SIZE = {
+  sm: { box: "gap-1 py-px pl-1.5 pr-2 text-[0.6875rem]", icon: "h-3 w-3" },
+  md: { box: "gap-1.5 py-0.5 pl-[7px] pr-[9px] text-sm", icon: "h-3.5 w-3.5" },
+  lg: { box: "gap-2 py-1.5 pl-[11px] pr-3.5 text-[0.9375rem]", icon: "h-[17px] w-[17px]" },
+} as const;
+
+const CHIP_LABEL: Partial<Record<StatusIconKey, string>> = {
+  check: "OK",
+  alert: "Warning",
+  x: "Problem",
+  info: "Info",
+};
+
+/** Direction of a number: the arrow on a badge shows where the value moved. */
+export type BadgeDirection = "up" | "down" | "flat";
+
+/** Maps a payload arrow (↑ ↓ →) to a badge direction; undefined when unknown. */
+export function directionFromArrow(arrow: string | null | undefined): BadgeDirection | undefined {
+  if (!arrow) return undefined;
+  if (arrow.includes("↑")) return "up";
+  if (arrow.includes("↓")) return "down";
+  if (arrow.includes("→")) return "flat";
+  return undefined;
+}
+
+function resolveIcon(
+  tone: StatusPillTone,
+  icon?: LucideIcon | StatusIconKey,
+  direction?: BadgeDirection,
+): LucideIcon {
+  if (typeof icon === "string") return STATUS_ICONS[icon];
+  if (icon) return icon;
+  if (direction) return STATUS_ICONS[direction];
+  return STATUS_ICONS[DEFAULT_TONE_ICON[tone]];
+}
+
+export interface StatusBadgeProps {
+  tone: StatusPillTone;
+  label: string;
+  /** Lucide icon or icon key; defaults to the tone's icon (check / alert / x / info). */
+  icon?: LucideIcon | StatusIconKey;
+  /**
+   * Direction-aware badge: the arrow shows the number's direction, the tone shows good/bad
+   * (e.g. falling RHR that is good = direction "down" + tone "emerald"). Ignored when `icon` is set.
+   */
+  direction?: BadgeDirection;
+  size?: keyof typeof BADGE_SIZE;
+  className?: string;
+}
+
+/** Outline chip: white fill, 1px coloured border, coloured icon, slate text. */
+export function StatusBadge({
+  tone,
+  label,
+  icon,
+  direction,
+  size = "md",
+  className = "",
+}: StatusBadgeProps) {
+  const Icon = resolveIcon(tone, icon, direction);
+  const s = BADGE_SIZE[size];
+  return (
+    <span
+      data-testid="status-badge"
+      data-tone={tone}
+      className={`inline-flex items-center rounded-md border bg-white font-semibold text-slate-700 whitespace-nowrap ${s.box} ${BADGE_BORDER[tone]} ${className}`}
+    >
+      <Icon aria-hidden="true" className={`flex-none ${s.icon} ${BADGE_ICON[tone]}`} />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+/** Backwards-compatible alias: same props as before, now rendered as a StatusBadge. */
+export function StatusPill(props: StatusBadgeProps) {
+  return <StatusBadge {...props} />;
+}
+
+/** Small square icon chip that replaces a leading ✅ ⚠️ ❌ 🟢 🟡 🔴 ⚪ in coach text. */
+export function StatusChip({ tone, icon }: { tone: StatusPillTone; icon: StatusIconKey }) {
+  const Icon = STATUS_ICONS[icon];
+  return (
+    <span
+      data-testid="status-chip"
+      data-tone={tone}
+      role="img"
+      aria-label={CHIP_LABEL[icon] ?? icon}
+      className={`mr-1.5 inline-flex h-5 w-5 flex-none items-center justify-center rounded-md border shadow-xs align-[-0.3em] ${CHIP_FILL[tone]}`}
+    >
+      <Icon aria-hidden="true" strokeWidth={2.5} className="h-[13px] w-[13px] text-white" />
+    </span>
+  );
+}
+
+/* ---------- Recommendation icons ---------- */
+
+export type RecommendationKind = "subgoal" | "northstar" | "tip";
+
+const RECOMMENDATION_ICONS: Record<RecommendationKind, LucideIcon> = {
+  subgoal: Flag,
+  northstar: Star,
+  tip: Lightbulb,
+};
+
+const RECOMMENDATION_LABEL: Record<RecommendationKind, string> = {
+  subgoal: "Sub goal",
+  northstar: "North star",
+  tip: "Recommendation",
+};
+
+/** Solid fill per kind; deliberately avoids status tones (emerald/amber/rose/slate). */
+const RECOMMENDATION_FILL: Record<RecommendationKind, string> = {
+  subgoal: "bg-indigo-600 border-indigo-700",
+  northstar: "bg-indigo-600 border-indigo-700",
+  tip: "bg-indigo-600 border-indigo-700",
+};
+
+/** Classifies a recommendation by its leading label ("Sub goal" / "North star"); null otherwise. */
+export function recommendationKindFromText(text: string): RecommendationKind | null {
+  const t = text.replace(/^[\s*_]+/, "");
+  if (/^sub[\s-]?goal/i.test(t)) return "subgoal";
+  if (/^north[\s-]?star/i.test(t)) return "northstar";
+  return null;
+}
+
+/** Indigo square with a white icon that replaces a recommendation bullet. */
+export function RecommendationIcon({ kind }: { kind: RecommendationKind }) {
+  const Icon = RECOMMENDATION_ICONS[kind];
+  return (
+    <span
+      data-testid="recommendation-icon"
+      data-icon={kind}
+      role="img"
+      aria-label={RECOMMENDATION_LABEL[kind]}
+      className={`mt-px inline-flex h-6 w-6 flex-none items-center justify-center rounded-lg border text-white shadow-xs ${RECOMMENDATION_FILL[kind]}`}
+    >
+      <Icon aria-hidden="true" strokeWidth={2.25} className="h-3.5 w-3.5" />
+    </span>
+  );
+}
+
+interface BulletContextValue {
+  style: BulletStyle;
+  /** Kind inherited from a parent "Sub goal" / "North star" item. */
+  inherited: RecommendationKind | null;
+}
+
+const BulletContext = createContext<BulletContextValue>({ style: "default", inherited: null });
+
+/* ---------- Markdown helpers ---------- */
 
 function flattenChildrenText(node: React.ReactNode): string {
   if (typeof node === "string" || typeof node === "number") {
@@ -40,21 +234,208 @@ function flattenChildrenText(node: React.ReactNode): string {
   return "";
 }
 
-export function StatusPill({
-  tone,
-  label,
-}: {
-  tone: StatusPillTone;
-  label: string;
-}) {
+type ElementWithChildren = React.ReactElement<{ children?: React.ReactNode }>;
+
+interface StrippedStatus {
+  info: StatusEmojiInfo;
+  rest: React.ReactNode[];
+}
+
+function MdStrong({ children }: { children?: React.ReactNode }) {
+  return <strong className="font-semibold text-slate-900">{children}</strong>;
+}
+
+function MdEm({ children }: { children?: React.ReactNode }) {
+  return <em>{children}</em>;
+}
+
+/** Inline elements we may descend into to find a leading emoji (e.g. `**🟢 Title:**`). */
+const INLINE_TYPES: unknown[] = [MdStrong, MdEm, "strong", "em", "b", "i", "span"];
+
+/**
+ * Removes a leading status emoji from React children, keeping all other children (and nested
+ * inline elements such as <strong>) intact. Returns null when the content does not start with one.
+ */
+function stripLeadingStatusEmoji(children: React.ReactNode): StrippedStatus | null {
+  const arr = React.Children.toArray(children);
+  let i = 0;
+  while (i < arr.length && typeof arr[i] === "string" && !(arr[i] as string).trim()) i++;
+  if (i >= arr.length) return null;
+  const first = arr[i];
+  if (typeof first === "string" || typeof first === "number") {
+    const m = matchLeadingStatusEmoji(String(first));
+    if (!m) return null;
+    const rest = [m.rest, ...arr.slice(i + 1)].filter((c) => c !== "");
+    return { info: m, rest };
+  }
+  if (React.isValidElement(first) && INLINE_TYPES.includes(first.type)) {
+    const el = first as ElementWithChildren;
+    const inner = stripLeadingStatusEmoji(el.props.children);
+    if (!inner) return null;
+    const cloned = React.cloneElement(el, undefined, ...inner.rest);
+    return { info: inner.info, rest: [cloned, ...arr.slice(i + 1)] };
+  }
+  return null;
+}
+
+const MAX_HERO_LABEL = 28;
+const HERO_LEAD_RE = /^([A-Za-z][^.:!?—–\n]{0,26}?)\s*(?:[.:!]|\s[—–])(?:\s+|$)/;
+
+function wordCount(s: string): number {
+  return s.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Splits a short verdict label ("On Track", "**At Risk**") off the start of a paragraph.
+ * Returns null when the paragraph does not open with a short verdict phrase.
+ */
+function splitHeroVerdict(rest: React.ReactNode[]): { label: string; rest: React.ReactNode[] } | null {
+  const [first, ...others] = rest;
+  if (typeof first === "string") {
+    const trimmed = first.replace(/^\s+/, "");
+    const m = HERO_LEAD_RE.exec(trimmed);
+    if (!m || wordCount(m[1]) > 4) return null;
+    const remainder = trimmed.slice(m[0].length);
+    return { label: m[1].trim(), rest: [remainder, ...others].filter((c) => c !== "") };
+  }
+  if (React.isValidElement(first) && INLINE_TYPES.includes(first.type)) {
+    const label = flattenChildrenText(first).trim();
+    const next = others[0];
+    if (!label || label.length > MAX_HERO_LABEL || wordCount(label) > 4) return null;
+    if (typeof next !== "string" || !/^\s*[.:!—–]/.test(next)) return null;
+    const remainder = next.replace(/^\s*[.:!—–]\s*/, "");
+    return { label: label.replace(/[.:!]$/, ""), rest: [remainder, ...others.slice(1)].filter((c) => c !== "") };
+  }
+  return null;
+}
+
+function withLeadingChip(children: React.ReactNode): React.ReactNode {
+  const stripped = stripLeadingStatusEmoji(children);
+  if (!stripped) return children;
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-sm font-semibold whitespace-nowrap ${PILL_STYLES[tone]}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${PILL_DOT[tone]}`} />
-      <span>{label}</span>
-    </span>
+    <>
+      <StatusChip tone={stripped.info.tone} icon={stripped.info.icon} />
+      {stripped.rest}
+    </>
   );
+}
+
+const P_CLASS = "leading-relaxed text-slate-700 my-2 first:mt-0 last:mb-0";
+
+function MdParagraph({ children }: { children?: React.ReactNode }) {
+  const stripped = stripLeadingStatusEmoji(children);
+  if (!stripped) {
+    return <p className={P_CLASS}>{children}</p>;
+  }
+  const { info } = stripped;
+  if (info.verdict) {
+    const restText = flattenChildrenText(stripped.rest).trim();
+    if (restText && restText.length <= MAX_HERO_LABEL && wordCount(restText) <= 4) {
+      // Paragraph that is only a verdict, e.g. "🟢 On Track".
+      return (
+        <div className="my-2 first:mt-0 last:mb-0">
+          <StatusBadge tone={info.tone} icon={info.icon} label={restText} size="lg" />
+        </div>
+      );
+    }
+    const hero = splitHeroVerdict(stripped.rest);
+    if (hero) {
+      // "🟢 On Track. CTL has climbed …" -> hero badge + the rest of the paragraph.
+      return (
+        <div className="my-2 space-y-2 first:mt-0 last:mb-0">
+          <StatusBadge tone={info.tone} icon={info.icon} label={hero.label} size="lg" />
+          {hero.rest.length > 0 && <p className="leading-relaxed text-slate-700">{hero.rest}</p>}
+        </div>
+      );
+    }
+  }
+  return (
+    <p className={P_CLASS}>
+      <StatusChip tone={info.tone} icon={info.icon} />
+      {stripped.rest}
+    </p>
+  );
+}
+
+function MdListItem({ children }: { children?: React.ReactNode }) {
+  const bullet = useContext(BulletContext);
+  if (bullet.style === "recommendation") {
+    return <RecommendationListItem inherited={bullet.inherited}>{children}</RecommendationListItem>;
+  }
+  const arr = React.Children.toArray(children);
+  const firstEl = arr.find((c) => !(typeof c === "string" && !c.trim()));
+  // Loose list items wrap their text in a paragraph; MdParagraph handles those.
+  const stripped =
+    React.isValidElement(firstEl) && firstEl.type === MdParagraph
+      ? null
+      : stripLeadingStatusEmoji(children);
+  if (!stripped) {
+    return <li className="leading-relaxed">{children}</li>;
+  }
+  return (
+    <li className="leading-relaxed [ul>&]:list-none">
+      <StatusChip tone={stripped.info.tone} icon={stripped.info.icon} />
+      {stripped.rest}
+    </li>
+  );
+}
+
+/** Text of a list item without its nested lists, used to classify the item. */
+function ownItemText(children: React.ReactNode): string {
+  return React.Children.toArray(children)
+    .filter(
+      (c) => !(React.isValidElement(c) && (c.type === "ul" || c.type === "ol" || c.type === MdUl || c.type === MdOl)),
+    )
+    .map(flattenChildrenText)
+    .join("")
+    .trim();
+}
+
+function RecommendationListItem({
+  children,
+  inherited,
+}: {
+  children?: React.ReactNode;
+  inherited: RecommendationKind | null;
+}) {
+  // A leading status emoji keeps its status chip instead of a recommendation icon.
+  const stripped = stripLeadingStatusEmoji(children);
+  const kind = recommendationKindFromText(ownItemText(children)) ?? inherited ?? "tip";
+  return (
+    <li className="flex items-start gap-2.5 leading-relaxed">
+      {stripped ? (
+        <StatusChip tone={stripped.info.tone} icon={stripped.info.icon} />
+      ) : (
+        <RecommendationIcon kind={kind} />
+      )}
+      <div className="min-w-0 flex-1 [&>p]:my-0">
+        <BulletContext.Provider
+          value={{ style: "recommendation", inherited: kind === "tip" ? inherited : kind }}
+        >
+          {stripped ? stripped.rest : children}
+        </BulletContext.Provider>
+      </div>
+    </li>
+  );
+}
+
+function MdList({ children, ordered }: { children?: React.ReactNode; ordered?: boolean }) {
+  const bullet = useContext(BulletContext);
+  if (bullet.style === "recommendation") {
+    return <ul className="my-2 list-none space-y-2 pl-0 text-slate-700">{children}</ul>;
+  }
+  if (ordered) {
+    return <ol className="my-2 list-decimal space-y-1.5 pl-5 text-slate-700">{children}</ol>;
+  }
+  return <ul className="my-2 list-disc space-y-1.5 pl-5 text-slate-700">{children}</ul>;
+}
+
+function MdUl({ children }: { children?: React.ReactNode }) {
+  return <MdList>{children}</MdList>;
+}
+
+function MdOl({ children }: { children?: React.ReactNode }) {
+  return <MdList ordered>{children}</MdList>;
 }
 
 export function SunsetProgressBar({ percent }: { percent: number }) {
@@ -77,10 +458,11 @@ export function SunsetProgressBar({ percent }: { percent: number }) {
   );
 }
 
-export function RichMarkdown({ content }: RichMarkdownProps) {
+export function RichMarkdown({ content, bulletStyle = "default" }: RichMarkdownProps) {
   const segments = splitReportPlaceholders(content);
 
   return (
+    <BulletContext.Provider value={{ style: bulletStyle, inherited: null }}>
     <div className="space-y-3 text-base leading-relaxed text-slate-700">
       {segments.map((seg, idx) => {
         if (seg.type === "placeholder") {
@@ -103,42 +485,41 @@ export function RichMarkdown({ content }: RichMarkdownProps) {
             components={{
               h1: ({ children }) => (
                 <h1 className="font-display text-lg font-bold text-slate-900 mt-4 mb-2 first:mt-0">
-                  {children}
+                  {withLeadingChip(children)}
                 </h1>
               ),
               h2: ({ children }) => (
                 <h2 className="font-display text-lg font-bold text-slate-900 mt-4 mb-2 first:mt-0">
-                  {children}
+                  {withLeadingChip(children)}
                 </h2>
               ),
               h3: ({ children }) => (
                 <h3 className="font-display text-base font-bold text-slate-900 mt-4 mb-1.5 first:mt-0">
-                  {children}
+                  {withLeadingChip(children)}
                 </h3>
               ),
-              p: ({ children }) => (
-                <p className="leading-relaxed text-slate-700 my-2 first:mt-0 last:mb-0">
-                  {children}
-                </p>
+              h4: ({ children }) => (
+                <h4 className="font-display text-[0.9375rem] font-semibold text-slate-800 mt-3.5 mb-1 first:mt-0">
+                  {withLeadingChip(children)}
+                </h4>
               ),
-              ul: ({ children }) => (
-                <ul className="my-2 list-disc space-y-1.5 pl-5 text-slate-700">
-                  {children}
-                </ul>
+              h5: ({ children }) => (
+                <h5 className="font-display text-sm font-semibold text-slate-800 mt-3 mb-1 first:mt-0">
+                  {withLeadingChip(children)}
+                </h5>
               ),
-              ol: ({ children }) => (
-                <ol className="my-2 list-decimal space-y-1.5 pl-5 text-slate-700">
-                  {children}
-                </ol>
+              h6: ({ children }) => (
+                <h6 className="font-display text-sm font-semibold text-slate-600 mt-3 mb-1 first:mt-0">
+                  {withLeadingChip(children)}
+                </h6>
               ),
-              li: ({ children }) => (
-                <li className="leading-relaxed">{children}</li>
-              ),
-              strong: ({ children }) => (
-                <strong className="font-semibold text-slate-900">
-                  {children}
-                </strong>
-              ),
+              hr: () => <hr className="my-4 border-slate-200" />,
+              p: MdParagraph,
+              ul: MdUl,
+              ol: MdOl,
+              li: MdListItem,
+              strong: MdStrong,
+              em: MdEm,
               blockquote: ({ children }) => (
                 <blockquote className="my-3 rounded-r-xl border-l-3 border-orange-400 bg-orange-50/50 py-2 px-3.5 text-sm text-slate-700">
                   {children}
@@ -178,8 +559,9 @@ export function RichMarkdown({ content }: RichMarkdownProps) {
                   return (
                     <td className="px-3.5 py-2.5 align-middle text-slate-700 tabular-nums">
                       <span className="inline-flex flex-wrap items-center gap-1.5">
-                        <StatusPill
+                        <StatusBadge
                           tone={status.tone}
+                          icon={status.icon}
                           label={status.badgeText}
                         />
                         {status.restText && <span>{status.restText}</span>}
@@ -189,7 +571,7 @@ export function RichMarkdown({ content }: RichMarkdownProps) {
                 }
                 return (
                   <td className="px-3.5 py-2.5 align-middle text-slate-700 tabular-nums">
-                    {children}
+                    {withLeadingChip(children)}
                   </td>
                 );
               },
@@ -220,5 +602,6 @@ export function RichMarkdown({ content }: RichMarkdownProps) {
         );
       })}
     </div>
+    </BulletContext.Provider>
   );
 }

@@ -64,7 +64,7 @@ running_coach/
 │   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
 │   ├── schedule_audit/              # SKILL.md, fetch_schedule_audit_data_tool.py, helpers/
 │   ├── nutrition_planner/           # SKILL.md, fetch_nutrition_context_tool.py, helpers/
-│   ├── workout_creator/             # SKILL.md, create_workout_tool.py, create_note_tool.py, helpers/
+│   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, write_confirmation_callback.py, helpers/ (staged_changes, workout_builder: exact TP builder + totals, workout_upsert)
 │   └── weather_lookup/              # get_weather_tool.py
 ├── shared/                          # domain helpers used by 2+ features/coach
 │   ├── dates  units  sports  session_state  runner_identity  parallel_fetch  tp_payloads

@@ -3,11 +3,10 @@ from typing import Optional
 
 # Load ratio: weekly TSS / mean of the previous 4 weeks.
 RATIO_WEEKS = 4
-DELOAD_BELOW, OVERLOAD_ABOVE = 0.9, 1.1
 # Negative health markers (same thresholds as health_readiness).
 HRV_DROP_PCT, RHR_RISE_BPM, SLEEP_DROP_MIN = -7.0, 3.0, -45.0
 EF_DROP_PCT = -3.0
-# Proven capacity.
+# Proven capacity (web-report badges only; the LLM text shows the underlying facts).
 LEVEL_STEP_KM = 10
 MIN_STREAK_WEEKS = 3
 MIN_TOLERATED_SHARE = 0.75
@@ -42,13 +41,11 @@ def spearman(xs: list[float], ys: list[float]) -> Optional[float]:
 
 
 def add_load_ratio(rows: list[dict]) -> list[dict]:
-    """Adds `load_ratio` and `load_band` (deload / steady / overload); None for the first 4 weeks."""
+    """Adds `load_ratio` (weekly TSS / prior 4-week mean); None for the first 4 weeks."""
     for i, r in enumerate(rows):
         prior = [p["tss"] for p in rows[max(0, i - RATIO_WEEKS):i]]
         base = mean(prior) if len(prior) == RATIO_WEEKS else None
         r["load_ratio"] = round(r["tss"] / base, 2) if base else None
-        r["load_band"] = (None if r["load_ratio"] is None else "deload" if r["load_ratio"] < DELOAD_BELOW
-                          else "overload" if r["load_ratio"] > OVERLOAD_ABOVE else "steady")
     return rows
 
 
@@ -80,7 +77,7 @@ def _longest_streak(flags: list[bool]) -> int:
 
 
 def volume_levels(rows: list[dict]) -> list[dict]:
-    """Per 10-km level L: weeks >= L, longest consecutive streak >= L, tolerated share, medians."""
+    """Per 10-km level L: weeks >= L, longest consecutive streak >= L, niggle weeks, tolerated share, medians."""
     weeks = [r for r in rows if r["complete"]]
     if not weeks:
         return []
@@ -99,16 +96,17 @@ def volume_levels(rows: list[dict]) -> list[dict]:
             vals = [r[key] for r in at if r.get(key) is not None]
             return median(vals) if vals else None
 
-        levels.append({"level": level, "weeks": len(at), "streak": streak, "tolerated_share": round(tolerated, 2),
+        levels.append({"level": level, "weeks": len(at), "streak": streak,
+                       "niggle_weeks": sum(1 for r in at if r.get("niggle")), "tolerated_share": round(tolerated, 2),
                        "hrv_delta_pct": med("hrv_delta_pct"), "rhr_delta": med("rhr_delta"), "rpe": med("rpe"),
                        "proven": streak >= MIN_STREAK_WEEKS and tolerated >= MIN_TOLERATED_SHARE})
     return levels
 
 
 def capacity_outlook(rows: list[dict], levels: list[dict], targets=DEFAULT_TARGETS_KM) -> dict:
-    """Proven / reachable status per weekly-km target and the km gap from the current level.
+    """Per weekly-km target: weeks at or above it, longest streak and the km gap from the current level.
 
-    No build-time estimate: how fast this runner can safely close the gap is the coach's judgement.
+    `status` and `proven_km` feed the web badges only. No build-time estimate: how fast this runner can safely close the gap is the coach's judgement.
     """
     complete = [r for r in rows if r["complete"]]
     proven = max((lv["level"] for lv in levels if lv["proven"]), default=None)
@@ -125,7 +123,9 @@ def capacity_outlook(rows: list[dict], levels: list[dict], targets=DEFAULT_TARGE
             status = "untested"
         else:
             status = "run, not proven"
-        out.append({"target": t, "status": status, "gap_km": round(max(0.0, t - current), 1)})
+        out.append({"target": t, "status": status, "gap_km": round(max(0.0, t - current), 1),
+                    "weeks_at": sum(1 for r in complete if r["km"] >= t),
+                    "streak": _longest_streak([r["km"] >= t for r in complete])})
     return {"proven_km": proven, "max_km": max_km, "current_km": current, "targets": out}
 
 
@@ -142,24 +142,24 @@ def _f(value, fmt="{:.0f}", suffix=""):
 def format_levels_table(levels: list[dict]) -> str:
     if not levels:
         return ""
-    lines = ["**Weekly volume levels** (complete weeks; tolerated = no 2+ negative health markers, no niggle, "
-             "easy EF held, in that week and the next):", "",
-             "| Level | Weeks | Longest streak | Tolerated | HRV Δ | RHR Δ | RPE | Proven |",
-             "|---|---|---|---|---|---|---|---|"]
+    lines = ["**Weekly volume levels** (complete weeks at or above each level; HRV Δ / RHR Δ / RPE are medians "
+             "of those weeks vs the 28-day baseline; niggle weeks = weeks with a niggle in the athlete comments):", "",
+             "| Level | Weeks | Longest streak | Niggle weeks | HRV Δ | RHR Δ | RPE |",
+             "|---|---|---|---|---|---|---|"]
     for lv in levels:
-        lines.append(f"| >= {lv['level']} km | {lv['weeks']} | {lv['streak']} | {lv['tolerated_share'] * 100:.0f}% "
+        lines.append(f"| >= {lv['level']} km | {lv['weeks']} | {lv['streak']} | {lv['niggle_weeks']} "
                      f"| {_f(lv['hrv_delta_pct'], '{:+.0f}', '%')} | {_f(lv['rhr_delta'], '{:+.0f}')} "
-                     f"| {_f(lv['rpe'], '{:.1f}')} | {'yes' if lv['proven'] else 'no'} |")
+                     f"| {_f(lv['rpe'], '{:.1f}')} |")
     return "\n".join(lines)
 
 
 def format_outlook(outlook: dict, rho: Optional[float], n_pairs: int) -> str:
-    proven = f"{outlook['proven_km']} km/week" if outlook["proven_km"] else "none yet"
-    lines = [f"Load capacity: proven {proven}; highest week {outlook['max_km']:.0f} km; "
+    lines = [f"Load capacity: highest week {outlook['max_km']:.0f} km; "
              f"current (last 3 complete weeks) {outlook['current_km']:.0f} km/week."]
     for t in outlook["targets"]:
-        gap = f", +{t['gap_km']:.0f} km/week above current" if t["gap_km"] > 0 else ""
-        lines.append(f"- {t['target']} km/week: {t['status']}{gap}")
+        gap = f", +{t['gap_km']:.1f} km/week above current" if t["gap_km"] > 0 else ""
+        lines.append(f"- {t['target']} km/week: {t['weeks_at']} weeks at or above "
+                     f"(longest streak {t['streak']}){gap}")
     lines.append(f"Load ratio (weekly TSS / prior 4-week mean) vs next-week HRV: "
                  f"{'rho ' + str(rho) if rho is not None else 'insufficient'} (n={n_pairs})")
     return "\n".join(lines)

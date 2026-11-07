@@ -6,6 +6,8 @@ USER myuser
 ENV PATH="/home/myuser/.local/bin:$PATH"
 
 COPY --chown=myuser:myuser . /app/agents/running_coach/
+# ADK imports /app/agents/services.py before creating the session service: registers firestore://.
+COPY --chown=myuser:myuser agents_dir_services.py /app/agents/services.py
 
 # requirements.txt references ./agents/running_coach/tp_mcp-*.whl relative to /app
 RUN pip install --no-cache-dir -r /app/agents/running_coach/requirements.txt

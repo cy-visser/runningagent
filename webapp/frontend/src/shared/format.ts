@@ -111,41 +111,82 @@ export function parseAsciiProgressBar(
 
 export type StatusPillTone = "emerald" | "amber" | "rose" | "slate";
 
+/** Icon keys for status badges; RichMarkdown maps them to lucide icons. */
+export type StatusIconKey =
+  | "check"
+  | "alert"
+  | "x"
+  | "info"
+  | "up"
+  | "down"
+  | "flat"
+  | "dashed";
+
 export interface LeadingStatusBadge {
   tone: StatusPillTone;
   badgeText: string;
   restText: string;
+  /** Default icon for the emoji (check / alert / x / info). */
+  icon: StatusIconKey;
 }
 
-const LEADING_EMOJI_MAP: Record<string, StatusPillTone> = {
-  "🟢": "emerald",
-  "🟡": "amber",
-  "🔴": "rose",
-  "⚪": "slate",
+export interface StatusEmojiInfo {
+  tone: StatusPillTone;
+  icon: StatusIconKey;
+  /** True for the traffic-light circles (🟢 🟡 🔴 ⚪), which mark verdicts. */
+  verdict: boolean;
+}
+
+const LEADING_EMOJI_MAP: Record<string, StatusEmojiInfo> = {
+  "🟢": { tone: "emerald", icon: "check", verdict: true },
+  "🟡": { tone: "amber", icon: "alert", verdict: true },
+  "🔴": { tone: "rose", icon: "x", verdict: true },
+  "⚪": { tone: "slate", icon: "info", verdict: true },
+  "✅": { tone: "emerald", icon: "check", verdict: false },
+  "⚠": { tone: "amber", icon: "alert", verdict: false },
+  "❌": { tone: "rose", icon: "x", verdict: false },
 };
 
+/** Matches a leading status emoji (optionally followed by the U+FE0F variation selector). */
+export const LEADING_STATUS_EMOJI_RE = /^\s*(🟢|🟡|🔴|⚪|✅|⚠|❌)\uFE0F?\s*/u;
+
+/** Default icon for a tone (used when a caller gives no specific icon). */
+export const DEFAULT_TONE_ICON: Record<StatusPillTone, StatusIconKey> = {
+  emerald: "check",
+  amber: "alert",
+  rose: "x",
+  slate: "info",
+};
+
+/** Tone/icon for a leading status emoji, and the text after it; null when there is none. */
+export function matchLeadingStatusEmoji(
+  text: string,
+): (StatusEmojiInfo & { emoji: string; rest: string }) | null {
+  const m = LEADING_STATUS_EMOJI_RE.exec(text);
+  if (!m) return null;
+  return { ...LEADING_EMOJI_MAP[m[1]], emoji: m[1], rest: text.slice(m[0].length) };
+}
+
 export function extractLeadingStatus(text: string): LeadingStatusBadge | null {
-  const trimmed = text.trim();
-  for (const [emoji, tone] of Object.entries(LEADING_EMOJI_MAP)) {
-    if (trimmed.startsWith(emoji)) {
-      const after = trimmed.slice(emoji.length).trim();
-      if (!after) {
-        return { tone, badgeText: emoji, restText: "" };
-      }
-      const sepMatch =
-        /^(.{1,32}?)(?:\s+(?:—|–|-|\||·)\s+|:\s+|[—–]\s*)(.+)$/.exec(after);
-      if (sepMatch) {
-        return {
-          tone,
-          badgeText: sepMatch[1].trim(),
-          restText: sepMatch[2].trim(),
-        };
-      }
-      if (after.length <= 28) {
-        return { tone, badgeText: after, restText: "" };
-      }
-      return null;
-    }
+  const match = matchLeadingStatusEmoji(text.trim());
+  if (!match) return null;
+  const { tone, icon, emoji } = match;
+  const after = match.rest.trim();
+  if (!after) {
+    return { tone, badgeText: emoji, restText: "", icon };
+  }
+  const sepMatch =
+    /^(.{1,32}?)(?:\s+(?:—|–|-|\||·)\s+|:\s+|[—–]\s*)(.+)$/.exec(after);
+  if (sepMatch) {
+    return {
+      tone,
+      badgeText: sepMatch[1].trim(),
+      restText: sepMatch[2].trim(),
+      icon,
+    };
+  }
+  if (after.length <= 28) {
+    return { tone, badgeText: after, restText: "", icon };
   }
   return null;
 }

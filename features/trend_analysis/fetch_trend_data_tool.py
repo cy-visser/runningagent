@@ -131,9 +131,9 @@ async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
     )
 
     progress_table = format_progress_table(progress)
-    if progress_table and (pacing.get("lthr_check") or {}).get("status") == "unconfirmed":
-        progress_table += ("\n\n_Pace @ LT2 relies on a TrainingPeaks LTHR that the data has not confirmed "
-                           "(see the LTHR check)._")
+    if progress_table and pacing.get("lthr_check"):
+        progress_table += ("\n\n_Pace @ LT2 uses the TrainingPeaks LTHR; see the LTHR check line for the "
+                           "sustained-effort evidence._")
     tables = "\n\n".join(t for t in (
         progress_table, format_levels_table(levels), format_pacing_tables(pacing)
     ) if t)

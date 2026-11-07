@@ -24,6 +24,9 @@ from running_coach.features.schedule_audit.helpers.web_report import (
 from running_coach.features.trend_analysis.helpers.web_report import (
     TREND_REPORT_STATE_KEY,
 )
+from running_coach.features.workout_analysis.helpers.web_report import (
+    WORKOUT_REPORT_STATE_KEY,
+)
 from running_coach.shared.session_state import AUTH_EMAIL_STATE_KEY
 
 PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -122,7 +125,7 @@ def test_architecture_rules_and_cross_stack_contract():
     assert loaded_skill_names == {f.replace("_", "-") for f in SKILL_FEATURES}
     tool_name_re = re.compile(
         r"\b(fetch_checkin_data|fetch_trend_data|analyze_workout|fetch_schedule_audit_data|"
-        r"fetch_nutrition_context|create_workout|create_note|get_weather|request_new_goal)\b"
+        r"fetch_nutrition_context|stage_workout_changes|apply_staged_changes|get_weather|request_new_goal)\b"
     )
     for smd in skill_mds:
         for match in tool_name_re.findall(smd.read_text(encoding="utf-8")):
@@ -271,6 +274,7 @@ def test_architecture_rules_and_cross_stack_contract():
         CHECKIN_REPORT_STATE_KEY: "checkin",
         TREND_REPORT_STATE_KEY: "trend",
         AUDIT_REPORT_STATE_KEY: "audit",
+        WORKOUT_REPORT_STATE_KEY: "workout",
     }
 
     tool_labels = _eval_dict_literal(events_py, "TOOL_LABELS")

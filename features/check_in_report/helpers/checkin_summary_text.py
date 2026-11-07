@@ -104,7 +104,7 @@ def compile_checkin_summary(
     if metrics_data is not None:
         recovery = format_recovery_metrics(metrics_data)
         if recovery_baseline:
-            recovery += f"\n- 5-day vs 28-day baseline (pre-computed): {recovery_baseline}"
+            recovery += f"\n- 5-day vs 28-day baseline, recent hard effort & load (pre-computed facts): {recovery_baseline}"
         parts.append(f"**2. Autonomic & Physiological Recovery Trends (Past {lookback_days} days):**\n{recovery}\n")
 
     if weekly_totals is not None:

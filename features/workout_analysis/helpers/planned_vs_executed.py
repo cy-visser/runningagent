@@ -61,28 +61,31 @@ def format_target(step: PlannedStep, metric: Optional[str], thr: dict) -> str:
     return f"{step.target_lo:g}–{step.target_hi:g}{label}"
 
 
-def target_check(ex: ExecutedStep, metric: Optional[str], thr: dict) -> str:
-    """'✓', 'fast (-10s/km)', 'slow (+5s/km)', 'high (+4 bpm)', ... or '' when unknown."""
+def target_delta(ex: ExecutedStep, metric: Optional[str], thr: dict) -> Optional[tuple[float, str]]:
+    """(signed distance to the nearest target edge, unit); 0 inside the range; None when unknown.
+
+    Pace: negative = faster than the range. HR / power: negative = below the range.
+    """
     rng = target_range(ex.step, metric, thr)
     if not rng:
-        return ""
+        return None
     kind, lo, hi = rng
-    if kind == "pace":
-        if ex.pace_s is None:
-            return ""
-        if ex.pace_s < lo - 0.5:
-            return f"fast (-{round(lo - ex.pace_s)}s/km)"
-        if ex.pace_s > hi + 0.5:
-            return f"slow (+{round(ex.pace_s - hi)}s/km)"
-        return "✓"
-    actual, unit = (ex.hr_avg, "bpm") if kind == "hr" else (ex.power, "W")
+    actual, unit = {"pace": (ex.pace_s, "s/km"), "hr": (ex.hr_avg, "bpm")}.get(kind, (ex.power, "W"))
     if actual is None:
-        return ""
+        return None
     if actual < lo:
-        return f"low (-{round(lo - actual)} {unit})"
+        return actual - lo, unit
     if actual > hi:
-        return f"high (+{round(actual - hi)} {unit})"
-    return "✓"
+        return actual - hi, unit
+    return 0.0, unit
+
+
+def format_target_delta(delta: Optional[tuple[float, str]]) -> str:
+    """'0' inside the range, '-4 s/km' / '+6 bpm' / '-12 W' outside it, '' when unknown."""
+    if delta is None:
+        return ""
+    value, unit = delta
+    return "0" if round(value) == 0 else f"{round(value):+d} {unit}"
 
 
 def _block_intensity(steps: list[ExecutedStep]) -> float:
@@ -140,14 +143,14 @@ def format_structured_execution(
                 f"{format_planned_structure(steps, metric, thr)}")
 
     actual_col = "Power" if is_bike else "Pace"
-    lines = [header, f"| Step | Planned | Target | {actual_col} | HR avg/max | Cad | Check |",
+    lines = [header, f"| Step | Planned | Target | {actual_col} | HR avg/max | Cad | Δ vs target |",
              "|---|---|---|---|---|---|---|"]
     for e in alignment.steps:
         actual = f"{round(e.power)} W" if is_bike and e.power else fmt_pace(e.pace_s)
         hr = f"{round(e.hr_avg)}/{round(e.hr_max)}" if e.hr_avg and e.hr_max else (f"{round(e.hr_avg)}" if e.hr_avg else "-")
         cad = f"{round(e.cadence)}" if e.cadence else "-"
         lines.append(f"| {_step_label(e.step)} | {_fmt_length(e.step)} | {format_target(e.step, metric, thr)} "
-                     f"| {actual} | {hr} | {cad} | {target_check(e, metric, thr)} |")
+                     f"| {actual} | {hr} | {cad} | {format_target_delta(target_delta(e, metric, thr))} |")
     for lap in alignment.extra_laps:
         lines.append(f"Extra lap (not in plan): {lap.get('Name') or 'lap'} {fmt_clock(lap_time(lap))}, {lap_km(lap):.2f} km")
 
@@ -179,9 +182,10 @@ def format_structured_execution(
             hrs = [e.hr_avg for e in p if e.hr_avg]
             if len(hrs) >= 2:
                 parts.append(f"HR {' → '.join(str(round(h)) for h in hrs)} ({round(hrs[-1] - hrs[0]):+d} bpm first→last)")
-            checks = [target_check(e, metric, thr) for e in p]
-            if any(checks):
-                parts.append(f"{sum(c == '✓' for c in checks)}/{len(p)} in target")
+            deltas = [target_delta(e, metric, thr) for e in p]
+            if any(d is not None for d in deltas):
+                inside = sum(1 for d in deltas if d is not None and round(d[0]) == 0)
+                parts.append(f"{inside}/{len(p)} within the target range")
             rep_lines.append(f"  - {p[0].step.name}: " + " | ".join(parts))
     if rep_lines:
         lines += ["", "**Repeated blocks:**", *rep_lines]
@@ -203,6 +207,6 @@ def format_structured_execution(
         for b, execs, t0, t1, value, source in block_rows:
             reps = f"{execs[0].step.block_reps}× " if execs[0].step.block_reps > 1 else ""
             names = "/".join(dict.fromkeys(e.step.name for e in execs))
-            key = " [key block]" if b == key_block else ""
+            key = " [highest target intensity]" if b == key_block else ""
             lines.append(f"- B{b} {reps}{names}: {decoupling_label(sport, t0, t1, source)}: {value}%{key}")
     return "\n".join(lines)

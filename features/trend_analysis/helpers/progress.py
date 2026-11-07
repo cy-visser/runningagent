@@ -1,15 +1,15 @@
 from statistics import mean
 from typing import Callable, Optional
 
-from ....shared.progress_verdicts import (
-    VERDICT_DECLINING,
-    VERDICT_IMPROVING,
-    VERDICT_STABLE,
-)
 from ....shared.units import fmt_clock
 from .weekly_rows import key_run_label
 
 SUMMARY_WEEKS = 4                   # progress compares the first and last 4 complete weeks
+
+# Web-report verdict badges (payload only; the LLM text shows facts, not verdicts).
+VERDICT_IMPROVING = "🟢 improving"
+VERDICT_STABLE = "🟡 stable"
+VERDICT_DECLINING = "🔴 declining"
 
 
 def _num(fmt: str) -> Callable[[float], str]:
@@ -43,7 +43,7 @@ def progress_summary(rows: list[dict], goal_label: Optional[str] = None) -> list
     """Per marker: mean of the first and last 4 complete weeks, best week, change and direction.
 
     `arrow` is the direction of the number; `verdict` judges the runner (e.g. a rising Pa:Hr or
-    a slower LT pace is 🔴 declining even though the number went up).
+    a slower LT pace is 🔴 declining even though the number went up). Both are web-payload only.
     """
     complete = [r for r in rows if r["complete"]]
     out = []
@@ -60,7 +60,7 @@ def progress_summary(rows: list[dict], goal_label: Optional[str] = None) -> list
         verdict = VERDICT_STABLE if arrow == "→" else (VERDICT_IMPROVING if improving else VERDICT_DECLINING)
         out.append({"key": key, "label": label, "first": fmt(first), "latest": fmt(latest),
                     "best": f"{fmt(best[1])} (wk {best[0].isoformat()})", "change": change_fmt(change),
-                    "arrow": arrow, "verdict": verdict})
+                    "higher_is_better": higher, "arrow": arrow, "verdict": verdict})
     return out
 
 
@@ -68,7 +68,8 @@ def format_progress_table(progress: list[dict]) -> str:
     if not progress:
         return ""
     lines = ["**Progress** (mean of the first vs last complete weeks, up to 4 each):", "",
-             "| Marker | First | Latest | Best | Change | Trend |", "|---|---|---|---|---|---|"]
-    lines += [f"| {p['label']} | {p['first']} | {p['latest']} | {p['best']} | {p['change']} | {p['arrow']} {p['verdict']} |"
+             "| Marker | First | Latest | Best | Change | Higher is better |", "|---|---|---|---|---|---|"]
+    lines += [f"| {p['label']} | {p['first']} | {p['latest']} | {p['best']} | {p['change']} "
+              f"| {'yes' if p['higher_is_better'] else 'no'} |"
               for p in progress]
     return "\n".join(lines)

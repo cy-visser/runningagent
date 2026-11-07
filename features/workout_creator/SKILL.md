@@ -1,6 +1,6 @@
 ---
 name: workout-creator
-description: Creates, schedules, or modifies planned workouts, training sessions, and calendar notes in TrainingPeaks based on coaching guidelines, periodization, and runner goals.
+description: Proposes new or changed planned workouts, training sessions and calendar notes (staged for the runner to apply to TrainingPeaks with one button) based on coaching guidelines, periodization and runner goals.
 ---
 
 # Workout & Calendar Note Creator Skill
@@ -14,6 +14,10 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
    - **Type of Entry**:
      - **Planned Workout (Create or Modify)**: Run (easy, recovery, tempo, threshold, intervals, long run, race pace, progressive), Bike, Swim, Strength, Walk, Crosstrain, Race.
      - **Calendar Note**: Travel plans, rest/recovery days, race prep checklist, nutrition/carb-load reminder, illness/injury note, or milestone markers.
+   - **Existing Sessions**: Use the planned sessions and their `[workout_id]`s already in this conversation (e.g. from an
+     audit or check-in). Without an id, `stage_workout_changes` resolves the session by date and sport. Never call a
+     report tool (`fetch_checkin_data`, `fetch_trend_data`, `fetch_schedule_audit_data`) to look sessions up: each one
+     opens a full report for the runner.
 
 2. **Apply Sports Science & Coaching Principles**:
    - **Easy / Recovery Runs**: Zone 1/2 HR discipline, conversational pace, low aerobic stress.
@@ -26,48 +30,61 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
    - **Strength & Cross-Training**: Specify focus (core, hips, glute activation, low-impact cross-training).
    - **TSS Estimation**: If duration and intensity are known, estimate planned TSS (e.g., Easy Run ~50-60 TSS/hr, Tempo ~70-80 TSS/hr, Hard Intervals ~85-100 TSS/hr).
 
-3. **Load Warnings (built into `create_workout`, advisory only)**:
-   - When the runner asks to create or update a workout, do it: call `create_workout` straight away. Never
-     ask for confirmation before writing and never hold back an update the runner requested.
-   - For run and race sessions `create_workout` also checks the change in code against the target week and
-     the prior week (3rd+ quality session, hard sessions on consecutive days, quality inside the goal race's
-     taper, quality or long runs near an injury/illness calendar note). It only reports risks the change
-     introduces or worsens. Do not fetch the schedule yourself to check this.
-   - If the result contains `warnings`, the workout WAS written. State each warning **with its numbers** in
-     the confirmation and offer one specific safer alternative (e.g. "move it to Thursday and drop Tuesday
-     to easy") the runner can ask for.
-   - **Weekly volume ramp (your judgement, no coded % limit)**: when the change adds running km, the result
-     carries `week` (`running_km_after`, `prior_week_running_km`, `volume_change_pct`). Judge whether that
-     step suits this runner from their CTL, recent weekly volume, training age and race background (e.g.
-     previous marathon builds) and what else is in the week. Mention it under Load Warnings only if you judge
-     it a real risk, with the numbers and the runner-specific reason; never cite a generic "10% rule".
+3. **Stage, Never Write**:
+   - You never write to TrainingPeaks yourself. Every workout or note change (new, changed, moved, swapped) goes
+     through `stage_workout_changes`; the runner applies it with the **Update TrainingPeaks** button.
+   - Weigh the week before you stage (intensity spacing, quality load, volume change for this runner, taper timing,
+     injury / illness / travel notes) and state any real risk with its numbers in your message. There is no review
+     after the write.
+   - Call `stage_workout_changes` in the SAME response as your message, with the COMPLETE set of changes you
+     propose (a new call replaces the previously staged set). Do not ask "shall I update TrainingPeaks?": the
+     button is the question.
+   - Your message explains the plan: the reasoning and context (load, recovery, the goal and north star, the week
+     before and after) and any risk with its numbers. Never list the sessions one by one: the table under your
+     message shows each current and proposed workout.
 
-4. **Execute Workout / Note Tool**:
-   - **For Workouts (Both New Sessions AND Modifications/Updates)**:
-     - Call `create_workout`. Choose the mode explicitly:
-       - **Adding** a session to a day (e.g. strength on a run day, a double): pass `create=True`.
-       - **Changing a specific** existing session: pass its `workout_id`.
-       - Otherwise it updates the single planned workout of the same sport on that date, or creates one if there is none. Other sports on that day are never touched.
-     - If it returns `"action": "needs_workout_id"`, ask the runner which of the listed `candidates` to change (or whether to add a new one) and call again with `workout_id` or `create=True`.
-     - Pass the following arguments:
-       - `date_str`: Target date in `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`.
-       - `sport`: Sport type (default `"Run"`).
-       - `title`: Clear, descriptive workout title (e.g. `"Easy Aerobic Recovery Run"`, `"Threshold Intervals: 5x1km"`).
-       - `duration_minutes`: Estimated planned duration in minutes.
-       - `distance_km`: Optional planned distance in kilometres.
-       - `tss_planned`: Optional planned TSS.
-       - `description`: Structured coaching instructions with warm-up, main set, cool-down, and pacing cues.
-   - **For Calendar Notes (Non-Workout Calendar Entries)**:
-     - Call `create_note` with:
-       - `date`: Target date in `YYYY-MM-DD`.
-       - `title`: Clear note title (e.g., `"Travel: Flight to Milan"`, `"Rest Day & Foam Rolling"`).
-       - `description`: Optional detailed notes or advice.
+4. **`stage_workout_changes` Arguments** (`changes`: list of objects):
+   - **Workouts** (new sessions AND modifications):
+     - `date_str`: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`.
+     - `sport`: `"Run"` (default), `"Bike"`, `"Swim"`, `"Strength"`, `"Walk"`, `"Crosstrain"` or `"Race"`.
+     - `title`: Clear, descriptive title (e.g. `"Easy Aerobic Recovery Run"`, `"Threshold Intervals: 5x1km"`).
+     - `duration_minutes`, `distance_km`, `tss_planned`: planned values.
+     - `description`: Structured coaching instructions (warm-up, main set, cool-down, pacing cues, fueling).
+     - `structure`: the exact workout builder (see 5). Required for every Run/Bike workout you create and whenever
+       you change a session's distance, duration or content.
+     - Mode: **adding** a session to a day (strength on a run day, a double) -> `create: true`; **changing a specific**
+       session -> its `workout_id`; otherwise it updates the single planned workout of the same sport on that date,
+       or creates one if there is none. Other sports on that day are never touched.
+   - **Calendar notes** (travel, rest days, race prep, carb-load reminder, illness/injury, milestones):
+     `kind: "note"`, `date_str`, `title`, `description`.
+   - If the result lists `ambiguous` changes (several planned workouts of that sport on the date), ask the runner
+     which of the `candidates` to change (or whether to add a new one), then stage the full set again.
 
-5. **Deliver Workout / Note Confirmation**:
-   - Present a clean, structured summary in Markdown:
-     1. **🎯 Confirmation Header**: Clear confirmation of the scheduled/updated workout or note.
-     2. **📋 Overview Table**: Date, Sport, Title, Planned Duration / Distance, and Estimated TSS.
-     3. **🏃 Coaching Directives & Execution Details**: Pacing targets, HR zones, warm-up/cool-down structure, and fueling cues.
-     4. **⚠️ Load Warnings** *(only when the result contains `warnings` or you judge the volume ramp a real risk for this runner)*: Each warning with its numbers and one safer alternative.
-     5. **💡 Proactive Coaching Tip**: Specific tip tailored to the session (hydration, weather, recovery pairing).
+5. **Workout Builder (`structure`)**: it syncs to the runner's watch, and `distance_km` / `duration_minutes` /
+   `tss_planned` are computed from it, so write the session EXACTLY: rep count, rep length, recoveries, targets.
+   Nothing is ever scaled for you; changing 5x10' to 5x12' means writing 12' reps.
+   - Format: `{"steps": [step | repetition, ...]}`. Step: `name`, `intensityClass` (`warmUp`, `active`, `rest`,
+     `coolDown`, `other`), exactly one of `distance_m` / `duration_seconds`, and one target: `pace` (per km, a range
+     like `"4:25-4:35"`; prefer +-5 s over a single pace) or `intensity_min` + `intensity_max` (% of threshold).
+     Repetition: `{"type": "repetition", "reps": 5, "steps": [work step, recovery step]}` (no nesting).
+   - Runs target pace by default. HR-led runs: `"primaryIntensityMetric": "percentOfThresholdHr"` with % of LTHR.
+     Bike: `percentOfFtp` (default) with `duration_seconds` steps.
+   - Easy and long runs: one step (or a few progressive steps). Quality: warm-up, main set, recoveries and cool-down
+     exactly as in the description (distance reps in `distance_m`, strides as short timed steps).
+   - A move, rename or description edit needs no `structure`: the builder in TrainingPeaks is kept.
+   - Example (threshold): `{"steps": [{"name": "Warm up", "intensityClass": "warmUp", "duration_seconds": 900,
+     "pace": "5:50-6:20"}, {"type": "repetition", "reps": 5, "steps": [{"name": "Threshold", "intensityClass":
+     "active", "duration_seconds": 720, "pace": "4:25-4:35"}, {"name": "Jog", "intensityClass": "rest",
+     "duration_seconds": 120, "pace": "6:15-7:00"}]}, {"name": "Cool down", "intensityClass": "coolDown",
+     "duration_seconds": 600, "pace": "5:50-6:20"}]}`
+   - Example (easy): `{"steps": [{"name": "Easy", "intensityClass": "active", "distance_m": 8000, "pace": "5:55-6:25"}]}`
+   - If the result lists `needs_structure` (nothing was staged): send the complete `structure` for each entry. When
+     `current_structure` is given it is the builder in TrainingPeaks now, with exact values: keep it as is and change
+     only what the runner asked (e.g. `duration_seconds` 600 -> 720 on the work step), keep `intensity_min` /
+     `intensity_max` on untouched steps, then stage the full set again. Do not ask the runner.
 
+6. **After Staging / Applying**:
+   - Once staged, the runner sees every change in a table with the button: do not repeat the changes.
+   - When the runner approves in chat instead of pressing the button ("update them", "yes, do it"), call
+     `apply_staged_changes` with no arguments.
+   - The app writes the confirmation of staging and of applying itself.

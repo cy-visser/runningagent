@@ -1,4 +1,5 @@
 import type {
+  AppliedChanges,
   ChatStreamHandlers,
   ConnectTpResponse,
   MeResponse,
@@ -8,6 +9,7 @@ import type {
   QuickAction,
   ReportEnvelope,
   SessionResponse,
+  StagedChanges,
   ToolChip,
 } from "./types";
 
@@ -268,11 +270,22 @@ function dispatchSseEvent(
       if (
         (obj.kind === "checkin" ||
           obj.kind === "trend" ||
-          obj.kind === "audit") &&
+          obj.kind === "audit" ||
+          obj.kind === "workout") &&
         obj.data &&
         typeof obj.data === "object"
       ) {
         handlers.onReport?.(obj as unknown as ReportEnvelope);
+      }
+      break;
+    case "staged":
+      if (typeof obj.staged_id === "string" && Array.isArray(obj.changes)) {
+        handlers.onStaged?.(obj as unknown as StagedChanges);
+      }
+      break;
+    case "applied":
+      if (typeof obj.staged_id === "string") {
+        handlers.onApplied?.(obj as unknown as AppliedChanges);
       }
       break;
     case "message":

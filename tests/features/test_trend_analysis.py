@@ -5,6 +5,8 @@ import json
 
 from running_coach.features.trend_analysis.fetch_trend_data_tool import fetch_trend_data
 from running_coach.features.trend_analysis.helpers.goal_progress import implied_time_s
+from running_coach.features.trend_analysis.helpers.load_capacity import format_levels_table, format_outlook
+from running_coach.features.trend_analysis.helpers.pacing import format_pacing_details, slope_s_per_pct_lthr
 
 
 def test_trend_analysis_gap_fills_flags_rate_limited_runs_and_builds_web_payload(runner):
@@ -27,9 +29,21 @@ def test_trend_analysis_gap_fills_flags_rate_limited_runs_and_builds_web_payload
     # The goal-plan table is in the coach instruction; the trend output references it once.
     assert "see GOAL PLAN in your instructions" in out and "| Sub goal | Block | Status |" not in out
 
+    # Facts only in the coach text: no coded verdicts (the web payload keeps its badges).
+    for verdict in ("room to go faster", "too hard", "on target", "| Proven", "proven ", "within reach",
+                    "untested", "INSUFFICIENT", "-> confirmed", "-> unconfirmed", "🟢", "🟡", "🔴"):
+        assert verdict not in out, verdict
+    assert "weeks at or above (longest streak " in out
+    assert "| Band | Sessions (reps) | Target range | Pace hit | Median pace | Median HR |" in out
+    assert "- LTHR check: TP LTHR 172 bpm; " in out
+
     # 26 weeks: the coach gets the last 8 weekly rows; the web payload keeps every week.
     ctx26 = runner.ctx()
     out26 = asyncio.run(fetch_trend_data(ctx26, weeks=26))
+    for verdict in ("room to go faster", "proven ", "INSUFFICIENT", "🟢", "🟡", "🔴"):
+        assert verdict not in out26, verdict
+    assert "| Marker | First | Latest | Best | Change | Higher is better |" in out26
+    assert "_Pace @ LT2 uses the TrainingPeaks LTHR; see the LTHR check line" in out26
     rows_section = out26.split("### Weekly rows", 1)[1].split("###", 1)[0]
     assert "(last 8 of 27 weeks" in rows_section
     assert sum(1 for line in rows_section.splitlines() if line.startswith("| 20")) == 8
@@ -43,6 +57,10 @@ def test_trend_analysis_gap_fills_flags_rate_limited_runs_and_builds_web_payload
     assert report["version"] == 1
     assert len(report["weeks"]) >= 6
     assert report["key_run_label"] == "tempo/threshold"
+    progress26 = ctx26.state["trend_report_data"]["progress"]
+    assert progress26 and all("verdict" in p and "arrow" in p for p in progress26)
+    assert all("proven" in lv and "tolerated_share" in lv for lv in report["levels"])
+    assert all("status" in t for t in report["outlook"]["targets"]) and "proven_km" in report["outlook"]
 
     goal = report["goal"]
     assert goal["training_goal"] == "Sub-43 10K" and goal["label"] == "10K"
@@ -84,3 +102,30 @@ def test_trend_analysis_gap_fills_flags_rate_limited_runs_and_builds_web_payload
     flagged = asyncio.run(fetch_trend_data(runner.ctx(), weeks=6))
     assert "w137" not in runner.training_records
     assert "unrecorded)" in flagged
+
+
+def test_trend_text_formatters_state_facts_without_verdicts():
+    levels = [{"level": 50, "weeks": 4, "streak": 2, "niggle_weeks": 1, "tolerated_share": 0.5,
+               "hrv_delta_pct": -3.0, "rhr_delta": 1.0, "rpe": 5.5, "proven": False}]
+    table = format_levels_table(levels)
+    assert "| Level | Weeks | Longest streak | Niggle weeks | HRV Δ | RHR Δ | RPE |" in table
+    assert "| >= 50 km | 4 | 2 | 1 | -3% | +1 | 5.5 |" in table
+    outlook = {"proven_km": None, "max_km": 81.0, "current_km": 73.5,
+               "targets": [{"target": 80, "status": "run, not proven", "gap_km": 6.5, "weeks_at": 2, "streak": 1}]}
+    text = format_outlook(outlook, None, 0)
+    assert "- 80 km/week: 2 weeks at or above (longest streak 1), +6.5 km/week above current" in text
+    assert "highest week 81 km" in text and "proven" not in text and "run, not" not in text
+
+    model = {"mx": 150.0, "my": 3.3, "slope": 0.02, "hr_min": 135.0, "hr_max": 165.0, "n": 40}
+    pacing = {"runs": 12, "model": model, "slope_s_per_pct": slope_s_per_pct_lthr(model, 172.0), "easy": None,
+              "discipline": None,
+              "lthr_check": {"lthr": 172.0, "best_hr": 168.0, "best_pct": 168 / 172, "duration_s": 32 * 60,
+                             "date": "2026-10-12", "title": "Tempo"},
+              "threshold": {"observed_speed": 1000 / 248, "tp_speed": 1000 / 252, "diff_pct": 252 / 248 - 1,
+                            "minutes": 46, "latest": "2026-10-20"}}
+    details = format_pacing_details(pacing)
+    assert "- LTHR check: TP LTHR 172 bpm; best 20+ min effort 168 bpm (97.7%), 32 min, 2026-10-12 'Tempo'" in details
+    assert "fitted HR range 135-165 bpm; ≈ -3.1 s/km per +1% LTHR" in details
+    assert "vs TP setting 4:12/km (pace diff -1.6%)" in details
+    for verdict in ("confirmed", "agrees", "too fast", "too slow", "time trial"):
+        assert verdict not in details, verdict

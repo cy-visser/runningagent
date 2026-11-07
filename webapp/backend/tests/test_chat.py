@@ -62,6 +62,58 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
         ("message", {"text": "Audit summary", "kind": "audit"}),
     ]
 
+    # Workout banner payload is whitelisted too
+    tr_workout = TurnEventTranslator()
+    workout_evs = tr_workout.feed(
+        {
+            "author": "coaching_agent",
+            "actions": {"stateDelta": {"workout_report_data": {"version": 1, "tiles": []}}},
+            "content": {"parts": [{"text": "### 🎯 Execution"}]},
+        }
+    )
+    assert workout_evs == [
+        ("report", {"kind": "workout", "data": {"version": 1, "tiles": []}}),
+        ("message", {"text": "### 🎯 Execution", "kind": "workout"}),
+    ]
+
+    # Staged workout changes -> "staged" card event; recommendations text + coded staged line both stay.
+    staged = {"staged_id": "s-1", "changes": [{"kind": "workout", "action": "update", "title": "Tempo"}]}
+    tr_stage = TurnEventTranslator()
+    assert tr_stage.feed({"author": "coaching_agent", "partial": True, "content": {"parts": [{"text": "### Recs"}]}}) == [
+        ("delta", {"text": "### Recs"})
+    ]
+    assert tr_stage.feed({"author": "coaching_agent", "content": {"parts": [
+        {"text": "### Recommendations"}, {"functionCall": {"name": "stage_workout_changes"}}]}}) == [
+        ("tool", {"name": "stage_workout_changes", "label": "Staging plan changes", "state": "start"}),
+        ("message", {"text": "### Recommendations", "kind": "chat"}),
+    ]
+    assert tr_stage.feed({
+        "author": "coaching_agent",
+        "actions": {"stateDelta": {"staged_workout_changes": staged}},
+        "content": {"parts": [{"functionResponse": {"name": "stage_workout_changes", "response": {"result": "{}"}}}]},
+    }) == [
+        ("staged", staged),
+        ("tool", {"name": "stage_workout_changes", "label": "Staging plan changes", "state": "done"}),
+    ]
+    assert tr_stage.feed({"author": "coaching_agent", "partial": True, "content": {"parts": [{"text": "📋 1 change"}]}}) == [
+        ("delta", {"text": "\n\n📋 1 change"})
+    ]
+    assert tr_stage.feed({"author": "coaching_agent", "content": {"parts": [{"text": "📋 1 change staged."}]}}) == [
+        ("message", {"text": "### Recommendations\n\n📋 1 change staged.", "kind": "chat"})
+    ]
+
+    # Applying: staged key cleared (None, ignored) and an "applied" event marks the card.
+    tr_apply = TurnEventTranslator()
+    assert tr_apply.feed({
+        "author": "coaching_agent",
+        "actions": {"stateDelta": {"staged_workout_changes": None,
+                                   "applied_workout_changes": {"staged_id": "s-1", "applied": 1, "failed": 0}}},
+        "content": {"parts": [{"functionResponse": {"name": "apply_staged_changes", "response": {"result": "{}"}}}]},
+    }) == [
+        ("applied", {"staged_id": "s-1", "applied": 1, "failed": 0}),
+        ("tool", {"name": "apply_staged_changes", "label": "Updating TrainingPeaks", "state": "done"}),
+    ]
+
     # End-to-end API flow: connect -> onboarding profile edit -> chat SSE & session lifecycle
     app, _, agent = build_test_app()
     headers = {"X-Goog-IAP-JWT-Assertion": "valid-jwt"}
@@ -135,16 +187,29 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
             "skill": "schedule-audit", "args": {"start_date": "2026-11-02", "end_date": "2026-12-27"},
         }
 
+        # "Update TrainingPeaks" button: forwards the staged set id; never creates a session of its own.
+        staged_id = "0f8fad5b-d9cb-469f-a165-70867728950e"
+        apply = client.post(
+            "/api/chat",
+            json={"message": "Update TrainingPeaks", "session_id": "sess-new-2",
+                  "action": {"skill": "workout-creator", "staged_id": staged_id}},
+            headers=headers,
+        )
+        assert apply.status_code == 200
+        assert agent.calls[4]["session_id"] == "sess-new-2"
+        assert agent.calls[4]["quick_action"] == {"skill": "workout-creator", "args": {"staged_id": staged_id}}
+
         # Only allowlisted skills with valid arguments are forwarded.
         for bad in (
             {"skill": "workout-creator"},
+            {"skill": "workout-creator", "staged_id": "not-a-uuid"},
             {"skill": "trend-analysis", "weeks": 500},
             {"skill": "schedule-audit", "start_date": "next monday"},
             {"skill": "check-in-report", "extra": "x"},
         ):
             rejected = client.post("/api/chat", json={"message": "x", "action": bad}, headers=headers)
             assert rejected.status_code == 422, bad
-        assert len(agent.calls) == 4
+        assert len(agent.calls) == 5
 
         # Clicking "New conversation" creates a new session immediately
         new_sess = client.post("/api/session/new", headers=headers)
@@ -160,4 +225,4 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
         )
         assert chat4.status_code == 200
         assert agent.created_sessions == 4
-        assert agent.calls[4]["session_id"] == "sess-new-4"
+        assert agent.calls[5]["session_id"] == "sess-new-4"

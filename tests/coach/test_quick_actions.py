@@ -128,3 +128,117 @@ def test_quick_action_calls_validate_and_skip_reloading_a_loaded_skill():
     ]
     assert quick_action_calls({"skill": "nutrition-planner"}, req) == []
     assert quick_action_calls("check-in-report", req) == []
+
+
+def test_update_trainingpeaks_button_applies_staged_changes_without_any_llm_call(runner, monkeypatch):
+    llm = RecordingLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+    staged_id = "0f8fad5b-d9cb-469f-a165-70867728950e"
+    staged = {"staged_id": staged_id, "changes": [
+        {"kind": "workout", "action": "update", "date": "2026-11-03", "sport": "Run", "title": "Threshold 4x2km",
+         "workout_id": "w111", "replaces_title": "Threshold 2 x 15'", "distance_km": 12.0,
+         "duration_minutes": 65.0, "tss_planned": 78.0},
+        {"kind": "workout", "action": "create", "date": "2026-11-04", "sport": "Run", "title": "Recovery Run",
+         "workout_id": None, "distance_km": 6.0, "duration_minutes": None, "tss_planned": None},
+    ]}
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(
+            app_name="running_coach", user_id="web_runner", state={"staged_workout_changes": staged})
+        events = await _turn(r, session.id, "Update TrainingPeaks",
+                             {"skill": "workout-creator", "args": {"staged_id": staged_id}})
+        s = await r.session_service.get_session(app_name="running_coach", user_id="web_runner", session_id=session.id)
+        return events, s
+
+    events, s = asyncio.run(scenario())
+
+    assert llm.requests == []                                                   # zero LLM calls
+    assert _calls(events) == [("apply_staged_changes", {"staged_id": staged_id})]  # no load_skill
+    writes = sorted(name for name, _ in runner.tp_calls if name.startswith("tp_") and name != "tp_get_workouts")
+    assert writes == ["tp_create_workout", "tp_update_workout"]
+    final = [p.text for e in events if e.content for p in e.content.parts or [] if p.text][-1]
+    assert final.startswith("✅ **TrainingPeaks updated:** 2 workouts.")
+    assert ("| Updated | Tue 03 Nov | **Threshold 2 x 15'** | **Threshold 4x2km** · 12 km · 65 min · TSS 78 |"
+            in final)  # older staged set without `replaces`: Before falls back to replaces_title
+    assert s.state.get("staged_workout_changes") is None
+    assert s.state["applied_workout_changes"]["staged_id"] == staged_id
+
+
+class StagingLlm(BaseLlm):
+    """Fake Gemini: writes recommendations and stages one change in the same response."""
+
+    requests: list = []
+
+    async def generate_content_async(
+        self, llm_request: LlmRequest, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse, None]:
+        self.requests.append(llm_request)
+        yield LlmResponse(content=types.Content(role="model", parts=[
+            types.Part(text="### Recommendations\n- Swap Wednesday for a recovery run."),
+            types.Part(function_call=types.FunctionCall(name="stage_workout_changes", args={"changes": [
+                {"date_str": "2026-11-04", "title": "Recovery Run", "distance_km": 6, "structure": {"steps": [
+                    {"name": "Recovery", "distance_m": 6000, "pace": "6:00-6:30"}]}}]})),
+        ]))
+
+
+def test_recommendations_with_staging_end_after_one_llm_call(runner, monkeypatch):
+    llm = StagingLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        events = await _turn(r, session.id, "What should I fix?")
+        s = await r.session_service.get_session(app_name="running_coach", user_id="web_runner", session_id=session.id)
+        return events, s
+
+    events, s = asyncio.run(scenario())
+    assert len(llm.requests) == 1                                               # no LLM call after staging
+    texts = [p.text for e in events if e.content for p in e.content.parts or [] if p.text]
+    assert texts[0].startswith("### Recommendations")
+    assert texts[-1] == "📋 1 change staged. Review them below and press **Update TrainingPeaks** to apply."
+    assert [c["title"] for c in s.state["staged_workout_changes"]["changes"]] == ["Recovery Run"]
+    assert not [name for name, _ in runner.tp_calls if name in ("tp_create_workout", "tp_update_workout")]
+
+
+class SilentStagingLlm(BaseLlm):
+    """Fake Gemini as in the reported trace: stages with no text, then explains only when asked."""
+
+    requests: list = []
+
+    async def generate_content_async(
+        self, llm_request: LlmRequest, stream: bool = False
+    ) -> AsyncGenerator[LlmResponse, None]:
+        self.requests.append(llm_request)
+        if len(self.requests) == 1:
+            parts = [types.Part(function_call=types.FunctionCall(name="stage_workout_changes", args={"changes": [
+                {"date_str": "2026-11-04", "title": "Recovery Run", "distance_km": 6, "structure": {"steps": [
+                    {"name": "Recovery", "distance_m": 6000, "pace": "6:00-6:30"}]}}]}))]
+        else:
+            parts = [types.Part(text="Why: Wednesday becomes recovery to absorb Tuesday's threshold work.")]
+        yield LlmResponse(content=types.Content(role="model", parts=parts))
+
+
+def test_staging_without_text_gets_one_explaining_call_with_tools_off(runner, monkeypatch):
+    from running_coach.features.workout_creator.write_confirmation_callback import EXPLAIN_STAGED_INSTRUCTION
+
+    llm = SilentStagingLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        return await _turn(r, session.id, "So what should I do in the last week of Nov?")
+
+    events = asyncio.run(scenario())
+    assert len(llm.requests) == 2
+    explain = llm.requests[1]
+    assert _tool_mode(explain) == types.FunctionCallingConfigMode.NONE
+    assert EXPLAIN_STAGED_INSTRUCTION in _system_text(explain)
+    assert EXPLAIN_STAGED_INSTRUCTION not in _system_text(llm.requests[0])
+    texts = [p.text for e in events if e.content for p in e.content.parts or [] if p.text]
+    assert texts == ["Why: Wednesday becomes recovery to absorb Tuesday's threshold work."]

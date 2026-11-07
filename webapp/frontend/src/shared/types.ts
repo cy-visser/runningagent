@@ -404,10 +404,66 @@ export interface AuditReportData {
   volume_reference?: AuditVolumeReference | null;
 }
 
+/** One headline metric of the workout banner (pre-formatted by the backend). */
+export interface WorkoutTile {
+  key: string;
+  label: string;
+  value: string;
+  unit?: string;
+  sub?: string | null;
+}
+
+export interface WorkoutHrZone {
+  label: string;
+  name: string;
+  pct: number;
+  seconds: number;
+}
+
+export interface WorkoutReadiness {
+  key: "hrv" | "rhr" | "sleep" | string;
+  label: string;
+  value: number;
+  unit: string;
+  date?: string | null;
+  direction?: "up" | "down" | "flat" | null;
+  tone?: "emerald" | "amber" | "rose" | "slate";
+}
+
+/** Session-overview banner payload (mirrors `features/workout_analysis/helpers/web_report.py`). */
+export interface WorkoutReportData {
+  version: number;
+  workout_id: string;
+  title: string;
+  sport: string;
+  sport_family: "run" | "bike";
+  date: string | null;
+  start_time?: string | null;
+  location?: string | null;
+  structured?: boolean;
+  tiles: WorkoutTile[];
+  elevation?: {
+    gain_m?: number | null;
+    loss_m?: number | null;
+    /** [[km, metres], ...] */
+    profile?: Array<[number, number]> | null;
+  } | null;
+  hr_zones?: WorkoutHrZone[] | null;
+  weather?: {
+    temp_c?: number | null;
+    feels_like_c?: number | null;
+    humidity?: number | null;
+    wind_kmh?: number | null;
+  } | null;
+  readiness?: WorkoutReadiness[] | null;
+  other_sessions?: Array<{ id: string; title: string; sport: string }>;
+}
+
 export type ReportEnvelope =
   | { kind: "checkin"; data: CheckinReportData }
   | { kind: "trend"; data: TrendReportData }
-  | { kind: "audit"; data: AuditReportData };
+  | { kind: "audit"; data: AuditReportData }
+  | { kind: "workout"; data: WorkoutReportData };
 
 export interface ToolChip {
   name: string;
@@ -423,7 +479,56 @@ export type QuickAction =
   | { skill: "check-in-report" }
   | { skill: "trend-analysis"; weeks?: number }
   | { skill: "schedule-audit"; start_date?: string; end_date?: string }
-  | { skill: "workout-analysis"; date_str?: string; sport?: "run" | "bike" };
+  | { skill: "workout-analysis"; date_str?: string; sport?: "run" | "bike" }
+  | { skill: "workout-creator"; staged_id: string };
+
+/** One proposed workout / note change staged by the coach (mirrors `helpers/staged_changes.py`). */
+export interface StagedChange {
+  kind: "workout" | "note";
+  action: "create" | "update";
+  date: string;
+  title: string;
+  sport?: string;
+  replaces_title?: string | null;
+  workout_id?: string | null;
+  distance_km?: number | null;
+  duration_minutes?: number | null;
+  tss_planned?: number | null;
+  description?: string;
+  /** Compact workout-builder summary, e.g. "15' WU · 5× (12' @ 4:25–4:35/km / 2' rec) · 10' CD". */
+  structure_summary?: string | null;
+  /** First line of the description (the coach's, or the kept workout's) when there is no builder. */
+  description_summary?: string | null;
+  /** Planned values of the workout an update replaces (the "Current workout" column). */
+  replaces?: StagedWorkoutSnapshot | null;
+}
+
+/** Planned values of an existing TrainingPeaks workout. */
+export interface StagedWorkoutSnapshot {
+  title?: string | null;
+  date?: string | null;
+  sport?: string | null;
+  distance_km?: number | null;
+  duration_minutes?: number | null;
+  tss_planned?: number | null;
+  /** Builder summary of the current workout, when TrainingPeaks has one. */
+  structure_summary?: string | null;
+  /** First line of the current workout's description. */
+  description_summary?: string | null;
+}
+
+/** Staged set shown with the "Update TrainingPeaks" button. */
+export interface StagedChanges {
+  staged_id: string;
+  changes: StagedChange[];
+}
+
+/** Outcome of applying a staged set (marks its card as applied). */
+export interface AppliedChanges {
+  staged_id: string;
+  applied: number;
+  failed: number;
+}
 
 export interface ChatMessage {
   id: string;
@@ -435,6 +540,7 @@ export interface ChatMessage {
   thinking?: boolean;
   tools?: ToolChip[];
   report?: ReportEnvelope | null;
+  staged?: StagedChanges | null;
   error?: string | null;
 }
 
@@ -459,6 +565,8 @@ export interface ChatStreamHandlers {
   onTool?: (chip: ToolChip) => void;
   onDelta?: (text: string) => void;
   onReport?: (report: ReportEnvelope) => void;
+  onStaged?: (staged: StagedChanges) => void;
+  onApplied?: (applied: AppliedChanges) => void;
   onMessage?: (payload: { text: string; kind: MessageKind }) => void;
   onError?: (message: string) => void;
   onDone?: (sessionId: string) => void;

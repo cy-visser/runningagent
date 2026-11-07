@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 from datetime import date as date_type
 from datetime import datetime as datetime_type
 from typing import Any, Literal, NamedTuple
@@ -73,6 +74,17 @@ def _prepare_structure_payload(
     except (ValidationError, ValueError) as e:
         msg = format_validation_error(e) if isinstance(e, ValidationError) else str(e)
         return StructurePayload(None, None, None, None, f"Invalid structure: {msg}")
+
+
+def _consistent_if(tss: Any, total_time_hours: Any) -> float | None:
+    """Planned IF consistent with TrainingPeaks' TSS definition: TSS = hours x IF^2 x 100."""
+    try:
+        tss_value, hours = float(tss), float(total_time_hours)
+    except (TypeError, ValueError):
+        return None
+    if tss_value <= 0 or hours <= 0:
+        return None
+    return round(math.sqrt(tss_value / (hours * 100.0)), 3)
 
 
 def _validate_structured_workout(structured_workout: dict[str, Any]) -> str | None:
@@ -473,6 +485,8 @@ async def tp_create_workout(
     effective_if = None
     if params.tss_planned is None and structure_payload.intensity_factor is not None:
         effective_if = structure_payload.intensity_factor
+    elif effective_tss is not None and effective_duration is not None:
+        effective_if = _consistent_if(effective_tss, effective_duration / 60.0)
 
     async with TPClient() as client:
         athlete_id = await client.ensure_athlete_id()
@@ -694,12 +708,18 @@ async def tp_update_workout(
             existing["rpe"] = params.rpe
         if params.structure is not None:
             existing["structure"] = json.dumps(structure_payload.wire_structure)
-            if effective_if is not None:
-                existing["ifPlanned"] = effective_if
-            else:
-                existing.pop("ifPlanned", None)
         elif raw_structure_payload is not None:
             existing["structure"] = raw_structure_payload
+        # Keep the planned IF consistent with the merged TSS and duration whenever this call
+        # changes the planned load (TrainingPeaks stores whatever IF it receives).
+        if (effective_tss is not None or effective_duration is not None
+                or params.structure is not None or raw_structure_payload is not None):
+            planned_if = effective_if if effective_if is not None else _consistent_if(
+                existing.get("tssPlanned"), existing.get("totalTimePlanned"))
+            if planned_if is not None:
+                existing["ifPlanned"] = planned_if
+            else:
+                existing.pop("ifPlanned", None)
 
         # PUT updated workout
         put_endpoint = f"/fitness/v6/athletes/{athlete_id}/workouts/{params.workout_id}"

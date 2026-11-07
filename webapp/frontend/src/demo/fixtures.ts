@@ -5,6 +5,7 @@ import type {
   ProfileResponse,
   TrendReportData,
   TrendWeekPoint,
+  WorkoutReportData,
 } from "../shared/types";
 
 export const DEMO_ME_READY: MeResponse = {
@@ -402,11 +403,11 @@ export const DEMO_TREND_DATA: TrendReportData = {
 
 export const DEMO_TREND_MARKDOWN = `### 🎯 Next Block: Top 3
 1. **Build from 70 to 94 km/wk by 15 Feb along the volume path (72 km this week, +1–2 km per week).**
-   Why: Weekly volume reference 94 km block target by 2027-02-15 (85% of the 110 km/week Sub-2:58 peak); 70 km/wk is proven (streak 3, 75% tolerated) and 80 km is "within reach, +6.5 km/week above current".
+   Why: Weekly volume reference 94 km block target by 2027-02-15 (85% of the 110 km/week Sub-2:58 peak); 70 km/wk held 3 weeks in a row with HRV and RHR steady; 80 km is +6.5 km/week above current.
 2. **Step the long run from 24 to 26 km over the next 3 weeks and put 2×5 km at 4:05/km inside it every 10 days.**
    Why: The last 4 long runs were 22–24 km at about a third of the week, so a gradual step fits the 70 → 94 km/wk build; the projection is +1:05 behind goal.
 3. **Run threshold reps at 4:05/km instead of 4:08/km.**
-   Why: Threshold verdict "room to go faster (~3 s/km)": 100% pace hit at 89% LTHR with 2.5% Pa:Hr.
+   Why: The last threshold sessions hit the 4:08/km target on 100% of reps at 89% of LTHR with 2.5% Pa:Hr, so there is about 3 s/km of headroom.
 
 ### 🧭 North Star
 1. **Keep one 26–28 km easy long run every third week from January.**
@@ -528,3 +529,70 @@ export const DEMO_AUDIT_MARKDOWN = `### Assessment
 - **Sub goal (Sub-1:26 HM):** Keep Nov 12's 15 km HM-pace alternations capped at LTHR (168 bpm); do not chase pace if windy.
 - **North star (Sub-2:58 Marathon):** Long runs have built steadily from 18 to 24 km; hold 24 km with one step to 26 km before the cutback, protecting aerobic durability ahead of the January marathon block.`;
 
+
+/** Rolling 14.2 km elevation profile for the workout banner demo. */
+const DEMO_ELEVATION: Array<[number, number]> = Array.from({ length: 60 }, (_, i) => {
+  const km = +(((i + 0.5) * 14.2) / 60).toFixed(2);
+  const alt = 6 + 14 * Math.sin(i / 6) ** 2 + 9 * Math.sin(i / 2.7) ** 2;
+  return [km, +alt.toFixed(1)];
+});
+
+export const DEMO_WORKOUT_DATA: WorkoutReportData = {
+  version: 1,
+  workout_id: "3681731939",
+  title: "Tempo 3x10' @ Threshold",
+  sport: "Run",
+  sport_family: "run",
+  date: "2026-11-04",
+  start_time: "07:12",
+  location: "Amsterdam",
+  structured: true,
+  tiles: [
+    { key: "distance", label: "Distance", value: "14.2", unit: "km" },
+    { key: "duration", label: "Duration", value: "1:08:34" },
+    { key: "pace", label: "NGP", value: "4:49", unit: "/km" },
+    { key: "hr", label: "Avg HR", value: "152", unit: "bpm", sub: "max 176" },
+    { key: "tss", label: "rTSS", value: "92" },
+    { key: "decoupling", label: "Pa:Hr", value: "3.1", unit: "%" },
+  ],
+  elevation: { gain_m: 86, loss_m: 84, profile: DEMO_ELEVATION },
+  hr_zones: [
+    { label: "Z1", name: "Zone 1", pct: 8.2, seconds: 337 },
+    { label: "Z2", name: "Zone 2", pct: 41.0, seconds: 1687 },
+    { label: "Z3", name: "Zone 3", pct: 13.9, seconds: 572 },
+    { label: "Z4", name: "Zone 4", pct: 33.1, seconds: 1362 },
+    { label: "Z5", name: "Zone 5", pct: 3.8, seconds: 156 },
+  ],
+  weather: { temp_c: 11, feels_like_c: 9, humidity: 78, wind_kmh: 14 },
+  readiness: [
+    { key: "hrv", label: "HRV", value: 52, unit: "ms", date: "2026-11-04", direction: "up", tone: "emerald" },
+    { key: "rhr", label: "RHR", value: 49, unit: "bpm", date: "2026-11-04", direction: "flat", tone: "slate" },
+    { key: "sleep", label: "Sleep", value: 7.6, unit: "h", date: "2026-11-04", direction: null, tone: "slate" },
+  ],
+  other_sessions: [],
+};
+
+export const DEMO_WORKOUT_MARKDOWN = `## Tempo 3x10' @ Threshold
+
+### Session Overview
+* **Date & Title:** Wed 4 Nov 2026, Tempo 3x10' @ Threshold
+* **Volume:** 14.2 km | 1:08:34 | 4:49/km (NGP)
+* **Physiological Load:** HR 152 bpm (max 176) | 178 spm | Pa:Hr 3.1% | rTSS 92
+* **Environment:** Amsterdam | 11°C (feels 9°C), 78%, 14 km/h | +86 m / -84 m
+
+---
+
+### 🎯 Execution & Physiological Assessment
+
+#### Pacing & Quality Execution
+* ✅ **Threshold blocks:** all three reps landed at 4:12–4:15/km against the 4:10–4:20/km target.
+* ⚠️ **Recoveries:** HR only dropped to 148 bpm in the 2' floats; take them truly easy next time.
+
+#### Heart Rate Dynamics & Aerobic Stability
+* ✅ **Aerobic stability:** Pa:Hr 3.1% across the quality block in cool, breezy conditions: well controlled, HR settling at 166–169 bpm (just under LTHR 170).
+
+---
+
+### 🚀 Key Takeaways & Adjustments
+1. **Sub goal (Sub-1:26 HM):** Progress to 3x12' next week at the same pace band.
+2. **North star (Sub-2:58 Marathon):** Keep Saturday's long run fully Zone 2 to bank aerobic volume.`;

@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-_SERIES_KEYS = ("time", "HeartRate", "Speed", "Power", "Distance")
+_SERIES_KEYS = ("time", "HeartRate", "Speed", "Power", "Distance", "SmoothedAltitude", "Altitude")
 
 
 def extract_start_position(points: list) -> Optional[dict]:

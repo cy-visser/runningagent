@@ -75,7 +75,7 @@ def test_profile_is_in_every_model_call_exactly_once_and_never_in_history(runner
     for req in llm.requests:
         si = _system_text(req)
         assert si.count(PROFILE_CONTEXT_START) == 1 and si.count(PROFILE_CONTEXT_END) == 1
-        assert si.count("RUNNER PROFILE:") == 1 and si.count("GOAL PLAN LENS:") == 1
+        assert si.count("RUNNER PROFILE:") == 1 and si.count("GOAL REASONING") == 1
         assert "Name: Cyrille Visser (Age: 38)" in si and "Past left Achilles tendinopathy" in si
         assert "Current Block: Race: Schoorl 10K, Block start: 2026-11-16" in si
         assert "None" not in si.split(PROFILE_CONTEXT_START)[1]                           # no empty fields

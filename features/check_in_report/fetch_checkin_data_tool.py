@@ -113,7 +113,7 @@ async def fetch_checkin_data(
     recovery_baseline = health_readiness(
         dated_metrics, today_date, None, fit.get("tsb_end"), fit.get("atl_end"), fit.get("ctl_end"),
         recent_effort,
-    )["detail"] if dated_metrics else None
+    )["facts"] if dated_metrics else None
 
     # Phase 2: project the goal race (cache-first analyses) while fetching run-time weather.
     race_projection, weather_map = await asyncio.gather(

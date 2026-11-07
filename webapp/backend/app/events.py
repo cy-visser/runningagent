@@ -7,10 +7,18 @@ from typing import Any, Literal, Optional
 
 MessageKind = Literal["checkin", "trend", "workout", "audit", "nutrition", "chat"]
 
-WHITELISTED_REPORT_KEYS: dict[str, Literal["checkin", "trend", "audit"]] = {
+WHITELISTED_REPORT_KEYS: dict[str, Literal["checkin", "trend", "audit", "workout"]] = {
     "checkin_report_data": "checkin",
     "trend_report_data": "trend",
     "audit_report_data": "audit",
+    "workout_report_data": "workout",
+}
+
+# Staged workout changes (web card with the "Update TrainingPeaks" button) and their application.
+# Separate from reports so one coach message can carry both a report and a staged-changes card.
+CHANGE_EVENT_KEYS: dict[str, Literal["staged", "applied"]] = {
+    "staged_workout_changes": "staged",
+    "applied_workout_changes": "applied",
 }
 
 TOOL_LABELS: dict[str, str] = {
@@ -19,8 +27,8 @@ TOOL_LABELS: dict[str, str] = {
     "analyze_workout": "Analysing workout telemetry & recovery",
     "fetch_schedule_audit_data": "Auditing weekly schedule & calendar notes",
     "fetch_nutrition_context": "Loading fueling & weather forecast",
-    "create_workout": "Updating TrainingPeaks workout",
-    "create_note": "Saving TrainingPeaks calendar note",
+    "stage_workout_changes": "Staging plan changes",
+    "apply_staged_changes": "Updating TrainingPeaks",
     "get_weather": "Checking local weather forecast",
     "request_new_goal": "Starting goal setup",
     "load_skill": "Loading coaching protocol",
@@ -40,7 +48,7 @@ def label_for_tool(name: str) -> str:
 
 
 def infer_message_kind(tools_used: set[str], report_kind: Optional[str] = None) -> MessageKind:
-    if report_kind in ("checkin", "trend", "audit"):
+    if report_kind in ("checkin", "trend", "audit", "workout"):
         return report_kind  # type: ignore[return-value]
     for tool_name in ("fetch_checkin_data", "fetch_trend_data", "analyze_workout", "fetch_schedule_audit_data", "fetch_nutrition_context"):
         if tool_name in tools_used:
@@ -67,6 +75,10 @@ class TurnEventTranslator:
         self.tools_used: set[str] = set()
         self.report_kind: Optional[str] = None
         self._thinking_emitted: bool = False
+        # Final texts of this turn's model responses: a turn can hold several (e.g. recommendations,
+        # then the coded "changes staged" line), and the bubble shows all of them.
+        self._final_texts: list[str] = []
+        self._delta_open: bool = False
 
     def feed(self, adk_event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         out: list[tuple[str, dict[str, Any]]] = []
@@ -82,6 +94,10 @@ class TurnEventTranslator:
             if isinstance(payload, dict):
                 self.report_kind = r_kind
                 out.append(("report", {"kind": r_kind, "data": payload}))
+        for state_key, ev_name in CHANGE_EVENT_KEYS.items():
+            payload = state_delta.get(state_key)
+            if isinstance(payload, dict):
+                out.append((ev_name, payload))
 
         author = str(adk_event.get("author") or "")
         if author == "user":
@@ -126,10 +142,16 @@ class TurnEventTranslator:
         if visible_texts:
             joined = "".join(visible_texts)
             if is_partial:
+                if self._final_texts and not self._delta_open:
+                    joined = "\n\n" + joined  # a new response after an earlier one in this turn
+                self._delta_open = True
                 out.append(("delta", {"text": joined}))
             else:
+                if not self._final_texts or self._final_texts[-1] != joined:
+                    self._final_texts.append(joined)
+                self._delta_open = False
                 kind = infer_message_kind(self.tools_used, self.report_kind)
-                out.append(("message", {"text": joined, "kind": kind}))
+                out.append(("message", {"text": "\n\n".join(self._final_texts), "kind": kind}))
                 self._thinking_emitted = False
 
         return out
