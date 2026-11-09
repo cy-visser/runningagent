@@ -22,8 +22,8 @@ function dayLabel(iso: string): string {
   });
 }
 
-function num(value: number | null | undefined, unit: string): string {
-  return value == null ? "–" : `${Number(value.toFixed(1))} ${unit}`.trim();
+function num(value: number | null | undefined, unit: string, digits = 1): string {
+  return value == null ? "–" : `${Number(value.toFixed(digits))} ${unit}`.trim();
 }
 
 type ChangeKind = "create" | "update" | "move";
@@ -63,14 +63,13 @@ function metrics(values: StagedWorkoutSnapshot, other?: StagedWorkoutSnapshot | 
     out.push({ key: "km", text: num(values.distance_km, "km"), changed: differs(values.distance_km, other?.distance_km) });
   }
   if (values.duration_minutes) {
-    out.push({
-      key: "min",
-      text: num(values.duration_minutes, "min"),
-      changed: differs(values.duration_minutes, other?.duration_minutes),
-    });
+    // Whole minutes and TSS; `changed` compares what is shown.
+    const text = num(values.duration_minutes, "min", 0);
+    out.push({ key: "min", text, changed: differs(text, other ? num(other.duration_minutes, "min", 0) : null) });
   }
   if (values.tss_planned != null) {
-    out.push({ key: "tss", text: `TSS ${num(values.tss_planned, "")}`, changed: differs(values.tss_planned, other?.tss_planned) });
+    const text = `TSS ${num(values.tss_planned, "", 0)}`;
+    out.push({ key: "tss", text, changed: differs(text, other ? `TSS ${num(other.tss_planned, "", 0)}` : null) });
   }
   return out;
 }

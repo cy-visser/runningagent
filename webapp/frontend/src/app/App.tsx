@@ -267,6 +267,14 @@ export function App() {
     });
   };
 
+  const handleHome = () => {
+    // "Home" = the Daily Coaching Hub at the top of the page; the conversation is kept.
+    setProfileDrawerOpen(false);
+    setTpDialogOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    document.getElementById("coaching-hub")?.focus({ preventScroll: true });
+  };
+
   const handleTpConnected = async (res: ConnectTpResponse) => {
     const wasUnready = me?.profile_state !== "ready";
     const refreshed = await fetchMe();
@@ -334,7 +342,7 @@ export function App() {
       <TopBar
         me={me}
         newSessionDisabled={streaming}
-        onHome={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        onHome={handleHome}
         onNewSession={handleNewSession}
         onViewProfile={() => {
           setProfileDrawerMode("view");

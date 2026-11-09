@@ -19,12 +19,41 @@ import {
   DEFAULT_TONE_ICON,
   extractLeadingStatus,
   matchLeadingStatusEmoji,
+  normalizeCoachMarkdown,
   parseAsciiProgressBar,
   splitReportPlaceholders,
   type StatusEmojiInfo,
   type StatusIconKey,
   type StatusPillTone,
 } from "./format";
+
+/** hast node shape used by rehypeBrOnly (avoids a direct @types/hast dependency). */
+interface HastNode {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+}
+
+const BR_RE = /^<br\s*\/?>$/i;
+
+/**
+ * Rehype plugin: turns raw `<br>` / `<br/>` (models put them in table cells) into real line breaks.
+ * Every other raw HTML node is left alone, so react-markdown still renders it as escaped text.
+ */
+function rehypeBrOnly() {
+  const walk = (node: HastNode) => {
+    node.children?.forEach((child, i) => {
+      if (child.type === "raw" && BR_RE.test((child.value ?? "").trim())) {
+        node.children![i] = { type: "element", tagName: "br", properties: {}, children: [] };
+      } else {
+        walk(child);
+      }
+    });
+  };
+  return (tree: HastNode) => walk(tree);
+}
 
 /** "recommendation" swaps list bullets for indigo icon squares (Flag / Star / Lightbulb). */
 export type BulletStyle = "default" | "recommendation";
@@ -564,7 +593,7 @@ export function SunsetProgressBar({ percent }: { percent: number }) {
 }
 
 export function RichMarkdown({ content, bulletStyle = "default", spacing = "normal" }: RichMarkdownProps) {
-  const segments = splitReportPlaceholders(content);
+  const segments = splitReportPlaceholders(normalizeCoachMarkdown(content));
   const sp = SECTION_CLASS[spacing];
 
   return (
@@ -588,6 +617,7 @@ export function RichMarkdown({ content, bulletStyle = "default", spacing = "norm
           <ReactMarkdown
             key={`md-${idx}`}
             remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeBrOnly]}
             components={{
               h1: ({ children }) => (
                 <h1 className="font-display text-lg font-bold text-slate-900 mt-4 mb-2 first:mt-0">

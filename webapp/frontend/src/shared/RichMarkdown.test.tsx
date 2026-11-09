@@ -194,3 +194,34 @@ describe("RichMarkdown sub-headings", () => {
     expect(container.querySelector("hr")).toHaveClass("border-slate-200");
   });
 });
+
+describe("RichMarkdown model formatting drift", () => {
+  it("renders LaTeX as plain text and <br> in table cells as a line break, keeping other HTML escaped", () => {
+    // Trimmed from a real coach reply ("how does a 100k week look like for me").
+    const content = [
+      "Volume is capped to prioritize speed and $\\text{VO}_2\\text{max}$ without overload.",
+      "Pace moved $4{:}37 \\rightarrow 4{:}32$/km; shoes cost $5 and $10. Code `$\\text{x}$` stays.",
+      "",
+      "| Day | Target Pace & HR |",
+      "|---|---|",
+      "| **Tuesday** | Quality: 4:45–5:00/km (HR 158–168)<br>Easy: 5:25–5:38/km |",
+      "| **Friday** | MP: 4:55–5:05/km<br/>Easy <script>alert(1)</script> |",
+    ].join("\n");
+    const { container } = render(<RichMarkdown content={content} />);
+    const text = container.textContent ?? "";
+
+    expect(text).toContain("speed and VO₂max without");
+    expect(text).toContain("4:37 → 4:32/km");
+    expect(text).toContain("cost $5 and $10");
+    expect(container.querySelector("code")).toHaveTextContent("$\\text{x}$");
+    expect(text.replace(container.querySelector("code")!.textContent!, "")).not.toMatch(/\\text|\\rightarrow/);
+
+    const cells = container.querySelectorAll("td");
+    expect(text).not.toMatch(/<br\s*\/?>/i);
+    expect(cells[1].querySelector("br")).not.toBeNull();
+    expect(cells[1]).toHaveTextContent("(HR 158–168)Easy: 5:25–5:38/km");
+    expect(cells[3].querySelector("br")).not.toBeNull();
+    expect(container.querySelector("script")).toBeNull();
+    expect(cells[3]).toHaveTextContent("<script>alert(1)</script>");
+  });
+});

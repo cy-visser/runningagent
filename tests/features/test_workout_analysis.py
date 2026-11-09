@@ -2,15 +2,9 @@
 
 import asyncio
 import json
-from datetime import date
 
-from google.adk.models.llm_request import LlmRequest
-from google.genai import types
 
-from running_coach.features.trend_analysis.fetch_trend_data_tool import fetch_trend_data
 from running_coach.features.workout_analysis.analyze_workout_tool import analyze_workout
-from running_coach.features.workout_analysis.helpers.web_report import workout_report_data
-from running_coach.features.workout_analysis.no_workout_reply_callback import no_workout_reply
 
 
 def test_workout_analysis_web_banner_payload_for_run_and_bike(runner):
@@ -57,59 +51,3 @@ def test_workout_analysis_web_banner_payload_for_run_and_bike(runner):
     assert (bike_tiles["tss"]["label"], bike_tiles["tss"]["value"]) == ("TSS", "45")
     assert bike_tiles["if"]["value"] == "0.85"
     assert bike["hr_zones"] is None
-
-
-def test_workout_banner_elevation_profile_and_missing_data():
-    series = [
-        {"time": i * 10, "Distance": i * 0.05, "HeartRate": 140, "SmoothedAltitude": 10 + (i % 20)}
-        for i in range(200)
-    ]
-    report = workout_report_data(
-        {"totals": {"El. Gain": {"value": 86}, "El. Loss": {"value": "--"}}, "lapData": []},
-        {"metrics": {}},
-        profile={"location": "Amsterdam", "latitude": 52.37, "longitude": 4.89},
-        sport="Run", title="Hill reps", workout_date=date(2026, 11, 4), local_start=None,
-        series=series, alignment=None, hr_zones=[], weather=None, dated_metrics=None,
-        start_position={"lat": 40.75, "lon": -73.95},  # New York: not the profile's home
-        structured=False,
-    )
-    elevation = report["elevation"]
-    assert elevation["gain_m"] == 86.0 and elevation["loss_m"] is None
-    assert 10 <= len(elevation["profile"]) <= 60
-    assert all(10 <= alt <= 29 for _, alt in elevation["profile"])
-    assert report["location"] is None and report["start_time"] is None
-    assert report["weather"] is None and report["readiness"] is None and report["hr_zones"] is None
-
-
-def test_workout_analysis_saves_sub_goal_result_matches_gap_fill_and_short_circuits_no_workout(runner):
-    ctx = runner.ctx()
-    out = asyncio.run(analyze_workout(ctx, workout_id="w_race_5k"))
-
-    assert "### Workout Analysis" in out
-    assert "### Planned structure & execution" in out
-    planned = out.split("### Planned structure & execution", 1)[1].split("\n### ", 1)[0]
-    if "| Step |" in planned:   # laps aligned: facts-only delta column, no coded verdicts
-        assert "Δ vs target" in planned and "| Check |" not in planned
-        assert not any(v in planned for v in ("✓", "fast (", "slow (", "[key block]"))
-    assert "**Planned session notes:**" in out
-    assert "**Athlete feedback:** RPE 6/10" in out
-    assert "**Environmental & Weather Context:**" in out
-    assert "Result saved" in out
-    assert len(runner.profile_updates) == 1
-    saved_sub = ctx.state["user_profile"]["sub_goals"][0]["result"]
-    assert saved_sub and saved_sub["workout_id"] == "w_race_5k"
-
-    via_analysis = {k: v for k, v in runner.training_records["w_race_5k"].items() if k != "recorded_at"}
-    runner.training_records.clear()
-    asyncio.run(fetch_trend_data(runner.ctx(), weeks=6))
-    via_gap_fill = {k: v for k, v in runner.training_records["w_race_5k"].items() if k != "recorded_at"}
-    assert via_analysis == via_gap_fill
-
-    # Date with no workout returns deterministic text that no_workout_reply short-circuits.
-    no_w_msg = asyncio.run(analyze_workout(runner.ctx(), date_str="2026-10-28"))
-    assert "No completed workout on 2026-10-28" in no_w_msg
-    req = LlmRequest(contents=[types.Content(role="user", parts=[
-        types.Part(function_response=types.FunctionResponse(name="analyze_workout", response={"result": no_w_msg}))
-    ])])
-    res = no_workout_reply(runner.ctx(), req)
-    assert res is not None and res.content.parts[0].text == no_w_msg

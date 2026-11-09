@@ -194,6 +194,14 @@ describe("app shell & conversation lifecycle", () => {
       { message: "And my easy pace?", sessionId: "fresh-1" },
       expect.any(Object),
     );
+
+    // The top-left title goes home: scrolls to the top and focuses the coaching hub heading,
+    // keeping the conversation.
+    const scrollSpy = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: /go to coaching hub/i }));
+    expect(scrollSpy).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+    expect(document.activeElement).toBe(document.getElementById("coaching-hub"));
+    expect(screen.getByText("And my easy pace?")).toBeInTheDocument();
   });
 });
 

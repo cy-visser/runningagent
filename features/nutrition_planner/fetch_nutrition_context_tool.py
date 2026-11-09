@@ -1,6 +1,7 @@
 """Nutrition context tool for the `nutrition-planner` skill."""
 
 import asyncio
+import logging
 from datetime import timedelta
 
 from google.adk.tools import FunctionTool, ToolContext
@@ -9,6 +10,8 @@ from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import get_today_date, iso_date
 from ...shared.runner_weather import fetch_weather_text
 from .helpers.nutrition_context_text import format_nutrition_context_summary
+
+logger = logging.getLogger(__name__)
 
 
 async def fetch_nutrition_context(
@@ -29,7 +32,16 @@ async def fetch_nutrition_context(
     upcoming, weather_str = await asyncio.gather(
         tp_calls.fetch_workouts(tool_context, iso_date(today_date), iso_date(end_date)),
         fetch_weather_text(profile, forecast_dates),
+        return_exceptions=True,
     )
+    if isinstance(upcoming, Exception):
+        logger.warning("Failed to fetch upcoming workouts for nutrition context: %s", upcoming)
+        return (f"Error: Could not load the upcoming TrainingPeaks workouts ({iso_date(today_date)} to "
+                f"{iso_date(end_date)}). This is a data-loading failure: do NOT assume there is no training "
+                "planned. Ask the runner what sessions are coming up, or suggest trying again shortly.")
+    if isinstance(weather_str, Exception):
+        logger.warning("Failed to fetch weather for nutrition context: %s", weather_str)
+        weather_str = "Weather forecast unavailable."
 
     return format_nutrition_context_summary(
         upcoming_workouts=upcoming,

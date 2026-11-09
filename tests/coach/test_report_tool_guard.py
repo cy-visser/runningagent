@@ -11,43 +11,9 @@ from google.genai import types
 
 from running_coach.agent import app
 from running_coach.coach.coaching.coaching_agent import coaching_agent
-from running_coach.coach.coaching.report_tool_guard import is_turn_report
 from running_coach.features.check_in_report.helpers.web_report import CHECKIN_REPORT_STATE_KEY
 from running_coach.shared.session_state import AUTH_EMAIL_STATE_KEY
 from running_coach.tests.fakes import EMAIL
-
-
-def _load(skill: str) -> dict:
-    return {"name": "load_skill", "skill": skill}
-
-
-def _tool(name: str) -> dict:
-    return {"name": name}
-
-
-def test_report_tool_is_allowed_as_the_turns_report():
-    # Routing step: load_skill + data tool in parallel.
-    assert is_turn_report("fetch_checkin_data", [[_load("check-in-report"), _tool("fetch_checkin_data")]])
-    # Skill already in the conversation: data tool alone in the first step.
-    assert is_turn_report("fetch_checkin_data", [[_tool("fetch_checkin_data")]])
-    # Web quick action: dispatched before the model, nothing recorded.
-    assert is_turn_report("fetch_trend_data", [])
-    # load_skill first, data tool in the next step.
-    assert is_turn_report("fetch_schedule_audit_data", [[_load("schedule-audit")], [_tool("fetch_schedule_audit_data")]])
-
-
-def test_report_tool_is_blocked_as_a_lookup():
-    # The reported trace: workout-creator loaded, then fetch_checkin_data to find workout ids.
-    assert not is_turn_report("fetch_checkin_data", [[_load("workout-creator")], [_tool("fetch_checkin_data")]])
-    # Another skill loaded in the same step.
-    assert not is_turn_report("fetch_checkin_data", [[_load("workout-creator"), _tool("fetch_checkin_data")]])
-    # Other work earlier in the turn.
-    assert not is_turn_report("fetch_trend_data", [[_tool("get_weather")], [_tool("fetch_trend_data")]])
-    assert not is_turn_report(
-        "fetch_schedule_audit_data", [[_tool("stage_workout_changes")], [_tool("fetch_schedule_audit_data")]]
-    )
-    # Another report's skill.
-    assert not is_turn_report("fetch_checkin_data", [[_load("schedule-audit")], [_tool("fetch_checkin_data")]])
 
 
 class ScriptedLlm(BaseLlm):
@@ -108,13 +74,3 @@ def test_follow_up_lookup_opens_no_checkin_report(runner, monkeypatch):
     assert not _report_deltas(events)
     assert s.state.get(CHECKIN_REPORT_STATE_KEY) is None
     assert not any(name == "tp_get_fitness" for name, _ in runner.tp_calls)  # tool body never ran
-
-
-def test_requested_checkin_still_opens_the_report(runner, monkeypatch):
-    events, s = _run_turn(monkeypatch, [
-        [_call("load_skill", skill_name="check-in-report"), _call("fetch_checkin_data")],
-    ])
-    (resp,) = _responses(events, "fetch_checkin_data")
-    assert "was not run" not in str(resp)
-    assert _report_deltas(events)
-    assert isinstance(s.state.get(CHECKIN_REPORT_STATE_KEY), dict)

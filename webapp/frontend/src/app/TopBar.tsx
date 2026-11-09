@@ -30,9 +30,11 @@ export function TopBar({
           <button
             type="button"
             onClick={onHome}
+            aria-label="AI Running Coach: go to coaching hub"
+            title="Back to your coaching hub"
             className="group flex items-center gap-2.5 text-left focus:outline-none cursor-pointer"
           >
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sunset text-white shadow-sm transition group-hover:scale-[1.02]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sunset text-white shadow-sm transition group-hover:scale-[1.02] group-active:scale-95">
               <Activity className="h-5 w-5" />
             </span>
             <div>

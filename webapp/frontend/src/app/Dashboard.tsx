@@ -170,7 +170,11 @@ export function Dashboard({
             <p className="text-sm font-semibold uppercase tracking-wider text-rose-700">
               {isReady ? "Daily Coaching Hub" : "Welcome to AI Running Coach"}
             </p>
-            <h1 className="mt-1 font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
+            <h1
+              id="coaching-hub"
+              tabIndex={-1}
+              className="mt-1 font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 focus:outline-none"
+            >
               {isReady
                 ? `${greetingForHour()}, ${firstName}`
                 : `Welcome, ${firstName}`}

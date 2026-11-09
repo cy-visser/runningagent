@@ -210,6 +210,68 @@ export function splitReportPlaceholders(
   return result;
 }
 
+/* ---------- LaTeX drift: the model sometimes writes $\text{VO}_2\text{max}$ despite the prompt ---------- */
+
+const SUBSCRIPTS: Record<string, string> = {
+  "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+  "+": "₊", "-": "₋", "(": "₍", ")": "₎",
+};
+const SUPERSCRIPTS: Record<string, string> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "+": "⁺", "-": "⁻", "(": "⁽", ")": "⁾",
+};
+const LATEX_SYMBOLS: Record<string, string> = {
+  rightarrow: "→", Rightarrow: "⇒", to: "→", leftarrow: "←", times: "×", approx: "≈", leq: "≤", le: "≤",
+  geq: "≥", ge: "≥", pm: "±", cdot: "·", Delta: "Δ", sim: "~", degree: "°", circ: "°",
+};
+const LATEX_TEXT_CMD_RE = /\\(?:text|mathrm|textbf|mathbf|textit|operatorname)\s*\{([^{}]*)\}/g;
+const LATEX_SYMBOL_RE = new RegExp(`\\\\(${Object.keys(LATEX_SYMBOLS).join("|")})(?![A-Za-z])`, "g");
+
+function scriptChars(chars: string, map: Record<string, string>): string {
+  return [...chars].every((c) => c in map) ? [...chars].map((c) => map[c]).join("") : chars;
+}
+
+/** Converts a LaTeX math fragment to readable plain text (best effort, never throws). */
+function latexToText(math: string): string {
+  return math
+    .replace(LATEX_TEXT_CMD_RE, "$1")
+    .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "$1/$2")
+    .replace(/\\sqrt\s*\{([^{}]*)\}/g, "√$1")
+    .replace(LATEX_SYMBOL_RE, (_, cmd: string) => LATEX_SYMBOLS[cmd])
+    .replace(/\\([%$&#_])/g, "$1")
+    .replace(/\\[,;:! ]/g, " ")
+    .replace(/_\{([^{}]*)\}|_([A-Za-z0-9])/g, (_, a?: string, b?: string) => scriptChars(a ?? b ?? "", SUBSCRIPTS))
+    .replace(/\^\{([^{}]*)\}|\^([A-Za-z0-9])/g, (_, a?: string, b?: string) => scriptChars(a ?? b ?? "", SUPERSCRIPTS))
+    .replace(/\\([A-Za-z]+)/g, "$1")
+    .replace(/[{}]/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+const LOOKS_LIKE_LATEX_RE = /\\[A-Za-z]|[_^]/;
+
+function normalizeProse(text: string): string {
+  return text
+    // $$...$$ blocks first, then inline $...$ (no space just inside the dollars, so "$5 and $10" never pairs).
+    .replace(/\$\$([\s\S]+?)\$\$/g, (m, inner: string) => (LOOKS_LIKE_LATEX_RE.test(inner) ? latexToText(inner) : m))
+    .replace(/\$(?!\s)([^$\n]+?)(?<!\s)\$/g, (m, inner: string) => (LOOKS_LIKE_LATEX_RE.test(inner) ? latexToText(inner) : m))
+    // Stray known commands outside $...$ (Markdown escapes like \* are not letters, so they stay).
+    .replace(LATEX_TEXT_CMD_RE, "$1")
+    .replace(LATEX_SYMBOL_RE, (_, cmd: string) => LATEX_SYMBOLS[cmd]);
+}
+
+/**
+ * Cleans model formatting drift before rendering: LaTeX math becomes plain text / Unicode
+ * (`$\text{VO}_2\text{max}$` -> `VO₂max`, `\rightarrow` -> `→`). Fenced and inline code are untouched.
+ */
+export function normalizeCoachMarkdown(markdown: string): string {
+  if (!markdown.includes("\\") && !markdown.includes("$")) return markdown;
+  return markdown
+    .split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/)
+    .map((part, i) => (i % 2 === 1 ? part : normalizeProse(part)))
+    .join("");
+}
+
 export interface MarkdownSection {
   /** Heading text without markdown markers ("" for the preamble before the first heading). */
   title: string;

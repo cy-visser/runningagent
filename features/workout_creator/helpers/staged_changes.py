@@ -47,9 +47,15 @@ DURATION_TOL_MIN = 1.0
 TOTALS_NOTE_REL = 0.05
 
 
-def _number(value: Any) -> Optional[float]:
+_WHOLE_FIELDS = ("duration_minutes", "tss_planned")
+
+
+def _number(value: Any, field: Optional[str] = None) -> Optional[float]:
+    """Whole numbers for duration and TSS (`field` in _WHOLE_FIELDS), one decimal otherwise (distance)."""
     try:
-        return None if value is None or value == "" else round(float(value), 1)
+        if value is None or value == "":
+            return None
+        return round(float(value)) if field in _WHOLE_FIELDS else round(float(value), 1)
     except (TypeError, ValueError):
         return None
 
@@ -131,8 +137,8 @@ def replaces_snapshot(existing: Optional[dict]) -> Optional[dict]:
         "date": iso_date(day) if day else None,
         "sport": existing.get("sport"),
         "distance_km": _number(existing.get("distance_planned_km")),
-        "duration_minutes": _number(hours * 60.0) if hours else None,
-        "tss_planned": _number(existing.get("tss_planned")),
+        "duration_minutes": _number(hours * 60.0, "duration_minutes") if hours else None,
+        "tss_planned": _number(existing.get("tss_planned"), "tss_planned"),
     }
     summary = description_summary(existing.get("description"))
     if summary:
@@ -202,7 +208,7 @@ def resolve_changes(
         sport = str(raw.get("sport") or "Run").strip() or "Run"
         change.update({"sport": sport, "workout_id": None})
         for field in _NUMERIC_FIELDS:
-            change[field] = _number(raw.get(field))
+            change[field] = _number(raw.get(field), field)
         if raw.get("structure") not in (None, "", {}):
             change["structure"] = raw["structure"]
             change["builder"] = BUILDER_COACH
@@ -372,8 +378,8 @@ def _display_date(value: str) -> str:
     return day.strftime("%a %d %b") if day else value
 
 
-def _fmt(value: Any, unit: str = "") -> str:
-    num = _number(value)
+def _fmt(value: Any, unit: str = "", field: Optional[str] = None) -> str:
+    num = _number(value, field)
     if num is None:
         return "–"
     text = f"{num:g}"
@@ -402,9 +408,9 @@ def workout_metrics(values: dict, show_sport: bool) -> str:
     if _number(values.get("distance_km")):
         parts.append(_fmt(values["distance_km"], "km"))
     if _number(values.get("duration_minutes")):
-        parts.append(_fmt(values["duration_minutes"], "min"))
+        parts.append(_fmt(values["duration_minutes"], "min", "duration_minutes"))
     if _number(values.get("tss_planned")) is not None:
-        parts.append(f"TSS {_fmt(values['tss_planned'])}")
+        parts.append(f"TSS {_fmt(values['tss_planned'], field='tss_planned')}")
     return " · ".join(parts)
 
 

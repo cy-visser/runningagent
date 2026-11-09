@@ -80,7 +80,12 @@ async def fetch_checkin_data(
         )
     raw = await gather_labeled(fetches)
 
-    all_workouts = raw["workouts"] or []
+    if raw["workouts"] is None:
+        # A failed fetch is not "no training": never report zero workouts in its place.
+        return (f"Error: Could not load the TrainingPeaks workouts for {start_str} to {end_str}, so the "
+                "check-in cannot be built. This is a data-loading failure: do NOT tell the runner they have "
+                "no workouts. Say the data could not be loaded and suggest trying again shortly.")
+    all_workouts = raw["workouts"]
     in_window = [
         w for w in all_workouts
         if (parse_date(w.get("date") or w.get("start_time")) or q_start) >= q_start

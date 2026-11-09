@@ -64,14 +64,20 @@ async def fetch_schedule_audit_data(
                                     start_date=iso_date(today_date - timedelta(days=7)), end_date=iso_date(today_date)),
     })
 
-    all_workouts = raw["workouts"] or []
+    if raw["workouts"] is None:
+        # Never audit an empty list in place of data we could not load: the coach would report an
+        # empty schedule. (gather_labeled has logged the TrainingPeaks error.)
+        return (f"Error: Could not load the TrainingPeaks workouts for {start_str} to {end_str}, so the "
+                "schedule cannot be audited. This is a data-loading failure: do NOT tell the runner the "
+                "schedule is empty. Say the data could not be loaded and suggest trying again shortly.")
+    all_workouts = raw["workouts"]
     weeks = build_week_buckets(all_workouts, q_start, q_end)
     # A window starting mid-week makes its first week partial: no week-over-week change for it.
     prior_km = None
     if q_start.weekday() == 0:
         prior_weeks = build_week_buckets(all_workouts, prior_start, prior_end)
         prior_km = sum(w["total_distance_km"] or 0.0 for w in prior_weeks.values())
-    add_notes_to_weeks(weeks, raw["calendar notes"])
+    add_notes_to_weeks(weeks, raw["calendar notes"] or [])
     week_list = annotate_long_runs(list(weeks.values()), profile)
     annotate_week_over_week(week_list, prior_km)
     history_workouts = (raw["baseline workouts"] or []) + all_workouts
@@ -81,7 +87,11 @@ async def fetch_schedule_audit_data(
     daily = coerce_mcp_payload(raw["fitness PMC"]).get("daily_data") or [] if raw["fitness PMC"] else []
     ctl = next((d.get("ctl") for d in reversed(daily) if d.get("ctl") is not None), None)
     goal_context = format_goal_context(profile, today_date, ctl, recent_long_runs(history_workouts, today_date))
-    return format_schedule_audit_summary(week_list, goal_context=goal_context)
+    summary = format_schedule_audit_summary(week_list, goal_context=goal_context)
+    if raw["calendar notes"] is None:
+        summary += ("\n\n⚠️ Calendar notes unavailable (TrainingPeaks error): travel, illness or other "
+                    "calendar notes for this window are not shown above.")
+    return summary
 
 
 fetch_schedule_audit_data_tool = FunctionTool(fetch_schedule_audit_data)

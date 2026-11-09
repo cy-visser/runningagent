@@ -24,8 +24,8 @@ const STAGED: StagedChanges = {
       },
       workout_id: "w111",
       distance_km: 12,
-      duration_minutes: 65,
-      tss_planned: 78,
+      duration_minutes: 64.6, // shown as 65 min
+      tss_planned: 78.2, // shown as TSS 78, so not marked as changed vs 78
       structure_summary: "15' WU · 4× (2 km @ 4:45–4:52/km / 2' rec) · 10' CD",
     },
     {

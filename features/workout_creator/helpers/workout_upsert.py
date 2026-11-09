@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Per-action differences between the create and update MCP tools.
 _CREATE_SPEC = {"tool": "tp_create_workout", "duration_cast": lambda v: int(round(v)), "verb": "create"}
-_UPDATE_SPEC = {"tool": "tp_update_workout", "duration_cast": float, "verb": "update"}
+_UPDATE_SPEC = {"tool": "tp_update_workout", "duration_cast": lambda v: int(round(v)), "verb": "update"}
 
 
 async def _run(tool_context: ToolContext, tool: str, verb: str, what: str, node_input: dict) -> dict[str, Any]:

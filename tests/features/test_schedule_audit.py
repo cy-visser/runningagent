@@ -1,6 +1,7 @@
 """Behavioural test for the schedule audit feature (`fetch_schedule_audit_data`)."""
 
 import asyncio
+from datetime import date
 import json
 import re
 
@@ -71,3 +72,40 @@ def test_schedule_audit_surfaces_goal_context_long_run_facts_and_web_payload(run
     trend_plan = {p["week"]: p["km"] for p in trend_ctx.state["trend_report_data"]["goal"]["volume"]["plan"]}
     audit_targets = {wk: v["target_km"] for wk, v in by_week.items() if v}
     assert audit_targets and all(trend_plan[wk] == km for wk, km in audit_targets.items())
+
+
+def _span_days(kw: dict) -> int:
+    return (date.fromisoformat(kw["end_date"][:10]) - date.fromisoformat(kw["start_date"][:10])).days
+
+
+def test_schedule_audit_over_90_days_is_chunked_and_populated(runner):
+    # Regression: "audit from today until 7 Feb 2027" (> 90 days) came back as an empty schedule because
+    # TrainingPeaks rejects list ranges > 90 days and the error was coerced to [].
+    runner.workouts.append({
+        "id": "w_far", "date": "2027-02-03", "start_time": "2027-02-03T07:30:00", "title": "Far Tempo Run",
+        "sport": "Run", "type": "planned", "distance_planned_km": 11.0, "duration_planned": 0.9,
+        "tss_planned": 70.0,
+    })
+    runner.notes.append({"id": "n_far", "date": "2027-02-01", "title": "Taper starts", "description": ""})
+    ctx = runner.ctx()
+    out = asyncio.run(fetch_schedule_audit_data(ctx, start_date="2026-10-27", end_date="2027-02-07"))
+
+    list_calls = [kw for name, kw in runner.tp_calls if name in ("tp_get_workouts", "tp_list_notes")]
+    assert list_calls and all(_span_days(kw) <= 90 for kw in list_calls)
+    assert "Far Tempo Run" in out and "[w_far]" in out
+    assert "Taper starts" in out
+    assert "Threshold 2 x 15'" in out           # planned sessions near the start of the window too
+    assert "unavailable" not in out.lower()
+    report = ctx.state.get("audit_report_data")
+    assert report and len(report["weeks"]) == 15
+
+
+def test_schedule_audit_reports_tp_failure_instead_of_empty_schedule(runner):
+    runner.failing_tools.add("tp_get_workouts")
+    ctx = runner.ctx()
+    out = asyncio.run(fetch_schedule_audit_data(ctx, weeks_forward=4, weeks_back=1))
+
+    assert out.startswith("Error:")
+    assert "TrainingPeaks" in out and "empty" in out
+    assert "no runs planned" not in out
+    assert "audit_report_data" not in ctx.state

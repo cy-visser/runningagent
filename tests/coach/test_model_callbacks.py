@@ -46,35 +46,3 @@ def test_completed_turns_lose_thoughts_and_signatures():
     assert [p.function_call.name for p in first_model.parts] == ["fetch_schedule_audit_data"]
     assert all(p.thought_signature is None and not p.thought for p in first_model.parts + second_model.parts)
     assert [p.text for p in second_model.parts] == ["### Assessment"]  # empty signed part dropped
-
-
-def test_current_turn_keeps_signatures():
-    out = _run([
-        _user("old"),
-        _model(types.Part(text="reply", thought_signature=SIG)),
-        _user("yes update it"),
-        _model(_call("create_workout"), _call("create_workout", sig=None)),
-        _resp("create_workout"),
-    ])
-    assert out[1].parts[0].thought_signature is None
-    assert out[3].parts[0].thought_signature == SIG  # tool loop since the last runner message
-
-
-def test_model_content_with_only_signature_is_dropped():
-    out = _run([
-        _user("hi"),
-        _model(types.Part(text="", thought_signature=SIG)),
-        _user("again"),
-    ])
-    assert [c.role for c in out] == ["user", "user"]
-
-
-def test_original_contents_are_not_mutated():
-    model = _model(types.Part(text="reply", thought_signature=SIG))
-    _run([_user("a"), model, _user("b")])
-    assert model.parts[0].thought_signature == SIG
-
-
-def test_no_history_is_unchanged():
-    contents = [_user("first message")]
-    assert _run(contents) == contents

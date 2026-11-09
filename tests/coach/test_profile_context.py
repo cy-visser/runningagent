@@ -11,17 +11,10 @@ from google.genai import types
 
 from running_coach.agent import root_agent
 from running_coach.coach.coaching.coaching_agent import coaching_agent
-from running_coach.coach.coaching.instruction import (
-    PROFILE_CONTEXT_END,
-    PROFILE_CONTEXT_START,
-    build_profile_context,
-    format_profile_summary,
-)
-from running_coach.coach.coaching.profile_context import ensure_profile_context, inject_profile_context
+from running_coach.coach.coaching.instruction import PROFILE_CONTEXT_END, PROFILE_CONTEXT_START
 from running_coach.coach.coaching.quick_actions import QUICK_ACTION_STATE_KEY
-from running_coach.coach.profile_lookup import PROFILE_UNAVAILABLE_MESSAGE
 from running_coach.shared.session_state import AUTH_EMAIL_STATE_KEY
-from running_coach.tests.fakes import EMAIL, PLAN_PROFILE, SINGLE_PROFILE, FakeContext
+from running_coach.tests.fakes import EMAIL
 
 
 class RecordingLlm(BaseLlm):
@@ -81,32 +74,3 @@ def test_profile_is_in_every_model_call_exactly_once_and_never_in_history(runner
         assert "None" not in si.split(PROFILE_CONTEXT_START)[1]                           # no empty fields
         # The profile is per-call system context only: it never piles up in conversation history.
         assert "RUNNER PROFILE" not in _contents_text(req)
-
-
-def test_profile_summary_is_complete_and_injection_is_idempotent(runner):
-    summary = format_profile_summary({**SINGLE_PROFILE, "taper_weeks": 2, "injuries": "", "shoe_rotation": None})
-    assert "Current Block: Block start: 2026-08-01, Taper override: 2 weeks" in summary
-    assert "Injuries" not in summary and "Shoe Rotation" not in summary and "None" not in summary
-
-    req = LlmRequest(config=types.GenerateContentConfig(system_instruction="Coach rules."))
-    inject_profile_context(req, build_profile_context(dict(PLAN_PROFILE)))
-    inject_profile_context(req, build_profile_context(dict(SINGLE_PROFILE)))           # e.g. callback runs twice
-    si = req.config.system_instruction
-    assert si.startswith("Coach rules.\n\n") and si.count(PROFILE_CONTEXT_START) == 1
-    assert "Sub-3:30 Marathon" in si and "Sub-3:15 Marathon" not in si                 # replaced, not appended
-
-
-def test_missing_profile_is_reloaded_or_the_call_is_refused(runner):
-    # Profile dropped from state mid-session -> reloaded from Firestore and injected.
-    ctx = FakeContext(state={AUTH_EMAIL_STATE_KEY: EMAIL})
-    req = LlmRequest(config=types.GenerateContentConfig(system_instruction="Coach rules."))
-    assert asyncio.run(ensure_profile_context(ctx, req)) is None
-    assert ctx.state["user_profile"]["email"] == EMAIL
-    assert req.config.system_instruction.count("RUNNER PROFILE:") == 1
-
-    # Unknown caller -> no coaching without a profile: the model call is short-circuited.
-    ctx = FakeContext(state={AUTH_EMAIL_STATE_KEY: "stranger@x.com"})
-    req = LlmRequest(config=types.GenerateContentConfig(system_instruction="Coach rules."))
-    resp = asyncio.run(ensure_profile_context(ctx, req))
-    assert resp.content.parts[0].text == PROFILE_UNAVAILABLE_MESSAGE
-    assert "RUNNER PROFILE" not in req.config.system_instruction

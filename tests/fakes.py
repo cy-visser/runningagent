@@ -95,6 +95,14 @@ def envelope(data: Any) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(data)}]}
 
 
+def _range_days(kw: dict) -> int:
+    """Days between start_date and end_date of a TP list call (0 when either is missing)."""
+    s, e = kw.get("start_date"), kw.get("end_date")
+    if not s or not e:
+        return 0
+    return (date.fromisoformat(e[:10]) - date.fromisoformat(s[:10])).days
+
+
 class FakeContext:
     """Minimal ADK ToolContext / Workflow Context double."""
 
@@ -120,8 +128,8 @@ class FakeRunnerEnv:
         self.profile_updates: list[tuple[str, dict]] = []
         self.tp_calls: list[tuple[str, dict]] = []
         self.rate_limited_workout_ids: set[str] = set()
-        # Optional per-workout TrainingPeaks builder (tp_get_workout); runs default to the Canova builder.
-        self.builders: dict[str, dict | None] = {}
+        # TP tool names that always answer with an error envelope (outage simulation).
+        self.failing_tools: set[str] = set()
         self.workouts, self.daily_pmc, self.metrics, self.notes = self._build_data()
 
     def ctx(self, profile: dict | None = None, state: dict | None = None, user_id: str | None = None) -> FakeContext:
@@ -201,6 +209,12 @@ class FakeRunnerEnv:
 
     async def run_tp_tool(self, tool_context: Any, name: str, **kw: Any) -> Any:
         self.tp_calls.append((name, kw))
+        if name in self.failing_tools:
+            return envelope({"isError": True, "error_code": "API_ERROR", "message": "503 Service Unavailable"})
+        if name in ("tp_get_workouts", "tp_list_notes", "tp_get_metrics") and _range_days(kw) > 90:
+            # Same rule as the real MCP DateRangeInput validator.
+            return envelope({"isError": True, "error_code": "VALIDATION_ERROR",
+                             "message": "Date range too large. Maximum 90 days."})
         if name == "tp_get_workouts":
             s, e = kw["start_date"][:10], kw["end_date"][:10]
             return envelope({"workouts": [w for w in self.workouts if s <= w["date"] <= e]})
@@ -222,7 +236,7 @@ class FakeRunnerEnv:
                 "rpe": 6,
                 "feeling": 7,
                 "new_comment": "Felt strong and controlled",
-                "structured_workout": self.builders.get(wid, CANOVA["structured_workout"] if is_run else None),
+                "structured_workout": CANOVA["structured_workout"] if is_run else None,
                 "metrics": {
                     "duration_actual": w.get("duration_actual", 1.0),
                     "distance_actual_km": w.get("distance_actual_km", 10.0),

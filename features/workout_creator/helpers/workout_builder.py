@@ -57,8 +57,8 @@ def _pace_seconds(text: str) -> Optional[float]:
     return total if 0 <= seconds < 60 and 90 <= total <= 1200 else None
 
 
-def pace_to_percent(pace: str, threshold_speed: float) -> tuple[float, float]:
-    """'4:25-4:35' or '4:30' -> (min %, max %) of threshold pace, one decimal; the faster pace is the higher %.
+def pace_to_percent(pace: str, threshold_speed: float) -> tuple[int, int]:
+    """'4:25-4:35' or '4:30' -> (min %, max %) of threshold pace, whole %; the faster pace is the higher %.
 
     Raises ValueError on an unreadable pace.
     """
@@ -67,7 +67,7 @@ def pace_to_percent(pace: str, threshold_speed: float) -> tuple[float, float]:
     if not 1 <= len(bounds) <= 2 or any(b is None for b in bounds):
         raise ValueError(f"unreadable pace '{pace}' (use 'm:ss' or 'm:ss-m:ss' per km)")
     threshold_pace = 1000.0 / threshold_speed
-    pcts = sorted(round(threshold_pace / b * 100.0, 1) for b in bounds)
+    pcts = sorted(round(threshold_pace / b * 100.0) for b in bounds)
     return pcts[0], pcts[-1]
 
 
@@ -116,7 +116,7 @@ def _wire_step(raw: Any, metric: str, thr: dict, where: str) -> tuple[Optional[d
     if not (0 <= lo <= 300 and 0 <= hi <= 300) or lo > hi:
         return None, f"{where}: intensity_min/intensity_max must be within 0-300 with min <= max"
 
-    targets: list[dict] = [{"minValue": _exact(lo), "maxValue": _exact(hi)}]
+    targets: list[dict] = [{"minValue": round(lo), "maxValue": round(hi)}]  # whole % (no 88.9 %)
     targets += [t for t in (raw.get("extra_targets") or []) if isinstance(t, dict)]
     name = str(raw.get("name") or _DEFAULT_NAMES[cls]).strip()[:100] or _DEFAULT_NAMES[cls]
     return {
@@ -285,10 +285,10 @@ def builder_totals(native: dict, thr: dict) -> dict[str, Optional[float]]:
     tss = None
     if seconds_ok and intensity_ok and seconds_total > 0:
         intensity_factor = (weighted / seconds_total) ** 0.25 / 100.0
-        tss = round(seconds_total / 3600.0 * intensity_factor ** 2 * 100.0, 1)
+        tss = round(seconds_total / 3600.0 * intensity_factor ** 2 * 100.0)
     return {
         "distance_km": round(metres_total / 1000.0, 2) if metres_ok and metres_total > 0 else None,
-        "duration_minutes": round(seconds_total / 60.0, 1) if seconds_ok and seconds_total > 0 else None,
+        "duration_minutes": round(seconds_total / 60.0) if seconds_ok and seconds_total > 0 else None,
         "tss_planned": tss,
     }
 
