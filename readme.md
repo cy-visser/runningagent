@@ -35,17 +35,12 @@ Authenticate Application Default Credentials so local runs can access Firestore 
 gcloud auth application-default login
 ```
 
-Create a `.env` file in `running_coach/` (never put `TP_AUTH_COOKIE` in `.env`):
+Copy `.env.example` to `.env` in `running_coach/` and fill it in (never put `TP_AUTH_COOKIE` in `.env`). It also holds
+the models (`COACH_MODEL`, `COACH_THINKING_LEVEL`, `COACH_FALLBACK_MODEL`, `ONBOARDING_MODEL`); `agents-cli deploy`
+passes `.env` to the Agent Runtime.
 
-```env
-GOOGLE_GENAI_USE_VERTEXAI=1
-GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
-FIRESTORE_PROJECT_ID=YOUR_PROJECT_ID
-GOOGLE_CLOUD_LOCATION=eu
-FIRESTORE_DATABASE=running-coach
-TP_COOKIE_KMS_KEY=projects/YOUR_PROJECT_ID/locations/europe-west4/keyRings/running-coach/cryptoKeys/tp-cookie
-DEV_RUNNER_EMAIL=you@yourdomain.com
-PYTHONPATH=/app/agents/running_coach
+```bash
+cp .env.example .env
 ```
 
 ### 3. Run Locally
@@ -75,7 +70,8 @@ cd webapp/frontend && npm test -- --run && npm run build
 Behavioural eval sets in `evals/` exercise the full agent with live credentials:
 
 ```bash
-adk eval . evals/comprehensive_coach_evals.evalset.json --config_file_path evals/eval_config.json
+# ADK 2.x: the eval set id must not contain a path, so run from evals/ ("n" answers the telemetry prompt)
+cd evals && echo n | adk eval .. comprehensive_coach_evals.evalset.json --config_file_path eval_config.json
 ```
 
 ---
@@ -115,6 +111,9 @@ chmod +x deploy.sh
 
 # Deploy Agent Runtime + Cloud Run Web App (behind IAP):
 ./deploy.sh
+
+# Models come from .env. Rollback without a code change: set COACH_MODEL=gemini-3.8-flash and
+# COACH_THINKING_LEVEL=HIGH in .env, then ./deploy.sh again.
 ```
 
 Grant IAM users access to the Cloud Run Web App via IAP:

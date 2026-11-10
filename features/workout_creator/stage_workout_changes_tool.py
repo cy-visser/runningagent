@@ -12,6 +12,7 @@ from google.adk.tools import FunctionTool, ToolContext
 from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import iso_date
 from ...shared.tp_payloads import coerce_mcp_payload
+from ...shared.ui_channel import reply
 from .helpers.staged_changes import (
     BUILDER_CHECK,
     KIND_WORKOUT,
@@ -26,14 +27,15 @@ from .helpers.workout_builder import needs_builder
 logger = logging.getLogger(__name__)
 
 _AMBIGUOUS_MESSAGE = (
-    "Some changes were not staged: ask the runner which workout to change for each `ambiguous` entry and stage "
-    "the full set again with workout_id or create=true."
+    "Some changes were not staged: ask the runner which item to change or delete for each `ambiguous` entry and "
+    "stage the full set again with its workout_id (a note: its exact title), or create=true to add a session."
 )
 _NOT_FOUND_MESSAGE = (
-    "Some changes were not staged: the `not_found` workout_ids do not exist in TrainingPeaks. Use the [workout_id] "
-    "of the planned session from this conversation (or omit it to change the session of that sport on date_str) "
-    "and stage the full set again."
+    "Some changes were not staged: the `not_found` items do not exist in TrainingPeaks. Use the [workout_id] of the "
+    "planned session from this conversation, or date_str + sport (a note: date_str + title), and stage the full set "
+    "again."
 )
+_REFUSED_MESSAGE = "Completed workouts are never deleted: tell the runner which `refused` entries stay."
 _NEEDS_STRUCTURE_MESSAGE = (
     "Nothing was staged: every Run/Bike workout you create, or whose distance/duration you change, needs the exact "
     "workout builder. For each `needs_structure` entry send the complete `structure` (when `current_structure` is "
@@ -43,6 +45,32 @@ _NEEDS_STRUCTURE_MESSAGE = (
 # Rejected (needs_structure) staging attempts allowed in one turn before the app stops the retries.
 MAX_NEEDS_STRUCTURE_ATTEMPTS = 3
 _ATTEMPTS_STATE_KEY = "temp:needs_structure_attempts"
+
+
+def staged_text(staged: int) -> str:
+    noun = "change" if staged == 1 else "changes"
+    return f"📋 {staged} {noun} staged. Review them below and press **Update TrainingPeaks** to apply."
+
+
+def builder_not_staged_text(needs_structure: list[dict]) -> str:
+    lines = ["⚠️ **Nothing was staged:** I could not write an exact workout builder for:"]
+    lines += [f"- {n.get('date_str')} · {n.get('title')}: {n.get('why')}" for n in needs_structure]
+    lines += ["", "Ask me again, ideally with the exact session (reps, lengths, target paces)."]
+    return "\n".join(lines)
+
+
+def _wrote_text_this_turn(tool_context: ToolContext) -> bool:
+    """The coach already wrote visible text in this invocation (e.g. alongside this call)."""
+    invocation = getattr(tool_context, "invocation_id", None)
+    session = getattr(tool_context, "session", None)
+    for event in reversed(getattr(session, "events", None) or []):
+        if event.invocation_id != invocation:
+            break
+        if event.author == "user" or event.partial or not event.content:
+            continue
+        if any(p.text and p.text.strip() and not p.thought for p in event.content.parts or []):
+            return True
+    return False
 
 
 def _rejected_attempts(tool_context: ToolContext) -> int:
@@ -61,6 +89,16 @@ async def _planned_workouts(tool_context: ToolContext, days: list[date]) -> list
         return await tp_calls.fetch_workouts_range(tool_context, min(days), max(days))
     except Exception as e:  # resolution falls back to creating; never block staging
         logger.warning("Planned workouts unavailable for staging: %s", e)
+        return []
+
+
+async def _planned_notes(tool_context: ToolContext, days: list[date]) -> list[dict]:
+    if not days:
+        return []
+    try:
+        return await tp_calls.fetch_notes(tool_context, min(days), max(days))
+    except Exception as e:  # the note delete is then reported back as not found
+        logger.warning("Calendar notes unavailable for staging: %s", e)
         return []
 
 
@@ -104,6 +142,8 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
       of the same sport on that date, or creates one if none. A move or rename needs only workout_id +
       date_str (+ title): the session keeps its title, builder and totals unless you change them.
     - Note: kind='note', date_str, title, description.
+    - Delete: delete=true with workout_id, or date_str + sport (+ title); a note: kind='note', date_str (+ title).
+      To remove a session or note always stage a delete. Completed workouts are never deleted (`refused`).
 
     Returns the number staged, any `ambiguous` changes (several planned workouts of that sport on the
     date: ask the runner which one), any `not_found` workout_ids, and any `needs_structure` changes
@@ -112,32 +152,36 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
     """
     raw = [c for c in (changes or []) if isinstance(c, dict)]
     workout_raw = [c for c in raw if str(c.get("kind") or KIND_WORKOUT).lower() != "note"]
+    note_deletes = [c for c in raw if c not in workout_raw and c.get("delete")]
     days = staged_dates(workout_raw)
-    wants_settings = any(needs_builder(c.get("sport")) or c.get("structure") for c in workout_raw)
+    wants_settings = any((needs_builder(c.get("sport")) or c.get("structure")) and not c.get("delete") for c in workout_raw)
     # Explicit ids are read with the calendar (one parallel round): a move to another date still
     # knows the session it moves, and the card shows its builder.
     explicit_ids = [str(c["workout_id"]).strip() for c in workout_raw if str(c.get("workout_id") or "").strip()]
-    workouts, settings_raw, details = await asyncio.gather(
+    workouts, settings_raw, details, notes = await asyncio.gather(
         _planned_workouts(tool_context, days),
         _athlete_settings(tool_context, wants_settings),
         _current_workouts(tool_context, explicit_ids),
+        _planned_notes(tool_context, staged_dates(note_deletes)),
     )
 
-    staged, problems = resolve_changes(raw, workouts, details)
+    staged, problems = resolve_changes(raw, workouts, details, notes)
     to_check = [str(c["workout_id"]) for c in staged
                 if c.get("builder") == BUILDER_CHECK and str(c["workout_id"]) not in details]
     if to_check:
         details = {**details, **await _current_workouts(tool_context, to_check)}
     staged, needs_structure, totals_notes = finalize_builders(staged, settings_raw, details)
-    not_found = [p for p in problems if p.get("reason") == "workout_not_found"]
-    ambiguous = [p for p in problems if p.get("reason") != "workout_not_found"]
+    not_found = [p for p in problems if p.get("reason") in ("workout_not_found", "note_not_found")]
+    refused = [p for p in problems if p.get("reason") == "cannot_delete_completed"]
+    ambiguous = [p for p in problems if p not in not_found and p not in refused]
 
     result: dict[str, Any] = {"staged": 0}
     if needs_structure:
         # Never stage a partial set the runner could apply: the coach re-stages the full set.
         result.update({"needs_structure": needs_structure, "ready": len(staged), "message": _NEEDS_STRUCTURE_MESSAGE})
         if _rejected_attempts(tool_context) >= MAX_NEEDS_STRUCTURE_ATTEMPTS:
-            result["give_up"] = True  # the app ends the turn with a coded reply; no further LLM call
+            result["give_up"] = True
+            reply(tool_context, builder_not_staged_text(needs_structure))  # stops the retries
     elif staged:
         staged_id = str(uuid.uuid4())
         tool_context.state[STAGED_CHANGES_STATE_KEY] = {"staged_id": staged_id, "changes": staged}
@@ -152,10 +196,14 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
             ],
             "message": "Staged. The runner sees the changes with an Update TrainingPeaks button.",
         })
-        if is_edit_only(staged):
-            result["edit_only"] = True  # the app confirms with a coded line; no further LLM call
         if totals_notes:
             result["totals_from_builder"] = totals_notes
+        if not problems:
+            # Explained already (or a plain move / rename): the coded line ends the turn.
+            if is_edit_only(staged) or _wrote_text_this_turn(tool_context):
+                reply(tool_context, staged_text(len(staged)))
+            else:
+                result["explain"] = True  # the next call writes the reasoning (model_callbacks)
     messages = [result["message"]] if needs_structure else []
     if ambiguous:
         result["ambiguous"] = ambiguous
@@ -163,6 +211,9 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
     if not_found:
         result["not_found"] = not_found
         messages.append(_NOT_FOUND_MESSAGE)
+    if refused:
+        result["refused"] = refused
+        messages.append(_REFUSED_MESSAGE)
     if messages:
         result["message"] = " ".join(messages)
     if not staged and not problems and not needs_structure:

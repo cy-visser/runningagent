@@ -485,7 +485,7 @@ export type QuickAction =
 /** One proposed workout / note change staged by the coach (mirrors `helpers/staged_changes.py`). */
 export interface StagedChange {
   kind: "workout" | "note";
-  action: "create" | "update";
+  action: "create" | "update" | "delete";
   date: string;
   title: string;
   sport?: string;
@@ -499,7 +499,7 @@ export interface StagedChange {
   structure_summary?: string | null;
   /** First line of the description (the coach's, or the kept workout's) when there is no builder. */
   description_summary?: string | null;
-  /** Planned values of the workout an update replaces (the "Current workout" column). */
+  /** Planned values of the workout an update replaces or a delete removes (the "Current workout" column). */
   replaces?: StagedWorkoutSnapshot | null;
 }
 

@@ -1,11 +1,19 @@
 """Report memory: report output survives compaction verbatim; each request keeps only the latest copies."""
 
+import json
+
 from google.adk.events.event import Event
 from google.adk.flows.llm_flows.contents import _process_compaction_events
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
-from running_coach.coach.report_memory import ReportMemorySummarizer
+from running_coach.coach.report_memory import (
+    REPLACED_STAGE_ARGS,
+    REPLACED_STAGE_RESULT,
+    ReportMemorySummarizer,
+    keep_latest_reports_and_skills,
+    replaced_stagings,
+)
 
 SKILL_TEXT = "# Schedule Audit & Assessment Skill\n" + "Audit protocol step. " * 200
 AUDIT = (
@@ -73,3 +81,51 @@ def test_compacted_history_reaches_the_model_with_the_report_memory():
     texts = [p.text for e in processed for p in (e.content.parts if e.content else []) if p.text]
     assert any("[3937622001]" in t for t in texts)  # the planned strength session is still visible
     assert texts[-1] == "ok add strength training on Nov 13th"
+
+
+def _staging_request(*middle: types.Content) -> "LlmRequest":
+    from google.adk.models.llm_request import LlmRequest
+
+    def stage(call_id: str, staged: int) -> list[types.Content]:
+        return [types.Content(role="model", parts=[_call("stage_workout_changes", call_id, changes=[{"date_str": call_id}])]),
+                types.Content(role="user", parts=[_resp("stage_workout_changes", call_id,
+                                                        {"result": json.dumps({"staged": staged, "changes": [call_id]})})])]
+    return LlmRequest(contents=[*stage("s1", 3), *middle, *stage("s2", 4)])
+
+
+def _stage_parts(request) -> dict:
+    out = {}
+    for c in request.contents:
+        for p in c.parts:
+            if p.function_call and p.function_call.name == "stage_workout_changes":
+                out[("call", p.function_call.id)] = p.function_call.args
+            if p.function_response and p.function_response.name == "stage_workout_changes":
+                out[("resp", p.function_response.id)] = p.function_response.response
+    return out
+
+
+def test_a_replaced_staged_set_is_cut_to_a_pointer_and_the_current_set_stays_verbatim():
+    request = _staging_request()
+    keep_latest_reports_and_skills(None, request)
+    parts = _stage_parts(request)
+    assert parts[("call", "s1")] == REPLACED_STAGE_ARGS and parts[("resp", "s1")] == REPLACED_STAGE_RESULT
+    assert parts[("call", "s2")] == {"changes": [{"date_str": "s2"}]} and "s2" in parts[("resp", "s2")]["result"]
+
+
+def test_an_applied_set_and_a_failed_restaging_keep_the_earlier_set():
+    applied = [types.Content(role="model", parts=[_call("apply_staged_changes", "a1")]),
+               types.Content(role="user", parts=[_resp("apply_staged_changes", "a1",
+                                                       {"result": json.dumps({"success": True, "results": []})})])]
+    request = _staging_request(*applied)
+    keep_latest_reports_and_skills(None, request)
+    assert _stage_parts(request)[("call", "s1")] == {"changes": [{"date_str": "s1"}]}  # applied: history
+
+    failed = [types.Content(role="model", parts=[_call("stage_workout_changes", "f1", changes=[])]),
+              types.Content(role="user", parts=[_resp("stage_workout_changes", "f1",
+                                                      {"result": json.dumps({"staged": 0, "needs_structure": [{}]})})])]
+    request = _staging_request()
+    request.contents[2:2] = failed  # s1, failed retry, then s2: only s2 replaces s1
+    assert replaced_stagings(request.contents) == {"s1"}
+    request = _staging_request()
+    request.contents[2:] = failed  # s1 then only a failed retry: s1 is still the current set
+    assert replaced_stagings(request.contents) == set()

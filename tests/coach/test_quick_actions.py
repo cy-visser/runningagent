@@ -140,7 +140,8 @@ def test_update_trainingpeaks_button_applies_staged_changes_without_any_llm_call
     assert _calls(events) == [("apply_staged_changes", {"staged_id": staged_id})]  # no load_skill
     writes = sorted(name for name, _ in runner.tp_calls if name.startswith("tp_") and name != "tp_get_workouts")
     assert writes == ["tp_create_workout", "tp_update_workout"]
-    final = [p.text for e in events if e.content for p in e.content.parts or [] if p.text][-1]
+    final = [w.payload["data"]["text"] for e in events for w in e.actions.render_ui_widgets or []][-1]
+    assert events[-1].is_final_response() and events[-1].actions.skip_summarization
     assert final.startswith("✅ **TrainingPeaks updated:** 2 workouts.")
     assert ("| Updated | Tue 03 Nov | **Threshold 2 x 15'** | **Threshold 4x2km** · 12 km · 65 min · TSS 78 |"
             in final)  # older staged set without `replaces`: Before falls back to replaces_title

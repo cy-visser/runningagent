@@ -154,6 +154,34 @@ describe("workout creator feature", () => {
     expect(coreProposed).toHaveTextContent("3 rounds: plank");
   });
 
+  it("shows staged deletes for review: the current workout and a struck-through note", () => {
+    const deletes: StagedChanges = {
+      staged_id: "d",
+      changes: [
+        {
+          kind: "workout",
+          action: "delete",
+          date: "2026-11-05",
+          sport: "Bike",
+          title: "Z2 Spin",
+          workout_id: "w303",
+          replaces: { title: "Z2 Spin", date: "2026-11-05", sport: "Bike", duration_minutes: 60, tss_planned: 45 },
+        },
+        { kind: "note", action: "delete", date: "2026-11-01", title: "Work trip to Berlin" },
+      ],
+    };
+    render(<StagedChangesCard staged={deletes} status="pending" onApply={vi.fn()} />);
+    const [, row] = screen.getAllByRole("row");
+    const [badge, , current, proposed] = within(row).getAllByRole("cell");
+    expect(badge).toHaveTextContent("Delete");
+    expect(current).toHaveTextContent("Z2 Spin");
+    expect(current).toHaveTextContent("Bike · 60 min · TSS 45");
+    expect(proposed).toHaveTextContent("Removed from plan");
+    expect(screen.getByText("Work trip to Berlin")).toHaveClass("line-through");
+    expect(screen.getByText("(note removed)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Delete note")).toBeInTheDocument();
+  });
+
   it("shows applying, applied and replaced states without a clickable button", () => {
     const onApply = vi.fn();
     const { rerender } = render(

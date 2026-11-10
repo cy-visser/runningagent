@@ -60,6 +60,24 @@ def format_sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+# Coded replies of the agent's tools (`renderUiWidgets`; contract in running_coach/shared/ui_channel.py).
+UI_PROVIDER = "running_coach"
+REPLY = "reply"
+
+
+def _reply_texts(adk_event: dict[str, Any]) -> list[str]:
+    actions = adk_event.get("actions")
+    widgets = (actions.get("renderUiWidgets") or actions.get("render_ui_widgets")) if isinstance(actions, dict) else None
+    texts = []
+    for widget in widgets if isinstance(widgets, list) else []:
+        payload = widget.get("payload") if isinstance(widget, dict) else None
+        if widget.get("provider") == UI_PROVIDER and isinstance(payload, dict) and payload.get("kind") == REPLY:
+            text = (payload.get("data") or {}).get("text")
+            if isinstance(text, str) and text:
+                texts.append(text)
+    return texts
+
+
 def _extract_state_delta(adk_event: dict[str, Any]) -> dict[str, Any]:
     actions = adk_event.get("actions")
     if not isinstance(actions, dict):
@@ -106,7 +124,7 @@ class TurnEventTranslator:
         content = adk_event.get("content")
         parts = content.get("parts") if isinstance(content, dict) else None
         if not isinstance(parts, list):
-            return out
+            return self._add_replies(adk_event, out)
 
         is_partial = bool(adk_event.get("partial"))
         visible_texts: list[str] = []
@@ -154,4 +172,13 @@ class TurnEventTranslator:
                 out.append(("message", {"text": "\n\n".join(self._final_texts), "kind": kind}))
                 self._thinking_emitted = False
 
+        return self._add_replies(adk_event, out)
+
+    def _add_replies(self, adk_event: dict[str, Any], out: list) -> list[tuple[str, dict[str, Any]]]:
+        """A tool's coded reply joins the turn's message, after any text the coach wrote."""
+        replies = _reply_texts(adk_event)
+        if replies:
+            self._final_texts.extend(replies)
+            kind = infer_message_kind(self.tools_used, self.report_kind)
+            out.append(("message", {"text": "\n\n".join(self._final_texts), "kind": kind}))
         return out

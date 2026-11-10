@@ -1,9 +1,10 @@
-google-adk[extensions,mcp,otel-gcp]==2.2.0
+google-adk[extensions,mcp,otel-gcp,gcp]==2.14.0
 google-cloud-firestore
 python-dotenv
 ./agents/running_coach/tp_mcp-2.0.1-py3-none-any.whl
+# tp_mcp 2.0.1 needs the MCP 1.x SDK.
+mcp>=1.24,<2
 google-cloud-kms
-google-cloud-aiplatform[agent_engines]>=1.148.1,<2
 opentelemetry-util-genai[upload]
 gcsfs
 

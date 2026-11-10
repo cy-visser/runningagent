@@ -11,7 +11,9 @@
           "weight": "70kg",
           "height": "178cm"
         }
-      }
+      },
+      "app_name": "running_coach",
+      "user_id": "test_user"
     },
     "data": [
       {

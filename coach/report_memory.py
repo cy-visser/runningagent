@@ -11,7 +11,9 @@ its [workout_id]s) or a workout analysis's numbers used to be lost after compact
   prompt, and recent raw turns hold full tool results. Per request, only the latest output of each
   report tool and the latest instructions of each skill are kept; older copies are dropped
   (summary blocks) or replaced by a one-line pointer (raw responses, so every function call keeps
-  its response). The stored session is never changed.
+  its response). A staged set replaced by a later staging (no apply in between) is cut to a pointer
+  too, call and response, so only the current staged set is verbatim. The stored session is never
+  changed.
 """
 
 import json
@@ -36,6 +38,10 @@ REPORT_LABELS = {
     "fetch_trend_data": "Trend analysis",
 }
 LOAD_SKILL = "load_skill"
+STAGE = "stage_workout_changes"
+APPLY = "apply_staged_changes"
+REPLACED_STAGE_ARGS = {"changes": "[replaced by a later staging below]"}
+REPLACED_STAGE_RESULT = {"result": "[replaced: the current staged set is further below]"}
 
 _REPORT_BLOCK_RE = re.compile(r'\n*<report tool="(?P<tool>[^"]+)"[^>]*>.*?</report>', re.DOTALL)
 REPORT_MEMORY_HEADER = (
@@ -165,6 +171,32 @@ def _skill_name(part: types.Part, call_skills: dict[str, str]) -> Optional[str]:
     return payload.get("skill_name") or call_skills.get(response.id or "")
 
 
+def _result_json(response: types.FunctionResponse) -> dict:
+    try:
+        parsed = json.loads(result_text(response))
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def replaced_stagings(contents: list[types.Content]) -> set[str]:
+    """Call ids of staged sets replaced by a later staging; an apply in between keeps them (history)."""
+    replaced: set[str] = set()
+    pending: Optional[str] = None
+    for content in contents:
+        for part in content.parts or []:
+            response = part.function_response
+            if not response or not response.id:
+                continue
+            if response.name == STAGE and (_result_json(response).get("staged") or 0) > 0:
+                if pending:
+                    replaced.add(pending)
+                pending = response.id
+            elif response.name == APPLY and "results" in _result_json(response):
+                pending = None
+    return replaced
+
+
 def keep_latest_reports_and_skills(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
@@ -190,11 +222,12 @@ def keep_latest_reports_and_skills(
                     latest[("report", m.group("tool"))] = (ci, pi, m.start() + 1)
 
     # Pass 2: drop or point away from every older copy.
+    replaced = replaced_stagings(contents)
     out: list[types.Content] = []
     for ci, content in enumerate(contents):
         parts, changed = [], False
         for pi, part in enumerate(content.parts or []):
-            new = _keep_latest_in_part(part, ci, pi, latest, call_skills)
+            new = _without_replaced_staging(part, replaced) or _keep_latest_in_part(part, ci, pi, latest, call_skills)
             changed = changed or new is not part
             if new is not None:
                 parts.append(new)
@@ -203,6 +236,16 @@ def keep_latest_reports_and_skills(
         out.append(content)
     llm_request.contents = out
     return None  # never short-circuits the model call
+
+
+def _without_replaced_staging(part: types.Part, replaced: set[str]) -> Optional[types.Part]:
+    """The stubbed call / response of a replaced staged set (None when the part is not one)."""
+    call, response = part.function_call, part.function_response
+    if call and call.name == STAGE and call.id in replaced:
+        return part.model_copy(update={"function_call": call.model_copy(update={"args": REPLACED_STAGE_ARGS})})
+    if response and response.name == STAGE and response.id in replaced:
+        return part.model_copy(update={"function_response": response.model_copy(update={"response": REPLACED_STAGE_RESULT})})
+    return None
 
 
 def _keep_latest_in_part(

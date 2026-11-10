@@ -3,8 +3,15 @@
 import asyncio
 import json
 
+from google.adk.events.event import Event
+from google.genai import types
 
-from running_coach.features.workout_creator.apply_staged_changes_tool import apply_staged_changes
+
+from running_coach.features.workout_creator.apply_staged_changes_tool import (
+    NOTHING_STAGED_TEXT,
+    REPLACED_TEXT,
+    apply_staged_changes,
+)
 from running_coach.features.workout_creator.stage_workout_changes_tool import (
     STAGED_CHANGES_STATE_KEY,
     stage_workout_changes,
@@ -110,9 +117,102 @@ def test_apply_writes_every_staged_change_clears_staging_and_handles_stale_butto
 # Coded replies (no LLM call after staging / applying)
 # ------------------------------------------------------------------------------
 
+def _fresh(ctx, coach_text: str = ""):
+    """A new tool call: fresh actions, and the coach's text so far in this invocation."""
+    ctx.actions.skip_summarization, ctx.ui_widgets = None, []
+    ctx.session.events = [Event(invocation_id=ctx.invocation_id, author="coaching_agent",
+                                content=types.Content(role="model", parts=[types.Part(text=coach_text)]))]
+    return ctx
+
+
+def test_staging_ends_the_turn_with_the_coded_line_only_when_already_explained(runner):
+    ctx = runner.ctx()
+    tue_id = next(w["id"] for w in runner.workouts if w["date"] == "2026-11-03" and w["sport"] == "Run")
+    move = _stage(_fresh(ctx), [{"workout_id": tue_id, "date_str": "2026-11-04"}])  # plain move: no text needed
+    assert "explain" not in move and ctx.actions.skip_summarization is True
+    assert ctx.reply_text().startswith("📋 1 change staged.")
+
+    new = [{"date_str": "2026-11-04", "title": "Recovery Run", "distance_km": 6, "structure": RECOVERY_6KM}]
+    unexplained = _stage(_fresh(ctx), new)
+    assert unexplained["explain"] is True and ctx.actions.skip_summarization is None and ctx.reply_text() is None
+
+    explained = _stage(_fresh(ctx, "Swap in an easy 6 km: your TSB is -18."), new)
+    assert "explain" not in explained and ctx.actions.skip_summarization is True
+
+    ambiguous = _stage(_fresh(ctx, "text"), new + [{"date_str": "2026-11-09", "workout_id": "nope"}])
+    assert ambiguous["not_found"] and ctx.actions.skip_summarization is None  # the coach fixes it first
+
+
+def test_apply_replies_with_the_coded_confirmation_and_ends_the_turn(runner):
+    ctx = runner.ctx()
+    staged_id = _stage(_fresh(ctx), CHANGES)["staged_id"]
+    asyncio.run(apply_staged_changes(_fresh(ctx), staged_id="00000000-0000-0000-0000-000000000000"))
+    assert ctx.reply_text() == REPLACED_TEXT and ctx.actions.skip_summarization is True
+    asyncio.run(apply_staged_changes(_fresh(ctx), staged_id=staged_id))
+    assert ctx.reply_text().startswith("✅ **TrainingPeaks updated:**") and ctx.actions.skip_summarization is True
+    asyncio.run(apply_staged_changes(_fresh(ctx)))
+    assert ctx.reply_text() == NOTHING_STAGED_TEXT
+
+
+def test_a_builder_far_from_the_stated_distance_goes_back_to_the_coach(runner):
+    ctx = runner.ctx()
+    long_run = {"date_str": "2026-11-04", "title": "Long Run 18 km", "distance_km": 18, "structure": RECOVERY_6KM}
+    result = _stage(_fresh(ctx, "text"), [long_run])
+    (need,) = result["needs_structure"]
+    assert result["staged"] == 0 and "add up to 6 km but you stated 18 km" in need["why"]
+    assert ctx.actions.skip_summarization is None  # the coach fixes the steps and stages again
+    near = _stage(_fresh(ctx, "text"), [{**long_run, "title": "Recovery 6.5 km", "distance_km": 6.5}])
+    assert near["staged"] == 1 and near["totals_from_builder"][0]["builder"] == 6.0  # 8%: note only
+
 
 # ------------------------------------------------------------------------------
 # Workout builder: exact numbers, never scaled
 # ------------------------------------------------------------------------------
 
 # A TrainingPeaks builder as stored (whole %): 15' WU, 5 x (10' @ 104-108 % / 2' jog), 10' CD.
+
+
+# ------------------------------------------------------------------------------
+# Deletes (staged for review, applied with the button)
+# ------------------------------------------------------------------------------
+
+def test_deletes_are_staged_resolved_and_applied(runner):
+    ctx = runner.ctx()
+    bike_id = next(w["id"] for w in runner.workouts if w["date"] == "2026-11-05" and w["sport"] == "Bike")
+    result = _stage(_fresh(ctx, "Rest day Friday."), [
+        {"date_str": "2026-11-06", "sport": "Run", "delete": True},           # by date + sport
+        {"workout_id": bike_id, "delete": True},                               # by id
+        {"kind": "note", "date_str": "2026-11-01", "title": "Berlin", "delete": True},
+    ])
+    assert result["staged"] == 3 and _writes(runner) == []
+    by_title = {c["title"]: c for c in ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]}
+    assert {c["action"] for c in by_title.values()} == {"delete"} and set(by_title) == {"Easy Run", "Z2 Spin", "Work trip to Berlin"}
+    assert by_title["Easy Run"]["replaces"]["distance_km"] == 8.0 and by_title["Work trip to Berlin"]["note_id"] == "n2"
+
+    applied = json.loads(asyncio.run(apply_staged_changes(_fresh(ctx))))
+    assert applied["success"] is True
+    assert sorted(n for n, _ in runner.tp_calls if n.startswith("tp_delete")) == [
+        "tp_delete_note", "tp_delete_workout", "tp_delete_workout"]
+    text = ctx.reply_text()
+    assert text.startswith("✅ **TrainingPeaks updated:** 2 workouts (2 deleted) and 1 note.")
+    assert "| Deleted | Fri 06 Nov | **Easy Run** · 8 km" in text and "🗑️ Note removed: Sun 01 Nov" in text
+
+
+def test_completed_workouts_are_never_deleted_and_several_matches_ask(runner):
+    ctx = runner.ctx()
+    refused = _stage(_fresh(ctx, "text"), [{"date_str": "2026-10-26", "sport": "Run", "delete": True}])
+    assert refused["staged"] == 0 and refused["refused"][0]["reason"] == "cannot_delete_completed"
+    assert ctx.actions.skip_summarization is None  # the coach tells the runner it stays
+
+    runner.workouts.append({"id": "pm-run", "date": "2026-11-06", "sport": "Run", "title": "PM Shakeout",
+                            "type": "planned"})
+    (ambiguous,) = _stage(_fresh(ctx, "text"), [{"date_str": "2026-11-06", "delete": True}])["ambiguous"]
+    assert {c["title"] for c in ambiguous["candidates"]} == {"Easy Run", "PM Shakeout"}
+
+
+def test_the_confirmation_is_only_the_table_without_a_builder_block(runner):
+    ctx = runner.ctx()
+    staged_id = _stage(_fresh(ctx), CHANGES)["staged_id"]
+    asyncio.run(apply_staged_changes(_fresh(ctx), staged_id=staged_id))
+    assert "| Change | Date | Before | After |" in ctx.reply_text()
+    assert "Workout builder" not in ctx.reply_text()

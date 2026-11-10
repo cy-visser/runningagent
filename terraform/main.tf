@@ -56,6 +56,7 @@ locals {
     "roles/datastore.user",                   # Read/write Firestore sessions & reports
     "roles/cloudtrace.agent",                 # Write Telemetry traces
     "roles/logging.logWriter",                # Write Telemetry logs
+    "roles/monitoring.metricWriter",          # Write Telemetry metrics (ADK --otel_to_cloud)
     "roles/serviceusage.serviceUsageConsumer" # Quota-project header on GCS (gcsfs completion uploads)
   ]
   web_roles = [

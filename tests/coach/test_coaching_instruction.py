@@ -9,7 +9,6 @@ from google.genai import types
 from running_coach.coach.coaching.instruction import build_coach_instruction, build_profile_context
 from running_coach.coach.coaching.model_callbacks import apply_thinking_policy
 from running_coach.coach.coaching.quick_actions import DISPATCHED_STATE_KEY
-from running_coach.features.workout_creator.write_confirmation_callback import EXPLAIN_STAGED_INSTRUCTION
 from running_coach.tests.fakes import FakeContext, PLAN_PROFILE, SINGLE_PROFILE
 
 
@@ -61,36 +60,29 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     no_goal_ctx = build_profile_context(no_goal)
     assert "- No goal is set" in no_goal_ctx and "Goal: not set" in no_goal_ctx and "None" not in no_goal_ctx
 
-    # Thinking: LOW only for a short chat approval of staged changes (it just runs apply_staged_changes).
+    # Thinking: MEDIUM by default; LOW for a short chat approval of staged changes (it just applies them).
     assert _thinking_for("update them", STAGED) == types.ThinkingLevel.LOW
     assert _thinking_for("Yes, but make Saturday 18 km", STAGED) == types.ThinkingLevel.LOW
-    assert _thinking_for("Why move the long run?", STAGED) == types.ThinkingLevel.HIGH       # a question
-    assert _thinking_for("update them") == types.ThinkingLevel.HIGH                         # nothing staged
-    assert _thinking_for(" ".join(["word"] * 13), STAGED) == types.ThinkingLevel.HIGH       # not a short reply
-    assert _thinking_for("How was my week?") == types.ThinkingLevel.HIGH
+    assert _thinking_for("Why move the long run?", STAGED) == types.ThinkingLevel.MEDIUM     # a question
+    assert _thinking_for("update them") == types.ThinkingLevel.MEDIUM                       # nothing staged
+    assert _thinking_for(" ".join(["word"] * 13), STAGED) == types.ThinkingLevel.MEDIUM     # not a short reply
+    assert _thinking_for("Lets move the 5k of Nov 25th to Nov 26th") == types.ThinkingLevel.MEDIUM
     for tool in ("stage_workout_changes", "apply_staged_changes", "request_new_goal", "fetch_checkin_data"):
-        assert _thinking_after(tool) == types.ThinkingLevel.HIGH
-
-    # MEDIUM for every call of a turn that moves / renames a session on a day (even with changes staged).
-    move = "Lets move the 5k of Nov 25th to Nov 26th"
-    assert _thinking_for(move) == types.ThinkingLevel.MEDIUM
-    assert _thinking_for("Push Saturday's long run to Sunday", STAGED) == types.ThinkingLevel.MEDIUM
-    turn = LlmRequest(contents=[
-        types.Content(role="user", parts=[types.Part(text=move)]),
+        assert _thinking_after(tool) == types.ThinkingLevel.MEDIUM
+    # An unexplained clean staging: the next call writes the coaching message at LOW, tools off.
+    explain = LlmRequest(contents=[
+        types.Content(role="user", parts=[types.Part(text="Plan my week")]),
         types.Content(role="model", parts=[types.Part(function_call=types.FunctionCall(name="stage_workout_changes"))]),
         types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
-            name="stage_workout_changes", response={"result": "{}"}))]),
+            name="stage_workout_changes", response={"result": '{"staged": 2, "explain": true}'}))]),
     ], config=types.GenerateContentConfig())
-    apply_thinking_policy(FakeContext(), turn)
-    assert turn.config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
-    # Strategy questions with an edit verb but no day stay at HIGH ("mar"athon is not March).
-    assert _thinking_for("Should I switch to a marathon plan?") == types.ThinkingLevel.HIGH
-    # The post-staging coaching message (tools off, changes decided) runs at LOW.
-    explain = LlmRequest(contents=[types.Content(role="user", parts=[types.Part(text="Plan my week")])],
-                         config=types.GenerateContentConfig())
-    explain.append_instructions([EXPLAIN_STAGED_INSTRUCTION])
     apply_thinking_policy(FakeContext(), explain)
     assert explain.config.thinking_config.thinking_level == types.ThinkingLevel.LOW
+    assert explain.config.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.NONE
+    assert "STAGED WITHOUT EXPLANATION" in str(explain.config.system_instruction)
+    assert "a moved session is moved, not removed" in str(explain.config.system_instruction)
+    # Rule 2: staged changes are confirmed with the button, so the coach stages its safer version.
+    assert "the Update TrainingPeaks button is the\n       runner's confirmation" in plan_instr
     # Moves / renames go straight to stage_workout_changes (no load_skill round trip).
     assert "Move / swap / rename planned sessions (no new content): NO load_skill" in plan_instr
     # No "write nothing" rule: it silenced the post-staging coaching message.

@@ -1,4 +1,4 @@
-import { CalendarPlus, Check, Loader2, RefreshCw, StickyNote } from "lucide-react";
+import { CalendarPlus, Check, Loader2, RefreshCw, StickyNote, Trash2 } from "lucide-react";
 import type { StagedChange, StagedChanges, StagedWorkoutSnapshot } from "../../shared/types";
 
 export type StagedStatus = "pending" | "applying" | "applied" | "replaced";
@@ -26,9 +26,10 @@ function num(value: number | null | undefined, unit: string, digits = 1): string
   return value == null ? "–" : `${Number(value.toFixed(digits))} ${unit}`.trim();
 }
 
-type ChangeKind = "create" | "update" | "move";
+type ChangeKind = "create" | "update" | "move" | "delete";
 
 function changeKind(change: StagedChange): ChangeKind {
+  if (change.action === "delete") return "delete";
   if (change.action !== "update") return "create";
   const before = change.replaces?.date;
   return before && before !== change.date.slice(0, 10) ? "move" : "update";
@@ -38,6 +39,7 @@ const BADGE: Record<ChangeKind, { label: string; className: string }> = {
   create: { label: "Create", className: "bg-emerald-50 text-emerald-800 border-emerald-200" },
   update: { label: "Update", className: "bg-sky-50 text-sky-800 border-sky-200" },
   move: { label: "Move", className: "bg-violet-50 text-violet-800 border-violet-200" },
+  delete: { label: "Delete", className: "bg-rose-50 text-rose-800 border-rose-200" },
 };
 
 function ActionBadge({ change }: { change: StagedChange }) {
@@ -111,7 +113,7 @@ function WorkoutCell({
 }
 
 function CurrentCell({ change }: { change: StagedChange }) {
-  if (change.action !== "update") return <span className="text-slate-400">–</span>;
+  if (change.action === "create") return <span className="text-slate-400">–</span>;
   const before = change.replaces ?? {};
   const title = before.title || change.replaces_title || "Existing workout";
   const dateNote = changeKind(change) === "move" && before.date ? dayLabel(before.date) : null;
@@ -193,12 +195,16 @@ export function StagedChangesCard({ staged, status, busy, onApply }: StagedChang
                   <td className="py-2 pr-3 whitespace-nowrap text-slate-700">{dayLabel(c.date)}</td>
                   <td className="py-2 pr-3 w-1/2"><CurrentCell change={c} /></td>
                   <td className="py-2 w-1/2">
-                    <WorkoutCell
-                      title={c.title}
-                      values={c}
-                      compareTo={c.action === "update" ? c.replaces : null}
-                      detail={c.structure_summary || c.description_summary}
-                    />
+                    {c.action === "delete" ? (
+                      <span className="text-sm italic text-rose-700">Removed from plan</span>
+                    ) : (
+                      <WorkoutCell
+                        title={c.title}
+                        values={c}
+                        compareTo={c.action === "update" ? c.replaces : null}
+                        detail={c.structure_summary || c.description_summary}
+                      />
+                    )}
                   </td>
                 </tr>
               ))}
@@ -211,10 +217,14 @@ export function StagedChangesCard({ staged, status, busy, onApply }: StagedChang
         <ul className="space-y-1">
           {notes.map((n, i) => (
             <li key={`${n.date}-${n.title}-${i}`} className="flex items-center gap-2 text-sm text-slate-700">
-              <StickyNote className="h-4 w-4 text-orange-500" />
+              {n.action === "delete" ? (
+                <Trash2 className="h-4 w-4 text-rose-600" aria-label="Delete note" />
+              ) : (
+                <StickyNote className="h-4 w-4 text-orange-500" />
+              )}
               <span className="whitespace-nowrap">{dayLabel(n.date)}</span>
-              <span className="font-medium text-slate-900">{n.title}</span>
-              <span className="text-xs text-slate-500">(note)</span>
+              <span className={`font-medium text-slate-900 ${n.action === "delete" ? "line-through" : ""}`}>{n.title}</span>
+              <span className="text-xs text-slate-500">{n.action === "delete" ? "(note removed)" : "(note)"}</span>
             </li>
           ))}
         </ul>

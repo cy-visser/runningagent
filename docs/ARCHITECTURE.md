@@ -7,7 +7,7 @@ The AI Running Coach is a running coach and exercise physiologist served through
 | Front end | Cloud Run `running-coach-web` (React SPA + FastAPI BFF behind Direct IAP) |
 | Agent runs on | Vertex AI Agent Runtime, custom container, `europe-west4` |
 | Framework | Agent Development Kit (ADK) `Workflow` |
-| Models | Gemini flash (coaching), Gemini flash-lite (onboarding, history summaries) |
+| Models | Gemini 4 Argon at MEDIUM thinking (coaching; `COACH_MODEL` / `COACH_THINKING_LEVEL`; still throttled after 2 retries → `COACH_FALLBACK_MODEL` gemini-3.8-flash at MEDIUM; model calls via the `global` endpoint; all set in `.env`, see `.env.example`), Gemini flash-lite (onboarding, history summaries) |
 | Security | Cloud Run Direct IAP (ES256 JWT) + Cloud KMS envelope encryption (`running-coach/tp-cookie`) |
 | Data | Firestore Enterprise (`running-coach` DB), TrainingPeaks via MCP, Open-Meteo |
 
@@ -25,7 +25,7 @@ The root agent (`agent.py`) is an ADK `Workflow` with one deterministic router a
 - **`not_linked_node`** directs an unlinked account to `WEB_APP_URL` to connect TrainingPeaks and create a profile.
 - **`tp_not_connected_node`** directs a runner whose profile lacks an active encrypted TrainingPeaks cookie to reconnect from the Web App.
 - **`onboarding_node`** runs `onboarding_agent` in *task mode* (`coach/onboarding/`). It collects either a **single goal** or a **goal plan** (stepping-stone sub-goals leading to a North Star race) as a structured `OnboardingAnswers` object, geocodes the runner's city, and merges the profile into Firestore while preserving `email` and any saved sub-goal race results.
-- **`coaching_node`** runs `coaching_agent` in *chat mode* (`coach/coaching/`). Its instruction is an ADK *InstructionProvider* (`build_coach_instruction`) that derives the date, profile summary, active goal block, and goal notices from `user_profile` on every model call.
+- **`coaching_node`** runs `coaching_agent` in *chat mode* (`coach/coaching/`). Its instruction is an ADK *InstructionProvider* (`build_coach_instruction`) that derives the date, profile summary, active goal block, and goal notices from `user_profile` on every model call. Its `before_model_callback`s inject the runner profile, dispatch web quick actions without a routing LLM call, set per-call thinking (MEDIUM; LOW for a chat approval and for the coaching message after an unexplained staging, with tools off), drop thought signatures of completed turns, and keep only the latest report, skill and staged set in the request. Tools that need no LLM text after them (a staging that is already explained or only moves / renames, applying, "no workout", a builder give-up) end the turn ADK-natively: `shared/ui_channel.reply()` shows a coded reply as a UI widget (`renderUiWidgets`, never sent to the model) and sets `skip_summarization`.
 - **`profile_unavailable_node`** returns a fixed message when Firestore cannot be reached, preventing a known runner from ever being misrouted to onboarding.
 
 **Goal plans.** A plan stores `north_star` and `sub_goals`, each a full training block with a `start_date` and a finishing race (`race_date`). `shared/goal_plan.py` derives `current_goal` with the same keys as a single goal (`training_goal`, `timeline`, `goal_set_date`), keeping trajectory, taper, and race projection maths unified.
@@ -60,11 +60,11 @@ running_coach/
 ├── features/                        # vertical slices: SKILL.md -> *_tool.py -> private helpers/
 │   ├── check_in_report/             # SKILL.md, fetch_checkin_data_tool.py, helpers/
 │   ├── trend_analysis/              # SKILL.md, fetch_trend_data_tool.py, helpers/
-│   ├── workout_analysis/            # SKILL.md, analyze_workout_tool.py, no_workout_reply_callback.py, helpers/
+│   ├── workout_analysis/            # SKILL.md, analyze_workout_tool.py, helpers/
 │   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
 │   ├── schedule_audit/              # SKILL.md, fetch_schedule_audit_data_tool.py, helpers/
 │   ├── nutrition_planner/           # SKILL.md, fetch_nutrition_context_tool.py, helpers/
-│   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, write_confirmation_callback.py, helpers/ (staged_changes, workout_builder: exact TP builder + totals, workout_upsert)
+│   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes, workout_builder: exact TP builder + totals, workout_upsert)
 │   └── weather_lookup/              # get_weather_tool.py
 ├── shared/                          # domain helpers used by 2+ features/coach
 │   ├── dates  units  sports  session_state  runner_identity  parallel_fetch  tp_payloads

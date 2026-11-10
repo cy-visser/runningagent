@@ -110,8 +110,20 @@ class FakeContext:
         self.state: dict[str, Any] = dict(state or {})
         if profile is not None and "user_profile" not in self.state:
             self.state["user_profile"] = json.loads(json.dumps(profile))
-        self.session = SimpleNamespace(user_id=user_id)
+        self.session = SimpleNamespace(user_id=user_id, events=[])
         self.route: str | None = None
+        self.invocation_id = "inv-1"
+        self.function_call_id: str | None = None
+        self.actions = SimpleNamespace(skip_summarization=None)
+        self.ui_widgets: list = []
+
+    def render_ui_widget(self, ui_widget) -> None:
+        self.ui_widgets.append(ui_widget)
+
+    def reply_text(self) -> str | None:
+        """The latest coded reply a tool showed the runner (None if none)."""
+        texts = [w.payload["data"]["text"] for w in self.ui_widgets if w.payload.get("kind") == "reply"]
+        return texts[-1] if texts else None
 
 
 class FakeRunnerEnv:
@@ -232,6 +244,7 @@ class FakeRunnerEnv:
                 "date": w["date"],
                 "title": w["title"],
                 "sport": w["sport"],
+                "completed": w.get("type") == "completed",  # as the real tp_get_workout
                 "description": "Warm up 15 min easy, main set controlled, cool down 10 min.",
                 "rpe": 6,
                 "feeling": 7,
@@ -278,4 +291,10 @@ class FakeRunnerEnv:
             return envelope({"id": kw.get("workout_id", "updated-999")})
         if name == "tp_create_note":
             return envelope({"id": "note-999", "date": kw.get("date"), "title": kw.get("title")})
+        if name == "tp_delete_workout":
+            self.workouts = [w for w in self.workouts if str(w["id"]) != str(kw["workout_id"])]
+            return envelope({"success": True})
+        if name == "tp_delete_note":
+            self.notes = [n for n in self.notes if str(n.get("id")) != str(kw["note_id"])]
+            return envelope({"success": True})
         return envelope({})

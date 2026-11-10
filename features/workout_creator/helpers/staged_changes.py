@@ -31,6 +31,7 @@ KIND_WORKOUT = "workout"
 KIND_NOTE = "note"
 ACTION_CREATE = "create"
 ACTION_UPDATE = "update"
+ACTION_DELETE = "delete"
 
 # What a Run/Bike change needs before it can be staged (internal marker, removed by finalize_builders).
 BUILDER_COACH = "coach"      # the coach sent a structure: convert it exactly
@@ -45,6 +46,8 @@ DISTANCE_TOL_KM = 0.05
 DURATION_TOL_MIN = 1.0
 # Coach totals further than this from the builder totals are reported back (the builder wins).
 TOTALS_NOTE_REL = 0.05
+# Beyond this the builder and the coach disagree on the session: it goes back to the coach.
+TOTALS_BLOCK_REL = 0.10
 
 
 _WHOLE_FIELDS = ("duration_minutes", "tss_planned")
@@ -166,8 +169,79 @@ def _inherit_unchanged(change: dict) -> None:
         change["description_summary"] = snapshot["description_summary"]
 
 
+def _item_day(item: dict) -> Optional[str]:
+    day = parse_date(item.get("date") or item.get("start_time"))
+    return iso_date(day) if day else None
+
+
+def _title_matches(items: list[dict], title: str) -> list[dict]:
+    """Items whose title contains `title` (case-insensitive); all items when none does."""
+    needle = title.lower()
+    narrowed = [i for i in items if needle and needle in str(i.get("title") or "").lower()]
+    return narrowed or items
+
+
+def _is_completed(target: dict, listed: Optional[dict]) -> bool:
+    """Calendar entry first, then the `tp_get_workout` flag, then its recorded actuals."""
+    if listed:
+        return is_workout_completed(listed)
+    if "completed" in target:
+        return bool(target["completed"])
+    return is_workout_completed(target) or is_workout_completed(target.get("metrics") or {})
+
+
+def _delete_note(day: Optional[str], title: str, notes: list[dict]) -> tuple[Optional[dict], Optional[dict]]:
+    """(staged note delete, problem): the single note on `day` (narrowed by title)."""
+    matches = _title_matches([n for n in notes if _item_day(n) == day], title)
+    if not day or not matches:
+        return None, {"reason": "note_not_found", "date_str": day, "title": title}
+    if len(matches) > 1:
+        return None, {"reason": "ambiguous_note", "date_str": day, "title": title,
+                      "candidates": [{"title": n.get("title")} for n in matches]}
+    note = matches[0]
+    return {"kind": KIND_NOTE, "action": ACTION_DELETE, "note_id": str(note.get("id") or ""), "date": day,
+            "title": note.get("title") or "Note", "description_summary": description_summary(note.get("description"))}, None
+
+
+def _delete_workout(
+    raw: dict, day: Optional[str], title: str, workouts: list[dict], by_id: dict, details_by_id: dict
+) -> tuple[Optional[dict], Optional[dict]]:
+    """(staged workout delete, problem): the workout by id, else the single planned one on `day`
+    (optionally of `sport`, narrowed by title). Completed workouts are never deleted."""
+    workout_id = str(raw.get("workout_id") or "").strip()
+    sport = str(raw.get("sport") or "").strip().lower()
+    if workout_id:
+        detail = existing_from_detail(details_by_id.get(workout_id))
+        target = {**(by_id.get(workout_id) or {}), **{k: v for k, v in (detail or {}).items() if v is not None}}
+        if not target:
+            return None, {"reason": "workout_not_found", "workout_id": workout_id, "title": title}
+        target.setdefault("id", workout_id)
+    else:
+        on_day = [w for w in workouts if _item_day(w) == day
+                  and (not sport or str(w.get("sport") or "").strip().lower() == sport)]
+        planned = _title_matches([w for w in on_day if not is_workout_completed(w)], title)
+        if not planned:
+            reason = "cannot_delete_completed" if on_day else "workout_not_found"
+            return None, {"reason": reason, "date_str": day, "sport": raw.get("sport"), "title": title}
+        if len(planned) > 1:
+            return None, {"reason": "needs_workout_id", "date_str": day, "sport": raw.get("sport"),
+                          "title": title or "Planned workout",
+                          "candidates": [{"workout_id": str(w.get("id") or ""), "title": w.get("title"),
+                                          "sport": w.get("sport")} for w in planned]}
+        target = planned[0]
+    if _is_completed(target, by_id.get(str(target["id"]))):
+        return None, {"reason": "cannot_delete_completed", "workout_id": str(target["id"]), "title": target.get("title")}
+    snapshot = replaces_snapshot(target) or {}
+    return {"kind": KIND_WORKOUT, "action": ACTION_DELETE, "workout_id": str(target["id"]),
+            "date": snapshot.get("date") or day or "", "sport": target.get("sport"),
+            "title": target.get("title") or "Planned workout", "replaces": snapshot}, None
+
+
 def resolve_changes(
-    raw_changes: list[dict], workouts: list[dict], details_by_id: Optional[dict[str, dict]] = None
+    raw_changes: list[dict],
+    workouts: list[dict],
+    details_by_id: Optional[dict[str, dict]] = None,
+    notes: Optional[list[dict]] = None,
 ) -> tuple[list[dict], list[dict]]:
     """Resolves raw coach changes against the planned calendar.
 
@@ -177,7 +251,8 @@ def resolve_changes(
     `create=True` always creates; otherwise the single planned workout of the same sport on that
     date is updated, none -> create, several -> ambiguous (returned with candidates, not staged).
     Updates inherit the title and planned totals the coach did not change. Notes are always
-    created. Returns (staged changes, ambiguous / invalid entries).
+    created. `delete=True` removes one planned workout (by id, or the single match on the date) or
+    one calendar note (`notes`: the notes on the staged dates). Returns (staged changes, problems).
     """
     details_by_id = details_by_id or {}
     by_id = {str(w.get("id")): w for w in workouts if w.get("id") is not None}
@@ -191,6 +266,13 @@ def resolve_changes(
         day = parse_date(raw_date)
         title = str(raw.get("title") or "").strip()
         kind = KIND_NOTE if str(raw.get("kind") or "").strip().lower() == KIND_NOTE else KIND_WORKOUT
+        if raw.get("delete"):
+            day_str = iso_date(day) if day else None
+            change, problem = (_delete_note(day_str, title, notes or []) if kind == KIND_NOTE
+                               else _delete_workout(raw, day_str, title, workouts, by_id, details_by_id))
+            staged.extend([change] if change else [])
+            problems.extend([problem] if problem else [])
+            continue
         if not day:
             problems.append({"reason": "invalid_date", "date_str": raw_date, "title": title})
             continue
@@ -276,6 +358,18 @@ def _needs_structure(change: dict, why: str, current: Optional[dict] = None) -> 
     }
 
 
+def _totals_mismatch(change: dict, totals: dict) -> Optional[str]:
+    """Why the builder does not match the coach's own distance / duration (> TOTALS_BLOCK_REL), else None."""
+    inherited = set(change.get("inherited") or ())
+    units = {"distance_km": "km", "duration_minutes": "min"}
+    for field in _TOTAL_FIELDS:
+        builder, coach = totals.get(field), None if field in inherited else change.get(field)
+        if builder is not None and coach and abs(builder - coach) > TOTALS_BLOCK_REL * max(builder, coach):
+            return (f"the steps add up to {round(builder, 1):g} {units[field]} but you stated {coach:g} {units[field]}: "
+                    "fix the steps (or the stated total and title) and stage again")
+    return None
+
+
 def _apply_builder(change: dict, native: dict, thr: dict, notes: list[dict]) -> None:
     """Attaches the native builder; distance / duration / TSS follow it (the coach's numbers are reported
     back when they differ by more than TOTALS_NOTE_REL; values inherited from the current workout are not
@@ -336,6 +430,9 @@ def finalize_builders(
     needs: list[dict] = []
     notes: list[dict] = []
     for change in staged:
+        if change.get("action") == ACTION_DELETE:
+            ready.append(change)
+            continue
         marker = change.pop("builder", None)
         raw_structure = change.pop("structure", None)
         thr = sport_thresholds(settings_raw, change.get("sport"))
@@ -345,6 +442,10 @@ def finalize_builders(
             native, error = parse_coach_structure(raw_structure, change.get("sport"), thr)
             if error:
                 needs.append(_needs_structure(change, f"invalid: {error}"))
+                continue
+            mismatch = _totals_mismatch(change, builder_totals(native, thr))
+            if mismatch:
+                needs.append(_needs_structure(change, mismatch))
                 continue
             _apply_builder(change, native, thr, notes)
         elif marker == BUILDER_MISSING:
@@ -395,7 +496,9 @@ def _cell(text: Any) -> str:
 
 
 def change_label(change: dict) -> str:
-    """'Created', 'Updated' or 'Moved' (an update whose current workout is on another date)."""
+    """'Created', 'Updated', 'Moved' (an update whose current workout is on another date) or 'Deleted'."""
+    if change.get("action") == ACTION_DELETE:
+        return "Deleted"
     if change.get("action") != ACTION_UPDATE:
         return "Created"
     before = (change.get("replaces") or {}).get("date")
@@ -421,7 +524,7 @@ def _workout_cell(title: Any, values: dict) -> str:
 
 
 def _before_cell(change: dict) -> str:
-    if change.get("action") != ACTION_UPDATE:
+    if change.get("action") not in (ACTION_UPDATE, ACTION_DELETE):
         return "–"
     before = change.get("replaces") or {}
     cell = _workout_cell(before.get("title") or change.get("replaces_title") or "Existing workout", before)
@@ -436,26 +539,25 @@ def confirmation_text(results: list[dict]) -> str:
     failed = [r for r in results if not r.get("ok")]
     workouts = [r for r in applied if r.get("kind") != KIND_NOTE]
     notes = [r for r in applied if r.get("kind") == KIND_NOTE]
+    deleted = sum(1 for r in workouts if r.get("action") == ACTION_DELETE)
 
     if not applied:
         lines = ["⚠️ **TrainingPeaks was not updated.**"]
     else:
-        counts = [c for c in (workouts and _plural(len(workouts), "workout"), notes and _plural(len(notes), "note")) if c]
+        counts = [c for c in (
+            workouts and _plural(len(workouts), "workout") + (f" ({deleted} deleted)" if deleted else ""),
+            notes and _plural(len(notes), "note"),
+        ) if c]
         lines = [f"✅ **TrainingPeaks updated:** {' and '.join(counts)}."]
 
     if workouts:
         lines += ["", "| Change | Date | Before | After |", "|---|---|---|---|"]
         for r in workouts:
-            lines.append(
-                f"| {change_label(r)} | {_display_date(r['date'])} | {_before_cell(r)} | "
-                f"{_workout_cell(r.get('title'), r)} |"
-            )
-        builders = [r for r in workouts if r.get("structure_summary")]
-        if builders:
-            lines += ["", "**Workout builder:**"]
-            lines += [f"- {_display_date(r['date'])} · {_cell(r.get('title'))}: {r['structure_summary']}" for r in builders]
+            after = "–" if r.get("action") == ACTION_DELETE else _workout_cell(r.get("title"), r)
+            lines.append(f"| {change_label(r)} | {_display_date(r['date'])} | {_before_cell(r)} | {after} |")
     for r in notes:
-        lines += ["", f"📝 Note added: {_display_date(r['date'])} · {_cell(r.get('title'))}"]
+        verb = "🗑️ Note removed" if r.get("action") == ACTION_DELETE else "📝 Note added"
+        lines += ["", f"{verb}: {_display_date(r['date'])} · {_cell(r.get('title'))}"]
     if failed:
         lines += ["", "⚠️ **Not saved:**"]
         lines += [

@@ -1,4 +1,4 @@
-"""Behavioural test for workout analysis (`analyze_workout` + `no_workout_reply`)."""
+"""Behavioural test for workout analysis (`analyze_workout`, including its coded "no workout" reply)."""
 
 import asyncio
 import json
@@ -51,3 +51,9 @@ def test_workout_analysis_web_banner_payload_for_run_and_bike(runner):
     assert (bike_tiles["tss"]["label"], bike_tiles["tss"]["value"]) == ("TSS", "45")
     assert bike_tiles["if"]["value"] == "0.85"
     assert bike["hr_zones"] is None
+
+
+def test_no_completed_workout_is_a_coded_reply_that_ends_the_turn(runner):
+    ctx = runner.ctx()
+    out = asyncio.run(analyze_workout(ctx, date_str="2026-10-25"))
+    assert ctx.reply_text() == out and ctx.actions.skip_summarization is True  # no LLM retry on other dates

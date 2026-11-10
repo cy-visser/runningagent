@@ -1,6 +1,7 @@
 # Local Environment & Secrets 
 .env
 .env.*
+!.env.example
 *.cookie
 cli_client.py
 

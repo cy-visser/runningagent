@@ -13,11 +13,9 @@ from ...features.schedule_audit.fetch_schedule_audit_data_tool import (
 from ...features.trend_analysis.fetch_trend_data_tool import fetch_trend_data_tool
 from ...features.weather_lookup.get_weather_tool import get_weather_tool
 from ...features.workout_analysis.analyze_workout_tool import analyze_workout_tool
-from ...features.workout_analysis.no_workout_reply_callback import no_workout_reply
 from ...features.workout_creator.apply_staged_changes_tool import apply_staged_changes_tool
 from ...features.workout_creator.stage_workout_changes_tool import stage_workout_changes_tool
-from ...features.workout_creator.write_confirmation_callback import write_confirmation_reply
-from ..model_config import COACH_MODEL, build_model
+from ..model_config import build_coach_model
 from ..onboarding.request_new_goal_tool import request_new_goal_tool
 from ..report_memory import keep_latest_reports_and_skills
 from .instruction import build_coach_instruction
@@ -41,21 +39,17 @@ coaching_agent_tools = [
 ]
 
 coaching_agent = Agent(
-    model=build_model(COACH_MODEL),
+    model=build_coach_model(),
     name="coaching_agent",
     description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
     instruction=build_coach_instruction,
     tools=coaching_agent_tools,
-    # Runner profile injected exactly once per model call (reloaded if missing); web quick actions
-    # dispatch their skill + data tool without a routing LLM call; deterministic no-workout reply;
-    # coded replies after staging / applying workout changes (no LLM call); LOW reasoning for a chat
-    # approval or the post-staging message, MEDIUM for session edits, HIGH otherwise; reasoning of
-    # completed turns is not replayed; only the latest report output and skill instructions are sent.
+    # Runner profile once per call; quick actions without a routing LLM call; per-call thinking; no
+    # signatures of completed turns; only the latest reports, skills and staged set. (Coded replies
+    # after staging / applying / no workout end the turn in the tools: shared/ui_channel.py.)
     before_model_callback=[
         ensure_profile_context,
         dispatch_quick_action,
-        no_workout_reply,
-        write_confirmation_reply,
         apply_thinking_policy,
         strip_stale_thoughts,
         keep_latest_reports_and_skills,

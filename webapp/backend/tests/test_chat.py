@@ -48,6 +48,19 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
         ("message", {"text": "## Check-in\nFull", "kind": "checkin"})
     ]
 
+    # A tool's coded reply (UI widget; the turn ends without an LLM call) joins the turn's message.
+    tr_reply = TurnEventTranslator()
+    tr_reply.feed({"author": "coaching_agent", "content": {"parts": [{"text": "Move it: TSB is -18."}]}})
+    stage_done = {"functionResponse": {"name": "stage_workout_changes", "response": {"result": "{}"}}}
+    widget = {"id": "reply:c1", "provider": "running_coach", "payload": {"kind": "reply", "data": {"text": "📋 1 change staged."}}}
+    assert tr_reply.feed({"author": "coaching_agent", "actions": {"skipSummarization": True, "renderUiWidgets": [widget]},
+                          "content": {"parts": [stage_done]}}) == [
+        ("tool", {"name": "stage_workout_changes", "label": "Staging plan changes", "state": "done"}),
+        ("message", {"text": "Move it: TSB is -18.\n\n📋 1 change staged.", "kind": "chat"}),
+    ]
+    other = {**widget, "provider": "someone_else"}
+    assert TurnEventTranslator().feed({"author": "coaching_agent", "actions": {"renderUiWidgets": [other]}}) == []
+
     # Audit report payload is also whitelisted
     tr_audit = TurnEventTranslator()
     audit_evs = tr_audit.feed(

@@ -16,6 +16,7 @@ from ...shared.health_metrics import (
 from ...shared.parallel_fetch import gather_labeled, result_or_none
 from ...shared.runner_weather import fetch_weather_text, weather_at
 from ...shared.tp_payloads import coerce_mcp_payload, parse_mcp_response
+from ...shared.ui_channel import reply
 from ...shared.training_log.record_writer import record_workout
 from ...shared.training_log.telemetry_file import load_analysis_file
 from ...shared.workout_status import is_workout_completed
@@ -85,7 +86,9 @@ async def analyze_workout(
         ]
         completed = [w for w in workouts_list if is_workout_completed(w)]
         if not completed:
-            return format_no_workout(target_iso, workouts_list, recent)
+            no_workout = format_no_workout(target_iso, workouts_list, recent)
+            reply(tool_context, no_workout)  # coded reply: the coach cannot retry other dates
+            return no_workout
 
         # Pick the day's key session and list the others.
         target_workout, other_sessions = select_primary_workout(completed, sport_hint)

@@ -1,4 +1,4 @@
-"""TrainingPeaks create/update dispatch for staged workouts and notes (pure execution, no lookups)."""
+"""TrainingPeaks create/update/delete dispatch for staged workouts and notes (pure execution, no lookups)."""
 
 import logging
 from typing import Any
@@ -7,7 +7,7 @@ from google.adk.tools import ToolContext
 
 from ....integrations.trainingpeaks import tp_calls
 from ....shared.tp_payloads import coerce_mcp_payload
-from .staged_changes import KIND_NOTE
+from .staged_changes import ACTION_DELETE, KIND_NOTE
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +70,21 @@ async def write_note(tool_context: ToolContext, change: dict) -> dict[str, Any]:
     return await _run(tool_context, "tp_create_note", "create", "note", node_input)
 
 
+async def delete_item(tool_context: ToolContext, change: dict) -> dict[str, Any]:
+    """Deletes one staged workout or calendar note."""
+    if change.get("kind") == KIND_NOTE:
+        tool, what, item_id = "tp_delete_note", "note", {"note_id": change["note_id"]}
+    else:
+        tool, what, item_id = "tp_delete_workout", "workout", {"workout_id": change["workout_id"]}
+    result = await _run(tool_context, tool, "delete", what, item_id)
+    return {**result, "id": next(iter(item_id.values()))} if result["ok"] else result
+
+
 async def write_change(tool_context: ToolContext, change: dict) -> dict[str, Any]:
     """Writes one resolved staged change; returns the change (without its native builder) merged with its outcome."""
-    writer = write_note if change.get("kind") == KIND_NOTE else write_workout
+    if change.get("action") == ACTION_DELETE:
+        writer = delete_item
+    else:
+        writer = write_note if change.get("kind") == KIND_NOTE else write_workout
     outcome = await writer(tool_context, change)
     return {**{k: v for k, v in change.items() if k != "structured_workout"}, **outcome}

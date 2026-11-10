@@ -9,7 +9,9 @@
           "timeline": "2026-08-01",
           "training_goal": "Berlin Marathon"
         }
-      }
+      },
+      "app_name": "running_coach",
+      "user_id": "test_user"
     },
     "data": [
       {
@@ -34,7 +36,9 @@
           "age": 28,
           "location": "Boulder, CO"
         }
-      }
+      },
+      "app_name": "running_coach",
+      "user_id": "test_user"
     },
     "data": [
       {
@@ -54,7 +58,9 @@
           "age": 34,
           "location": "Utrecht"
         }
-      }
+      },
+      "app_name": "running_coach",
+      "user_id": "test_user"
     },
     "data": [
       {
@@ -74,7 +80,9 @@
           "age": 34,
           "location": "Utrecht"
         }
-      }
+      },
+      "app_name": "running_coach",
+      "user_id": "test_user"
     },
     "data": [
       {
@@ -94,7 +102,9 @@
           "age": 34,
           "location": "Utrecht"
         }
-      }
+      },
+      "app_name": "running_coach",
+      "user_id": "test_user"
     },
     "data": [
       {
