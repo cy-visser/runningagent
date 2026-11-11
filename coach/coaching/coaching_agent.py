@@ -21,7 +21,7 @@ from ..report_memory import keep_latest_reports_and_skills
 from .instruction import build_coach_instruction
 from .model_callbacks import apply_thinking_policy, strip_stale_thoughts
 from .profile_context import ensure_profile_context
-from .quick_actions import dispatch_quick_action
+from .quick_actions import dispatch_quick_action, drop_disabled_tool_calls
 from .report_tool_guard import guard_report_tools, track_turn_calls
 from .skill_toolset import skill_toolset
 
@@ -55,8 +55,9 @@ coaching_agent = Agent(
         keep_latest_reports_and_skills,
     ],
     # Report data tools render a report card: they only run as the turn's report, never as a data
-    # lookup after another skill or tool in the same turn.
-    after_model_callback=[track_turn_calls],
+    # lookup after another skill or tool in the same turn. A tools-off report call never runs a tool,
+    # even when the model returns a function call anyway.
+    after_model_callback=[track_turn_calls, drop_disabled_tool_calls],
     before_tool_callback=[guard_report_tools],
     mode="chat",
 )

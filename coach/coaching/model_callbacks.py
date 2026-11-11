@@ -1,12 +1,10 @@
 """Model callbacks for the coaching agent.
 
-- Per call: thinking (COACH_THINKING_LEVEL, default MEDIUM; LOW for a chat approval and for the coaching
-  message after an unexplained staging, which also runs with tools off).
+- Per call: thinking (COACH_THINKING_LEVEL, default MEDIUM; LOW for a short chat approval of staged changes).
 - History: thought signatures of completed turns are dropped before each call.
-(Coded replies after staging / applying end the turn in the tools themselves: `shared/ui_channel.py`.)
+(The staging call carries the coaching message and ends the turn itself: `stage_workout_changes`, `shared/ui_channel.py`.)
 """
 
-import json
 from typing import Any, Optional
 
 from google.adk.agents.callback_context import CallbackContext
@@ -15,7 +13,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 from opentelemetry import trace
 
-from ...features.workout_creator.stage_workout_changes_tool import STAGED_CHANGES_STATE_KEY, stage_workout_changes_tool
+from ...features.workout_creator.stage_workout_changes_tool import STAGED_CHANGES_STATE_KEY
 from ..model_config import COACH_THINKING_LEVEL
 
 # ------------------------------------------------------------------------------
@@ -25,12 +23,6 @@ from ..model_config import COACH_THINKING_LEVEL
 EXECUTION_THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW)
 DEFAULT_THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel[COACH_THINKING_LEVEL])
 APPROVAL_MAX_WORDS = 12
-EXPLAIN_STAGED_INSTRUCTION = (
-    "STAGED WITHOUT EXPLANATION: you staged the changes without explaining them. Write your coaching message now, "
-    "in 2-4 sentences: why these changes, tied to this runner's data, goal and north star, and any risk with its "
-    "numbers. Do not list the changes: the runner sees them in a table under your message. Describe only what the "
-    "staged set does (see the stage result): a moved session is moved, not removed. Call no tools."
-)
 
 
 def _text(content: types.Content) -> Optional[str]:
@@ -56,23 +48,8 @@ def is_staged_approval(state: Any, llm_request: LlmRequest) -> bool:
     return bool(text) and "?" not in text and len(text.split()) <= APPROVAL_MAX_WORDS
 
 
-def needs_explanation(llm_request: LlmRequest) -> bool:
-    """The request follows a clean staging the coach has not explained yet (`explain` in the result)."""
-    last = (llm_request.contents or [None])[-1]
-    for part in (last.parts if last else None) or []:
-        response = part.function_response
-        if response and response.name == stage_workout_changes_tool.name:
-            try:
-                return bool(json.loads((response.response or {}).get("result") or "{}").get("explain"))
-            except (ValueError, AttributeError):
-                return False
-    return False
-
-
 def thinking_for(state: Any, llm_request: LlmRequest) -> tuple[types.ThinkingConfig, str]:
     """The thinking config for this call and why (recorded on the trace span)."""
-    if needs_explanation(llm_request):
-        return EXECUTION_THINKING, "explanation"
     if is_staged_approval(state, llm_request):
         return EXECUTION_THINKING, "approval"
     return DEFAULT_THINKING, "default"
@@ -81,15 +58,10 @@ def thinking_for(state: Any, llm_request: LlmRequest) -> tuple[types.ThinkingCon
 def apply_thinking_policy(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-    """before_model_callback: the call's thinking; the post-staging explanation runs with tools off."""
+    """before_model_callback: the call's thinking level. Never changes the prompt (keeps the cache prefix)."""
     thinking, reason = thinking_for(callback_context.state, llm_request)
     llm_request.config = llm_request.config or types.GenerateContentConfig()
     llm_request.config.thinking_config = thinking
-    if reason == "explanation":
-        llm_request.config.tool_config = types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.NONE)
-        )
-        llm_request.append_instructions([EXPLAIN_STAGED_INSTRUCTION])
     span = trace.get_current_span()  # no-op span when tracing is off
     span.set_attribute("coach.thinking_level", thinking.thinking_level.name)
     span.set_attribute("coach.thinking_reason", reason)

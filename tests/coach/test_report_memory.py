@@ -8,8 +8,11 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 from running_coach.coach.report_memory import (
+    APPLIED_STAGE_CHANGES,
+    APPLIED_STAGE_RESULT,
     REPLACED_STAGE_ARGS,
     REPLACED_STAGE_RESULT,
+    STALE_SKILL_STUB,
     ReportMemorySummarizer,
     keep_latest_reports_and_skills,
     replaced_stagings,
@@ -112,13 +115,33 @@ def test_a_replaced_staged_set_is_cut_to_a_pointer_and_the_current_set_stays_ver
     assert parts[("call", "s2")] == {"changes": [{"date_str": "s2"}]} and "s2" in parts[("resp", "s2")]["result"]
 
 
-def test_an_applied_set_and_a_failed_restaging_keep_the_earlier_set():
+def test_an_applied_set_is_compacted_and_a_failed_restaging_keeps_the_earlier_set():
+    results = [{"ok": True, "id": "w1", "action": "update", "date": "2026-11-03", "sport": "Run",
+                "title": "Threshold 4x2km", "description": "15' WU ..." * 50, "structure": {"steps": ["..."] * 40}},
+               {"ok": False, "error": "TP 500", "action": "create", "date": "2026-11-04T00:00:00", "sport": "Run",
+                "title": "Recovery Run"},
+               {"ok": True, "id": "n1", "kind": "note", "action": "create", "date": "2026-11-04", "title": "Travel"}]
     applied = [types.Content(role="model", parts=[_call("apply_staged_changes", "a1")]),
                types.Content(role="user", parts=[_resp("apply_staged_changes", "a1",
-                                                       {"result": json.dumps({"success": True, "results": []})})])]
+                                                       {"result": json.dumps({"success": True, "results": results})})])]
     request = _staging_request(*applied)
+    request.contents[0].parts[0].function_call.args["message"] = "Swap for recovery: TSB -18."
+    original = list(request.contents)  # the session's contents: must never be mutated
     keep_latest_reports_and_skills(None, request)
-    assert _stage_parts(request)[("call", "s1")] == {"changes": [{"date_str": "s1"}]}  # applied: history
+    parts = _stage_parts(request)
+    # The applied set: stub, but the coach's message stays; the current set s2 stays verbatim.
+    assert parts[("call", "s1")] == {"changes": APPLIED_STAGE_CHANGES, "message": "Swap for recovery: TSB -18."}
+    assert parts[("resp", "s1")] == APPLIED_STAGE_RESULT
+    assert parts[("call", "s2")] == {"changes": [{"date_str": "s2"}]}
+    # The apply result: one compact line per change, ids and failures kept, no bulky payload.
+    (apply_resp,) = [p.function_response.response for c in request.contents for p in c.parts
+                     if p.function_response and p.function_response.name == "apply_staged_changes"]
+    assert apply_resp == {"result": (
+        'Applied 2/3 (the app confirmed this to the runner): update 2026-11-03 Run "Threshold 4x2km" [w1]; '
+        'create 2026-11-04 Run "Recovery Run" FAILED: TP 500; create 2026-11-04 note "Travel" [n1]')}
+    # Only the request changes: the session's own contents keep the full set and results.
+    assert original[0].parts[0].function_call.args["changes"] == [{"date_str": "s1"}]
+    assert "description" in original[3].parts[0].function_response.response["result"]
 
     failed = [types.Content(role="model", parts=[_call("stage_workout_changes", "f1", changes=[])]),
               types.Content(role="user", parts=[_resp("stage_workout_changes", "f1",
@@ -129,3 +152,25 @@ def test_an_applied_set_and_a_failed_restaging_keep_the_earlier_set():
     request = _staging_request()
     request.contents[2:] = failed  # s1 then only a failed retry: s1 is still the current set
     assert replaced_stagings(request.contents) == set()
+
+
+def test_skill_instructions_of_completed_turns_become_a_stub_and_the_current_turn_keeps_them():
+    from google.adk.models.llm_request import LlmRequest
+
+    def load(call_id: str, skill: str) -> list[types.Content]:
+        return [types.Content(role="model", parts=[_call("load_skill", call_id, skill_name=skill)]),
+                types.Content(role="user", parts=[_resp("load_skill", call_id,
+                                                        {"skill_name": skill, "instructions": SKILL_TEXT})])]
+
+    request = LlmRequest(contents=[
+        types.Content(role="user", parts=[types.Part(text="Audit my schedule")]),
+        *load("k1", "schedule-audit"),
+        types.Content(role="model", parts=[types.Part(text="### Assessment")]),
+        types.Content(role="user", parts=[types.Part(text="Add a tempo run on Thursday")]),
+        *load("k2", "workout-creator"),
+    ])
+    keep_latest_reports_and_skills(None, request)
+    skills = {p.function_response.response["skill_name"]: p.function_response.response["instructions"]
+              for c in request.contents for p in c.parts
+              if p.function_response and p.function_response.name == "load_skill"}
+    assert skills == {"schedule-audit": STALE_SKILL_STUB, "workout-creator": SKILL_TEXT}

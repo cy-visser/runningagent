@@ -12,8 +12,10 @@ its [workout_id]s) or a workout analysis's numbers used to be lost after compact
   report tool and the latest instructions of each skill are kept; older copies are dropped
   (summary blocks) or replaced by a one-line pointer (raw responses, so every function call keeps
   its response). A staged set replaced by a later staging (no apply in between) is cut to a pointer
-  too, call and response, so only the current staged set is verbatim. The stored session is never
-  changed.
+  too, call and response, so only the current staged set is verbatim. What the app already settled
+  is compacted: an apply result becomes one line per change (with ids) and the staged set it applied
+  a stub (its `message` kept). Skill instructions from completed turns become a stub (the coach
+  reloads a skill with its data tool). The stored session (and so the UI) is never changed.
 """
 
 import json
@@ -42,6 +44,9 @@ STAGE = "stage_workout_changes"
 APPLY = "apply_staged_changes"
 REPLACED_STAGE_ARGS = {"changes": "[replaced by a later staging below]"}
 REPLACED_STAGE_RESULT = {"result": "[replaced: the current staged set is further below]"}
+APPLIED_STAGE_CHANGES = "[applied: see the apply_staged_changes result below]"
+APPLIED_STAGE_RESULT = {"result": "[applied: see the apply_staged_changes result below]"}
+STALE_SKILL_STUB = "[skill instructions from an earlier turn: call load_skill again before following this skill]"
 
 _REPORT_BLOCK_RE = re.compile(r'\n*<report tool="(?P<tool>[^"]+)"[^>]*>.*?</report>', re.DOTALL)
 REPORT_MEMORY_HEADER = (
@@ -179,9 +184,10 @@ def _result_json(response: types.FunctionResponse) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def replaced_stagings(contents: list[types.Content]) -> set[str]:
-    """Call ids of staged sets replaced by a later staging; an apply in between keeps them (history)."""
+def staging_status(contents: list[types.Content]) -> tuple[set[str], set[str]]:
+    """Call ids of staged sets (replaced by a later staging, applied by a later apply)."""
     replaced: set[str] = set()
+    applied: set[str] = set()
     pending: Optional[str] = None
     for content in contents:
         for part in content.parts or []:
@@ -193,8 +199,24 @@ def replaced_stagings(contents: list[types.Content]) -> set[str]:
                     replaced.add(pending)
                 pending = response.id
             elif response.name == APPLY and "results" in _result_json(response):
+                if pending:
+                    applied.add(pending)
                 pending = None
-    return replaced
+    return replaced, applied
+
+
+def replaced_stagings(contents: list[types.Content]) -> set[str]:
+    """Call ids of staged sets replaced by a later staging; an apply in between keeps them (history)."""
+    return staging_status(contents)[0]
+
+
+def _last_runner_message(contents: list[types.Content]) -> int:
+    """Index of the latest runner message (a user content that is not only tool responses)."""
+    return max(
+        (i for i, c in enumerate(contents)
+         if c.role == "user" and any(not p.function_response for p in c.parts or [])),
+        default=0,
+    )
 
 
 def keep_latest_reports_and_skills(
@@ -221,13 +243,19 @@ def keep_latest_reports_and_skills(
                 for m in _REPORT_BLOCK_RE.finditer(part.text):
                     latest[("report", m.group("tool"))] = (ci, pi, m.start() + 1)
 
-    # Pass 2: drop or point away from every older copy.
-    replaced = replaced_stagings(contents)
+    # Pass 2: drop or point away from every older copy; compact what the app already settled.
+    replaced, applied = staging_status(contents)
+    turn_start = _last_runner_message(contents)
     out: list[types.Content] = []
     for ci, content in enumerate(contents):
         parts, changed = [], False
         for pi, part in enumerate(content.parts or []):
-            new = _without_replaced_staging(part, replaced) or _keep_latest_in_part(part, ci, pi, latest, call_skills)
+            new = (
+                _without_replaced_staging(part, replaced)
+                or _compact_applied(part, applied)
+                or _stale_skill_stub(part, ci, turn_start, call_skills)
+                or _keep_latest_in_part(part, ci, pi, latest, call_skills)
+            )
             changed = changed or new is not part
             if new is not None:
                 parts.append(new)
@@ -246,6 +274,52 @@ def _without_replaced_staging(part: types.Part, replaced: set[str]) -> Optional[
     if response and response.name == STAGE and response.id in replaced:
         return part.model_copy(update={"function_response": response.model_copy(update={"response": REPLACED_STAGE_RESULT})})
     return None
+
+
+def applied_summary(response: types.FunctionResponse) -> str:
+    """One compact line per applied change (ids kept for later edits); the runner saw the full table."""
+    results = _result_json(response).get("results") or []
+    ok = sum(1 for r in results if isinstance(r, dict) and r.get("ok"))
+    items = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        what = r.get("kind") if r.get("kind") == "note" else r.get("sport") or "workout"
+        item = f'{r.get("action") or "change"} {str(r.get("date") or "")[:10]} {what} "{r.get("title") or ""}"'
+        if r.get("id"):
+            item += f' [{r["id"]}]'
+        if not r.get("ok"):
+            item += f' FAILED: {r.get("error") or "unknown error"}'
+        items.append(item)
+    return f"Applied {ok}/{len(results)} (the app confirmed this to the runner): " + "; ".join(items)
+
+
+def _compact_applied(part: types.Part, applied: set[str]) -> Optional[types.Part]:
+    """An apply result as one compact line, and the staged set it applied as a stub (keeping the message)."""
+    call, response = part.function_call, part.function_response
+    if response and response.name == APPLY and "results" in _result_json(response):
+        compact = {"result": applied_summary(response)}
+        return part.model_copy(update={"function_response": response.model_copy(update={"response": compact})})
+    if call and call.name == STAGE and call.id in applied:
+        args = {"changes": APPLIED_STAGE_CHANGES}
+        if (call.args or {}).get("message"):
+            args["message"] = call.args["message"]
+        return part.model_copy(update={"function_call": call.model_copy(update={"args": args})})
+    if response and response.name == STAGE and response.id in applied:
+        return part.model_copy(update={"function_response": response.model_copy(update={"response": APPLIED_STAGE_RESULT})})
+    return None
+
+
+def _stale_skill_stub(part: types.Part, ci: int, turn_start: int, call_skills: dict[str, str]) -> Optional[types.Part]:
+    """Skill instructions from a completed turn as a stub (the coach reloads the skill with its data tool)."""
+    response = part.function_response
+    if not response or response.name != LOAD_SKILL or ci >= turn_start:
+        return None
+    skill = _skill_name(part, call_skills)
+    if not skill:
+        return None
+    stub = {"skill_name": skill, "instructions": STALE_SKILL_STUB}
+    return part.model_copy(update={"function_response": response.model_copy(update={"response": stub})})
 
 
 def _keep_latest_in_part(

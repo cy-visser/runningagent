@@ -128,7 +128,11 @@ def _fresh(ctx, coach_text: str = ""):
     return ctx
 
 
-def test_staging_ends_the_turn_with_the_coded_line_only_when_already_explained(runner):
+def _stage_with(ctx, changes, message: str) -> dict:
+    return json.loads(asyncio.run(stage_workout_changes(ctx, changes, message=message)))
+
+
+def test_staging_ends_the_turn_in_one_call_with_the_coaching_message(runner):
     ctx = runner.ctx()
     tue_id = next(w["id"] for w in runner.workouts if w["date"] == "2026-11-03" and w["sport"] == "Run")
     move = _stage(_fresh(ctx), [{"workout_id": tue_id, "date_str": "2026-11-04"}])  # plain move: no text needed
@@ -136,13 +140,22 @@ def test_staging_ends_the_turn_with_the_coded_line_only_when_already_explained(r
     assert ctx.reply_text().startswith("📋 1 change staged.")
 
     new = [{"date_str": "2026-11-04", "title": "Recovery Run", "distance_km": 6, "structure": RECOVERY_6KM}]
-    unexplained = _stage(_fresh(ctx), new)
-    assert unexplained["explain"] is True and ctx.actions.skip_summarization is None and ctx.reply_text() is None
+    # The message argument is the coach's reply: shown above the coded line, and the turn ends (no 2nd call).
+    why = "Swap in an easy 6 km: your TSB is -18."
+    with_message = _stage_with(_fresh(ctx), new, why)
+    assert "explain" not in with_message and ctx.actions.skip_summarization is True
+    assert ctx.reply_text() == f"{why}\n\n📋 1 change staged. Review them below and press **Update TrainingPeaks** to apply."
 
-    explained = _stage(_fresh(ctx, "Swap in an easy 6 km: your TSB is -18."), new)
-    assert "explain" not in explained and ctx.actions.skip_summarization is True
+    # No message: still one call, only the coded line (monitored via a trace attribute).
+    without = _stage(_fresh(ctx), new)
+    assert "explain" not in without and ctx.actions.skip_summarization is True
+    assert ctx.reply_text().startswith("📋 1 change staged.")
 
-    ambiguous = _stage(_fresh(ctx, "text"), new + [{"date_str": "2026-11-09", "workout_id": "nope"}])
+    # Already written as text this turn: never shown twice.
+    _stage_with(_fresh(ctx, why), new, why)
+    assert ctx.reply_text().startswith("📋 1 change staged.") and why not in ctx.reply_text()
+
+    ambiguous = _stage_with(_fresh(ctx), new + [{"date_str": "2026-11-09", "workout_id": "nope"}], why)
     assert ambiguous["not_found"] and ctx.actions.skip_summarization is None  # the coach fixes it first
 
 

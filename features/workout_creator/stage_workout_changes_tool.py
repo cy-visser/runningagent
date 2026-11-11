@@ -8,6 +8,7 @@ from datetime import date
 from typing import Any, Optional
 
 from google.adk.tools import FunctionTool, ToolContext
+from opentelemetry import trace
 
 from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import iso_date
@@ -75,6 +76,18 @@ def _wrote_text_this_turn(tool_context: ToolContext) -> bool:
     return False
 
 
+def staged_reply(tool_context: ToolContext, message: str, staged: list[dict]) -> str:
+    """The turn's closing reply: the coach's message (if not already written as text) + the coded line."""
+    text = (message or "").strip()
+    if _wrote_text_this_turn(tool_context):
+        text = ""  # already shown above the table; never twice
+    elif not text and not is_edit_only(staged):
+        # Content changes without reasoning: still one call (no follow-up), but visible in traces.
+        trace.get_current_span().set_attribute("coach.staged_without_message", True)
+    line = staged_text(len(staged))
+    return f"{text}\n\n{line}" if text else line
+
+
 def _rejected_attempts(tool_context: ToolContext) -> int:
     """Counts needs_structure results in the current invocation (temp: state is not persisted)."""
     invocation = getattr(tool_context, "invocation_id", None)
@@ -128,12 +141,16 @@ async def _current_workouts(tool_context: ToolContext, workout_ids: list[str]) -
     return {w: d for w, d in pairs if d}
 
 
-async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[str, Any]]) -> str:
+async def stage_workout_changes(
+    tool_context: ToolContext, changes: list[dict[str, Any]], message: str = ""
+) -> str:
     """Stages workout and calendar-note changes; the runner applies them with the Update TrainingPeaks button.
 
-    Nothing is written to TrainingPeaks. Call it in the SAME response as your recommendations,
-    whenever you propose concrete plan changes or the runner asks to create, change or move
-    workouts or notes. Stage the complete set: a new call replaces the previously staged set.
+    Nothing is written to TrainingPeaks. `message` is your coaching message to the runner (Markdown,
+    2-4 sentences: why these changes, tied to their data, goal and north star, and any risk with its
+    numbers; never list the changes: the runner sees them in a table under it). It is shown as your
+    reply and ends the turn, so write it here, not as separate text. A plain move / rename needs no
+    message. Stage the complete set: a new call replaces the previously staged set.
 
     Each change is an object:
     - Workout: date_str (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS), sport ('Run' default, 'Bike', 'Swim',
@@ -211,11 +228,8 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
         if strides:
             result["strides_added"] = strides  # kept from the current builder, or added after the warm-up
         if not problems:
-            # Explained already (or a plain move / rename): the coded line ends the turn.
-            if is_edit_only(staged) or _wrote_text_this_turn(tool_context):
-                reply(tool_context, staged_text(len(staged)))
-            else:
-                result["explain"] = True  # the next call writes the reasoning (model_callbacks)
+            # One model call: the coach's message (unless already written as text) + the coded line end the turn.
+            reply(tool_context, staged_reply(tool_context, message, staged))
     messages = [result["message"]] if needs_structure else []
     if ambiguous:
         result["ambiguous"] = ambiguous

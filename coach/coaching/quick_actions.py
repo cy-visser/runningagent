@@ -23,6 +23,7 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.adk.plugins.base_plugin import BasePlugin
 from google.genai import types
+from opentelemetry import trace
 
 from ...features.check_in_report.fetch_checkin_data_tool import fetch_checkin_data_tool
 from ...features.schedule_audit.fetch_schedule_audit_data_tool import (
@@ -78,26 +79,19 @@ def _is_turn_start(llm_request: LlmRequest) -> bool:
     return last.role == "user" and any(p.text for p in parts) and not any(p.function_response for p in parts)
 
 
-def _skill_loaded(llm_request: LlmRequest, skill: str) -> bool:
-    """True when this conversation already holds the skill's instructions."""
-    return any(
-        p.function_call and p.function_call.name == LOAD_SKILL
-        and (p.function_call.args or {}).get("skill_name") == skill
-        for c in llm_request.contents or []
-        for p in c.parts or []
-    )
-
-
 def quick_action_calls(action: Any, llm_request: LlmRequest) -> list[types.Part]:
-    """The function-call parts for a valid action ([] when the action is unknown)."""
+    """The function-call parts for a valid action ([] when the action is unknown).
+
+    A quick action starts a turn, and skill instructions from earlier turns are stubs in the request
+    (`report_memory.keep_latest_reports_and_skills`), so the skill is always loaded with its data tool.
+    """
     if not isinstance(action, dict) or action.get("skill") not in QUICK_ACTIONS:
         return []
     skill = action["skill"]
     tool, allowed = QUICK_ACTIONS[skill]
     raw_args = action.get("args") if isinstance(action.get("args"), dict) else {}
     args = {k: v for k, v in raw_args.items() if k in allowed and v is not None}
-    skip_skill = skill in SKILL_FREE_ACTIONS or _skill_loaded(llm_request, skill)
-    calls = [] if skip_skill else [(LOAD_SKILL, {"skill_name": skill})]
+    calls = [] if skill in SKILL_FREE_ACTIONS else [(LOAD_SKILL, {"skill_name": skill})]
     calls.append((tool.name, args))
     return [
         types.Part(
@@ -128,6 +122,25 @@ def dispatch_quick_action(
         return None  # unknown action: fall back to normal LLM routing of the message
     state[DISPATCHED_STATE_KEY] = invocation_id
     return LlmResponse(content=types.Content(role="model", parts=parts))
+
+
+def drop_disabled_tool_calls(
+    callback_context: CallbackContext, llm_response: LlmResponse
+) -> Optional[LlmResponse]:
+    """after_model_callback: the quick-action report call runs with tool calling off, but the model can still
+    return function calls (gemini-4-argon ignores mode=NONE, even with no tools declared). Drop them so no tool
+    runs and the turn ends on the report text."""
+    content = llm_response.content
+    if llm_response.partial or not content or not content.parts:
+        return None
+    if not is_quick_action_report(callback_context.state, callback_context.invocation_id):
+        return None
+    kept = [p for p in content.parts if not p.function_call]
+    if len(kept) == len(content.parts):
+        return None
+    trace.get_current_span().set_attribute("coach.dropped_tool_calls", len(content.parts) - len(kept))
+    logger.warning("Dropped %d function call(s) from a tools-off report call", len(content.parts) - len(kept))
+    return llm_response.model_copy(update={"content": content.model_copy(update={"parts": kept})})
 
 
 def extract_quick_action(message: Optional[types.Content]) -> Optional[dict]:

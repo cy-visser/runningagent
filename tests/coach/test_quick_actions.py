@@ -147,3 +147,22 @@ def test_update_trainingpeaks_button_applies_staged_changes_without_any_llm_call
             in final)  # older staged set without `replaces`: Before falls back to replaces_title
     assert s.state.get("staged_workout_changes") is None
     assert s.state["applied_workout_changes"]["staged_id"] == staged_id
+
+
+def test_a_tools_off_report_call_never_runs_a_function_call_the_model_returns_anyway():
+    from running_coach.coach.coaching.quick_actions import drop_disabled_tool_calls
+    from running_coach.tests.fakes import FakeContext
+
+    response = LlmResponse(content=types.Content(role="model", parts=[
+        types.Part(text="### Report"),
+        types.Part(function_call=types.FunctionCall(name="stage_workout_changes", args={"changes": []})),
+    ]))
+    report_call = FakeContext(state={DISPATCHED_STATE_KEY: "inv-1"})  # this invocation's report call
+    dropped = drop_disabled_tool_calls(report_call, response)
+    assert [p.text for p in dropped.content.parts] == ["### Report"]
+    assert response.content.parts[1].function_call  # the original response object is untouched
+
+    chat_turn = FakeContext(state={DISPATCHED_STATE_KEY: "an-earlier-invocation"})  # typed chat: tools on
+    assert drop_disabled_tool_calls(chat_turn, response) is None
+    assert drop_disabled_tool_calls(report_call, LlmResponse(content=types.Content(
+        role="model", parts=[types.Part(text="only text")]))) is None

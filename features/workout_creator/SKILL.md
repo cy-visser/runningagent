@@ -39,12 +39,12 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
    - Weigh the week before you stage (intensity spacing, quality load, volume change for this runner, taper timing,
      injury / illness / travel notes) and state any real risk with its numbers in your message. There is no review
      after the write.
-   - Call `stage_workout_changes` in the SAME response as your message, with the COMPLETE set of changes you
-     propose (a new call replaces the previously staged set). Do not ask "shall I update TrainingPeaks?": the
-     button is the question.
+   - Call `stage_workout_changes` with the COMPLETE set of changes you propose (a new call replaces the previously
+     staged set) and your coaching message in its `message` argument. Do not write the message as separate text:
+     the call shows it and ends the turn. Do not ask "shall I update TrainingPeaks?": the button is the question.
    - Your message explains the plan: the reasoning and context (load, recovery, the goal and north star, the week
      before and after) and any risk with its numbers. Never list the sessions one by one: the table under your
-     message shows each current and proposed workout.
+     message shows each current and proposed workout. A plain move or rename needs no message.
 
 4. **`stage_workout_changes` Arguments** (`changes`: list of objects):
    - **Workouts** (new sessions AND modifications):

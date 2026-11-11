@@ -46,10 +46,12 @@ _ROUTING_RULES = """
       Never ask the runner to delete or skip something in TrainingPeaks themselves, and never add a note instead.
     TRAININGPEAKS WRITES: you never write directly. Whenever you propose concrete workout or note changes (in any
     skill, including recommendations after an audit or check-in), call stage_workout_changes with the complete set
-    in the same response as your coaching message (the reasoning and context for the changes; the runner sees each
-    change in a table under it); the runner applies them with the Update TrainingPeaks button. Only when the runner
-    approves staged changes in chat, call apply_staged_changes.
-    Do not reload a skill whose instructions are already in this conversation; just call its data tool.
+    and put your coaching message in its `message` argument (the reasoning and context for the changes; the runner
+    sees each change in a table under it). That one call shows your message and ends the turn; the runner applies
+    the changes with the Update TrainingPeaks button. Only when the runner approves staged changes in chat, call
+    apply_staged_changes.
+    Skill instructions from an earlier turn are replaced by a stub: to follow a skill again, call load_skill again
+    in the same step as its data tool. Within a turn, do not reload a skill that is already loaded.
     New goal (the runner accepts setting one) -> request_new_goal. Ad-hoc weather -> get_weather.
     REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_schedule_audit_data) each render a full report for
     the runner: call one only when the runner asks for that report. Never use one as a data lookup for a follow-up

@@ -40,8 +40,11 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     # The north-star CTL range is judged with the time left, never as today's level; no double-flagging.
     assert "judge it with the time left" in plan_ctx and "never today's CTL against it" in plan_ctx
     assert "never\n      flag both sides as risks" in plan_ctx
-    # The staging call carries the coaching message (reasoning and context).
-    assert "in the same response as your coaching message" in plan_instr
+    # The staging call carries the coaching message (reasoning and context) and ends the turn.
+    assert "put your coaching message in its `message` argument" in plan_instr
+    assert "That one call shows your message and ends the turn" in plan_instr
+    # Skills from earlier turns are stubs: reloaded together with their data tool.
+    assert "call load_skill again\n    in the same step as its data tool" in plan_instr
     assert "GOAL PLAN LENS" not in plan_ctx and "long-run target the tools report" not in plan_ctx
     assert "SUB-GOAL RACE DONE: sub goal Sub-21 5K was raced on 2026-10-20" in plan_ctx
     assert "Do not offer onboarding." in plan_ctx
@@ -69,18 +72,16 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     assert _thinking_for("Lets move the 5k of Nov 25th to Nov 26th") == types.ThinkingLevel.MEDIUM
     for tool in ("stage_workout_changes", "apply_staged_changes", "request_new_goal", "fetch_checkin_data"):
         assert _thinking_after(tool) == types.ThinkingLevel.MEDIUM
-    # An unexplained clean staging: the next call writes the coaching message at LOW, tools off.
-    explain = LlmRequest(contents=[
+    # A clean staging is never followed by an explanation call: no prompt change, tools stay on.
+    after_stage = LlmRequest(contents=[
         types.Content(role="user", parts=[types.Part(text="Plan my week")]),
         types.Content(role="model", parts=[types.Part(function_call=types.FunctionCall(name="stage_workout_changes"))]),
         types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
-            name="stage_workout_changes", response={"result": '{"staged": 2, "explain": true}'}))]),
+            name="stage_workout_changes", response={"result": '{"staged": 2}'}))]),
     ], config=types.GenerateContentConfig())
-    apply_thinking_policy(FakeContext(), explain)
-    assert explain.config.thinking_config.thinking_level == types.ThinkingLevel.LOW
-    assert explain.config.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.NONE
-    assert "STAGED WITHOUT EXPLANATION" in str(explain.config.system_instruction)
-    assert "a moved session is moved, not removed" in str(explain.config.system_instruction)
+    apply_thinking_policy(FakeContext(), after_stage)
+    assert after_stage.config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
+    assert after_stage.config.tool_config is None and after_stage.config.system_instruction is None
     # Rule 2: staged changes are confirmed with the button, so the coach stages its safer version.
     assert "the Update TrainingPeaks button is the\n       runner's confirmation" in plan_instr
     # Moves / renames go straight to stage_workout_changes (no load_skill round trip).
