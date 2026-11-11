@@ -113,8 +113,10 @@ def _wire_step(raw: Any, metric: str, thr: dict, where: str) -> tuple[Optional[d
             return None, f"{where}: {e}"
     else:
         return None, f"{where}: needs a target: pace or intensity_min + intensity_max"
-    if not (0 <= lo <= 300 and 0 <= hi <= 300) or lo > hi:
-        return None, f"{where}: intensity_min/intensity_max must be within 0-300 with min <= max"
+    if lo > hi:
+        lo, hi = hi, lo  # a reversed range (some TrainingPeaks templates store 50/40) is still that range
+    if not (0 <= lo <= 300 and 0 <= hi <= 300):
+        return None, f"{where}: intensity_min/intensity_max must be within 0-300"
 
     targets: list[dict] = [{"minValue": round(lo), "maxValue": round(hi)}]  # whole % (no 88.9 %)
     targets += [t for t in (raw.get("extra_targets") or []) if isinstance(t, dict)]
@@ -193,9 +195,13 @@ def _steps(block: dict) -> list[dict]:
 
 
 def _target(step: dict) -> tuple[Optional[float], Optional[float]]:
+    """(low, high) of the first target; a reversed stored range (e.g. 50/40) is read in order."""
     targets = step.get("targets") or [{}]
     first = targets[0] if isinstance(targets[0], dict) else {}
-    return as_float(first.get("minValue")), as_float(first.get("maxValue"))
+    lo, hi = as_float(first.get("minValue")), as_float(first.get("maxValue"))
+    if lo is not None and hi is not None and lo > hi:
+        lo, hi = hi, lo
+    return lo, hi
 
 
 def step_lengths(step: dict, metric: Optional[str], thr: dict) -> tuple[Optional[float], Optional[float]]:

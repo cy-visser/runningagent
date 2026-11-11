@@ -112,19 +112,19 @@ class TestListTools:
         """The tp_create_workout schema should advertise optional structured_workout support."""
         tools = await list_tools()
         cw = next(t for t in tools if t.name == "tp_create_workout")
-        props = cw.inputSchema["properties"]
+        props = cw.input_schema["properties"]
         assert "distance_km" in props
         assert "tss_planned" in props
         assert "structured_workout" in props
-        assert "distance_km" not in cw.inputSchema["required"]
-        assert "tss_planned" not in cw.inputSchema["required"]
-        assert "structured_workout" not in cw.inputSchema["required"]
+        assert "distance_km" not in cw.input_schema["required"]
+        assert "tss_planned" not in cw.input_schema["required"]
+        assert "structured_workout" not in cw.input_schema["required"]
 
     @pytest.mark.asyncio
     async def test_update_workout_schema_includes_structured_workout(self):
         tools = await list_tools()
         uw = next(t for t in tools if t.name == "tp_update_workout")
-        props = uw.inputSchema["properties"]
+        props = uw.input_schema["properties"]
         assert "structure" in props
         assert "structured_workout" in props
 
@@ -135,8 +135,8 @@ class TestListTools:
         create_tool = next(t for t in tools if t.name == "tp_create_workout")
         update_tool = next(t for t in tools if t.name == "tp_update_workout")
 
-        assert "YYYY-MM-DDTHH:MM:SS" in create_tool.inputSchema["properties"]["date"]["description"]
-        assert "YYYY-MM-DDTHH:MM:SS" in update_tool.inputSchema["properties"]["date"]["description"]
+        assert "YYYY-MM-DDTHH:MM:SS" in create_tool.input_schema["properties"]["date"]["description"]
+        assert "YYYY-MM-DDTHH:MM:SS" in update_tool.input_schema["properties"]["date"]["description"]
 
     @pytest.mark.asyncio
     async def test_workout_feedback_schema_describes_ranges(self):
@@ -146,7 +146,7 @@ class TestListTools:
         update_tool = next(t for t in tools if t.name == "tp_update_workout")
 
         for tool in (create_tool, update_tool):
-            props = tool.inputSchema["properties"]
+            props = tool.input_schema["properties"]
             assert props["feeling"]["description"] == "TrainingPeaks feeling value (0-10)."
             assert props["rpe"]["description"] == "Rating of perceived exertion (RPE), 0-10."
 
@@ -570,3 +570,51 @@ class TestCatchAllErrorHandler:
         assert "secret" not in result["message"]
         assert "password" not in result["message"]
         assert "internal error" in result["message"].lower()
+
+
+# ---------------------------------------------------------------------------
+# MCP SDK 2.x request handlers (registered on the Server constructor)
+# ---------------------------------------------------------------------------
+
+
+class TestSdkHandlers:
+    """The 2.x handlers wrap list_tools / call_tool in ListToolsResult / CallToolResult."""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_handler_returns_every_tool(self):
+        from mcp import types
+
+        from tp_mcp.server import _on_list_tools
+
+        result = await _on_list_tools(None, None)
+        assert isinstance(result, types.ListToolsResult)
+        assert [t.name for t in result.tools] == [t.name for t in await list_tools()]
+        wire = result.model_dump(by_alias=True, exclude_none=True)
+        assert "inputSchema" in wire["tools"][0]  # camelCase on the wire, as clients expect
+
+    @pytest.mark.asyncio
+    async def test_call_tool_handler_wraps_the_json_envelope(self):
+        from mcp import types
+
+        from tp_mcp.server import _on_call_tool
+
+        params = types.CallToolRequestParams(name="tp_not_a_tool", arguments={"athlete": "x"})
+        result = await _on_call_tool(None, params)
+        assert isinstance(result, types.CallToolResult)
+        assert _parse_result(result.content)["error_code"] == "UNKNOWN_TOOL"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_handler_accepts_missing_arguments(self):
+        from mcp import types
+
+        from tp_mcp.server import _on_call_tool
+
+        result = await _on_call_tool(None, types.CallToolRequestParams(name="tp_not_a_tool"))
+        assert _parse_result(result.content)["isError"] is True
+
+    def test_server_registers_both_handlers(self):
+        from tp_mcp.server import server
+
+        assert server.name == "trainingpeaks-mcp"
+        init = server.create_initialization_options()
+        assert init.capabilities.tools is not None  # tools capability advertised

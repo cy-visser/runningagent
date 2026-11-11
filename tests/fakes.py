@@ -46,10 +46,22 @@ PLAN_PROFILE = {
             "result": None,
         },
     ],
-    "recent_race_times": "5K 21:30",
+    "personal_records": {
+        "5k": {"time": "21:30", "time_s": 1290, "date": "2026-05-10"},
+        "10k": None,
+        "10_mile": None,
+        "half_marathon": None,
+        "marathon": None,
+    },
     "injuries": "Past left Achilles tendinopathy",
     "cross_training_strength": "2x cycling + 1x strength",
-    "shoe_rotation": "Superblast 2 (easy/long), Takumi Sen (5K/10K)",
+    "shoe_rotation": {
+        "easy": "Superblast 2",
+        "tempo": "Takumi Sen",
+        "interval": "Takumi Sen",
+        "long_run": "Superblast 2",
+        "race": None,
+    },
 }
 
 SINGLE_PROFILE = {

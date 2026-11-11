@@ -61,6 +61,27 @@ export interface NorthStarGoal {
   taper_weeks?: number | null;
 }
 
+export type PersonalRecordKey =
+  | "5k"
+  | "10k"
+  | "10_mile"
+  | "half_marathon"
+  | "marathon";
+
+export interface PersonalRecord {
+  time: string;
+  time_s?: number | null;
+  date?: string | null;
+}
+
+export type PersonalRecords = Partial<
+  Record<PersonalRecordKey, PersonalRecord | null>
+>;
+
+export type ShoeSlotKey = "easy" | "tempo" | "interval" | "long_run" | "race";
+
+export type ShoeRotation = Partial<Record<ShoeSlotKey, string | null>>;
+
 export interface RunnerProfile {
   firstname?: string | null;
   lastname?: string | null;
@@ -76,10 +97,10 @@ export interface RunnerProfile {
   goal_set_date?: string | null;
   north_star?: NorthStarGoal | null;
   sub_goals?: SubGoal[] | null;
-  recent_race_times?: string | null;
+  personal_records?: PersonalRecords | null;
   injuries?: string | null;
   cross_training_strength?: string | null;
-  shoe_rotation?: string | null;
+  shoe_rotation?: ShoeRotation | null;
 }
 
 export interface ProfileResponse {
@@ -107,10 +128,10 @@ export interface ProfileUpdatePayload {
     race_date: string;
     taper_weeks?: number | null;
   }>;
-  recent_race_times?: string | null;
+  personal_records?: PersonalRecords | null;
   injuries?: string | null;
   cross_training_strength?: string | null;
-  shoe_rotation?: string | null;
+  shoe_rotation?: ShoeRotation | null;
 }
 
 export interface CheckinPmcPoint {

@@ -93,10 +93,22 @@ export const DEMO_PROFILE_RESPONSE: ProfileResponse = {
         result: null,
       },
     ],
-    recent_race_times: "10K: 39:12 (Oct 2026) · HM: 1:27:48 (Mar 2026) · Marathon: 3:04:19 (Oct 2025)",
+    personal_records: {
+      "5k": { time: "18:41", time_s: 1121, date: "2026-06-14" },
+      "10k": { time: "39:12", time_s: 2352, date: "2026-10-04" },
+      "10_mile": null,
+      half_marathon: { time: "1:27:48", time_s: 5268, date: "2026-03-22" },
+      marathon: { time: "3:04:19", time_s: 11059, date: "2025-10-19" },
+    },
     injuries: "Mild left Achilles tightness after steep hill repeats; managed with eccentric heel drops.",
     cross_training_strength: "2x/wk posterior-chain strength (35 min) + 1x easy indoor spin recovery.",
-    shoe_rotation: "Daily: Superblast 2 · Tempo/Intervals: Magic Speed 4 · Race: Metaspeed Sky Paris",
+    shoe_rotation: {
+      easy: "Superblast 2",
+      tempo: "Magic Speed 4",
+      interval: "Magic Speed 4",
+      long_run: "Superblast 2",
+      race: "Metaspeed Sky Paris",
+    },
   },
 };
 

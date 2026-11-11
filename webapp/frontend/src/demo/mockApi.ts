@@ -57,7 +57,7 @@ export async function demoUpdateProfile(
   updated.profile.weight = payload.weight ?? null;
   updated.profile.location = payload.location ?? null;
   updated.profile.goal_type = payload.goal_type;
-  updated.profile.recent_race_times = payload.recent_race_times ?? null;
+  updated.profile.personal_records = payload.personal_records ?? null;
   updated.profile.injuries = payload.injuries ?? null;
   updated.profile.cross_training_strength = payload.cross_training_strength ?? null;
   updated.profile.shoe_rotation = payload.shoe_rotation ?? null;

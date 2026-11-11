@@ -22,7 +22,8 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
 2. **Apply Sports Science & Coaching Principles**:
    - **Easy / Recovery Runs**: Zone 1/2 HR discipline, conversational pace, low aerobic stress.
    - **Quality / Structured Workouts**:
-     - Prescribe specific warm-up (10-15 min easy + dynamic drills/strides).
+     - Prescribe specific warm-up (10-15 min easy + dynamic drills), then strides right after the warm-up
+       (4x 20" fast, relaxed / 40" easy jog) for every tempo, threshold and interval session.
      - Define main set intervals, target pace zones, or HR thresholds.
      - Prescribe recovery intervals between reps.
      - Prescribe cool-down (10 min easy).
@@ -71,11 +72,17 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
      Repetition: `{"type": "repetition", "reps": 5, "steps": [work step, recovery step]}` (no nesting).
    - Runs target pace by default. HR-led runs: `"primaryIntensityMetric": "percentOfThresholdHr"` with % of LTHR.
      Bike: `percentOfFtp` (default) with `duration_seconds` steps.
-   - Easy and long runs: one step (or a few progressive steps). Quality: warm-up, main set, recoveries and cool-down
-     exactly as in the description (distance reps in `distance_m`, strides as short timed steps).
+   - Easy and long runs: one step (or a few progressive steps). Quality: warm-up, strides, main set, recoveries and
+     cool-down exactly as in the description (distance reps in `distance_m`, strides as short timed steps).
+   - Strides: tempo / threshold / interval runs always have a strides block right after the warm-up; if you leave
+     it out the app adds 4x (20" / 40") and reports `strides_added`. Rewriting a run that has strides keeps them.
+     Only when the runner asks to drop strides, set `"strides": false` on that change.
    - A move, rename or description edit needs no `structure`: the builder in TrainingPeaks is kept.
    - Example (threshold): `{"steps": [{"name": "Warm up", "intensityClass": "warmUp", "duration_seconds": 900,
-     "pace": "5:50-6:20"}, {"type": "repetition", "reps": 5, "steps": [{"name": "Threshold", "intensityClass":
+     "pace": "5:50-6:20"}, {"type": "repetition", "reps": 4, "steps": [{"name": "Stride", "intensityClass":
+     "active", "duration_seconds": 20, "intensity_min": 105, "intensity_max": 115}, {"name": "Jog",
+     "intensityClass": "rest", "duration_seconds": 40, "intensity_min": 75, "intensity_max": 80}]},
+     {"type": "repetition", "reps": 5, "steps": [{"name": "Threshold", "intensityClass":
      "active", "duration_seconds": 720, "pace": "4:25-4:35"}, {"name": "Jog", "intensityClass": "rest",
      "duration_seconds": 120, "pace": "6:15-7:00"}]}, {"name": "Cool down", "intensityClass": "coolDown",
      "duration_seconds": 600, "pace": "5:50-6:20"}]}`
@@ -83,7 +90,8 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
    - If the result lists `needs_structure` (nothing was staged): send the complete `structure` for each entry. When
      `current_structure` is given it is the builder in TrainingPeaks now, with exact values: keep it as is and change
      only what the runner asked (e.g. `duration_seconds` 600 -> 720 on the work step), keep `intensity_min` /
-     `intensity_max` on untouched steps, then stage the full set again. Do not ask the runner.
+     `intensity_max` on untouched steps, then stage the full set again. Never drop or rebuild blocks you were not
+     asked to change (strides, drills, extra sets): copy them over unchanged. Do not ask the runner.
 
 6. **After Staging / Applying**:
    - Once staged, the runner sees every change in a table with the button: do not repeat the changes.

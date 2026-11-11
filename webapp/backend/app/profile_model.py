@@ -3,9 +3,31 @@
 from __future__ import annotations
 
 from datetime import date
+import re
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# Mirrors running_coach/shared/race_time.py (the web backend is deployed without the coach package).
+_RACE_TIME_RE = re.compile(r"^(?:(\d{1,2}):)?(\d{1,3}):(\d{2})$")
+
+
+def parse_race_time(raw: Optional[str]) -> tuple[str, int]:
+    """Parses 'MM:SS' or 'H:MM:SS' into `(normalised, seconds)`; raises ValueError when invalid."""
+    text = str(raw or "").strip()
+    match = _RACE_TIME_RE.match(text)
+    if not match:
+        raise ValueError(f"Race time must be MM:SS or H:MM:SS, got {raw!r}.")
+    hours = int(match.group(1) or 0)
+    minutes, seconds = int(match.group(2)), int(match.group(3))
+    if seconds >= 60 or (match.group(1) is not None and minutes >= 60):
+        raise ValueError(f"Race time {raw!r} has minutes or seconds out of range.")
+    total = hours * 3600 + minutes * 60 + seconds
+    if total <= 0:
+        raise ValueError("Race time must be greater than zero.")
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return (f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"), total
 
 
 def _parse_iso_date(raw: Optional[str], field_label: str) -> date:
@@ -68,6 +90,62 @@ class NorthStarInput(BaseModel):
         return self
 
 
+class PersonalRecordInput(BaseModel):
+    time: Optional[str] = Field(default=None, max_length=12)
+    date: Optional[str] = None
+    time_s: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _validate_record(self) -> "PersonalRecordInput":
+        self.time = _opt_str(self.time)
+        self.date = _opt_str(self.date)
+        if not self.time:
+            if self.date:
+                raise ValueError("A personal record date requires a time.")
+            self.time_s = None
+            return self
+        self.time, self.time_s = parse_race_time(self.time)
+        if self.date:
+            d = _parse_iso_date(self.date, "Personal record date")
+            if d > date.today():
+                raise ValueError(f"Personal record date {d} cannot be in the future.")
+            self.date = d.isoformat()
+        return self
+
+
+class PersonalRecordsInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    five_k: Optional[PersonalRecordInput] = Field(default=None, alias="5k")
+    ten_k: Optional[PersonalRecordInput] = Field(default=None, alias="10k")
+    ten_mile: Optional[PersonalRecordInput] = Field(default=None, alias="10_mile")
+    half_marathon: Optional[PersonalRecordInput] = None
+    marathon: Optional[PersonalRecordInput] = None
+
+    def to_doc(self) -> Optional[dict[str, Any]]:
+        """Firestore shape `{"5k": {time, time_s, date} | None, ...}`; None when every record is empty."""
+        doc: dict[str, Any] = {}
+        for name, field in type(self).model_fields.items():
+            rec = getattr(self, name)
+            doc[field.alias or name] = (
+                {"time": rec.time, "time_s": rec.time_s, "date": rec.date} if rec and rec.time else None
+            )
+        return doc if any(doc.values()) else None
+
+
+class ShoeRotationInput(BaseModel):
+    easy: Optional[str] = Field(default=None, max_length=120)
+    tempo: Optional[str] = Field(default=None, max_length=120)
+    interval: Optional[str] = Field(default=None, max_length=120)
+    long_run: Optional[str] = Field(default=None, max_length=120)
+    race: Optional[str] = Field(default=None, max_length=120)
+
+    def to_doc(self) -> Optional[dict[str, Optional[str]]]:
+        """Firestore shape `{slot: str | None}`; None when every slot is empty."""
+        doc = {name: _opt_str(getattr(self, name)) for name in type(self).model_fields}
+        return doc if any(doc.values()) else None
+
+
 class ProfileUpdatePayload(BaseModel):
     age: Optional[str] = Field(default=None, max_length=40)
     height: Optional[str] = Field(default=None, max_length=40)
@@ -79,14 +157,14 @@ class ProfileUpdatePayload(BaseModel):
     taper_weeks: Optional[float] = Field(default=None, ge=0.5, le=6.0)
     north_star: Optional[NorthStarInput] = None
     sub_goals: list[SubGoalInput] = Field(default_factory=list)
-    recent_race_times: Optional[str] = Field(default=None, max_length=500)
+    personal_records: Optional[PersonalRecordsInput] = None
     injuries: Optional[str] = Field(default=None, max_length=800)
     cross_training_strength: Optional[str] = Field(default=None, max_length=800)
-    shoe_rotation: Optional[str] = Field(default=None, max_length=800)
+    shoe_rotation: Optional[ShoeRotationInput] = None
 
     @model_validator(mode="after")
     def _validate_goal_mode(self) -> "ProfileUpdatePayload":
-        for attr in ("age", "height", "weight", "location", "recent_race_times", "injuries", "cross_training_strength", "shoe_rotation"):
+        for attr in ("age", "height", "weight", "location", "injuries", "cross_training_strength"):
             setattr(self, attr, _opt_str(getattr(self, attr)))
 
         if self.goal_type == "single":
@@ -146,10 +224,10 @@ def apply_profile_edit(
         "height": edit.height,
         "weight": edit.weight,
         "location": new_loc,
-        "recent_race_times": edit.recent_race_times,
+        "personal_records": edit.personal_records.to_doc() if edit.personal_records else None,
         "injuries": edit.injuries,
         "cross_training_strength": edit.cross_training_strength,
-        "shoe_rotation": edit.shoe_rotation,
+        "shoe_rotation": edit.shoe_rotation.to_doc() if edit.shoe_rotation else None,
         "goal_type": edit.goal_type,
     }
 

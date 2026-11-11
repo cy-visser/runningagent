@@ -56,7 +56,8 @@ def test_staging_resolves_create_update_and_ambiguity_with_one_lookup_and_no_wri
     ctx = runner.ctx()
     result = _stage(ctx, CHANGES + [{"date_str": "2026-11-06", "title": "Fartlek 8x1'"}])
 
-    assert sorted(name for name, _ in runner.tp_calls) == ["tp_get_athlete_settings", "tp_get_workouts"]
+    # The date-resolved threshold update also reads its current builder (to keep its strides).
+    assert sorted(name for name, _ in runner.tp_calls) == ["tp_get_athlete_settings", "tp_get_workout", "tp_get_workouts"]
     assert _writes(runner) == []
     staged = ctx.state[STAGED_CHANGES_STATE_KEY]
     assert result["staged"] == 4 and result["staged_id"] == staged["staged_id"]
@@ -64,17 +65,19 @@ def test_staging_resolves_create_update_and_ambiguity_with_one_lookup_and_no_wri
     threshold = by_title["Threshold 4x2km"]
     assert threshold["action"] == "update" and threshold["replaces_title"] == "Threshold 2 x 15'"
     assert threshold["workout_id"] and threshold["description"]
-    # Totals follow the builder (whole minutes / TSS); the coach's 12 km / 65 min are reported back.
-    assert threshold["distance_km"] == 13.09
+    # Totals follow the builder (whole minutes / TSS), incl. the strides kept from the current builder;
+    # the coach's 12 km / 65 min are reported back against its own builder (13.09 km / 72 min).
+    assert threshold["distance_km"] == 13.78 and threshold["strides_added"] == "kept"
     assert all(type(threshold[f]) is int for f in ("duration_minutes", "tss_planned"))
-    assert (threshold["duration_minutes"], threshold["tss_planned"]) == (72, 98)
+    assert (threshold["duration_minutes"], threshold["tss_planned"]) == (76, 104)
     # Builder targets are whole % of threshold pace (no 88.9 %).
     targets = [t for block in threshold["structured_workout"]["structure"] for s in block["steps"]
                for t in s["targets"]]
     assert targets and all(type(t[k]) is int for t in targets for k in ("minValue", "maxValue"))
     # Whole-% targets read back within ±1 s/km of the coach's 4:45-4:52.
-    assert threshold["structure_summary"] == "15' WU · 4× (2 km @ 4:45–4:51/km / 2' rec) · 10' CD"
-    assert {n["field"] for n in result["totals_from_builder"]} == {"distance_km", "duration_minutes"}
+    assert threshold["structure_summary"] == (
+        "15' WU · 4× (15\" @ 4:08–4:31/km / 45\" rec) · 4× (2 km @ 4:45–4:51/km / 2' rec) · 10' CD")
+    assert {(n["field"], n["builder"]) for n in result["totals_from_builder"]} == {("distance_km", 13.09), ("duration_minutes", 72)}
     assert by_title["Recovery Run"]["action"] == "create" and by_title["Recovery Run"]["workout_id"] is None
     assert by_title["Recovery Run"]["structured_workout"]["structure"][0]["steps"][0]["length"] == {
         "value": 6000, "unit": "meter"}
@@ -103,8 +106,8 @@ def test_apply_writes_every_staged_change_clears_staging_and_handles_stale_butto
     assert applied["success"] is True and all(r["ok"] for r in applied["results"])
     assert sorted(_writes(runner)) == ["tp_create_note", "tp_create_workout", "tp_create_workout", "tp_update_workout"]
     update_kw = next(kw for name, kw in runner.tp_calls if name == "tp_update_workout")
-    assert update_kw["title"] == "Threshold 4x2km" and update_kw["duration_minutes"] == 72
-    assert update_kw["distance_km"] == 13.09 and update_kw["tss_planned"] == 98
+    assert update_kw["title"] == "Threshold 4x2km" and update_kw["duration_minutes"] == 76
+    assert update_kw["distance_km"] == 13.78 and update_kw["tss_planned"] == 104
     assert "structure" not in update_kw and update_kw["structured_workout"]["primaryLengthMetric"] == "distance"
     assert all("structured_workout" not in r for r in applied["results"])  # bulky builder kept out of the result
     assert ctx.state[STAGED_CHANGES_STATE_KEY] is None

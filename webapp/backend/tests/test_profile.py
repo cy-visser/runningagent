@@ -27,7 +27,7 @@ def test_profile_single_goal_edit_plan_result_preservation_and_ordering_validati
         goal_type="single",
         training_goal="Sub-3:20 Marathon",
         timeline="2027-04-11",
-        shoe_rotation="Superblast 2",
+        shoe_rotation={"easy": "Superblast 2"},
     )
     updates, deleted = apply_profile_edit(existing_single, single_payload, today_iso="2026-11-05")
     assert "firstname" not in updates and "email" not in updates

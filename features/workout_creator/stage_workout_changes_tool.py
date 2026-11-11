@@ -11,10 +11,12 @@ from google.adk.tools import FunctionTool, ToolContext
 
 from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import iso_date
+from ...shared.sports import RUN_SPORTS
 from ...shared.tp_payloads import coerce_mcp_payload
 from ...shared.ui_channel import reply
 from .helpers.staged_changes import (
     BUILDER_CHECK,
+    BUILDER_COACH,
     KIND_WORKOUT,
     STAGED_CHANGES_STATE_KEY,
     finalize_builders,
@@ -141,6 +143,8 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
       or create=true (add a session to a day). Without either, it updates the single planned workout
       of the same sport on that date, or creates one if none. A move or rename needs only workout_id +
       date_str (+ title): the session keeps its title, builder and totals unless you change them.
+      Strides are kept when you rewrite a run that has them, and added after the warm-up of tempo /
+      threshold / interval runs (`strides_added`); strides=false only when the runner asks to drop them.
     - Note: kind='note', date_str, title, description.
     - Delete: delete=true with workout_id, or date_str + sport (+ title); a note: kind='note', date_str (+ title).
       To remove a session or note always stage a delete. Completed workouts are never deleted (`refused`).
@@ -166,8 +170,11 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
     )
 
     staged, problems = resolve_changes(raw, workouts, details, notes)
+    # The current builder is needed to keep a session's strides when the coach rewrites a run.
     to_check = [str(c["workout_id"]) for c in staged
-                if c.get("builder") == BUILDER_CHECK and str(c["workout_id"]) not in details]
+                if c.get("workout_id") and str(c["workout_id"]) not in details
+                and (c.get("builder") == BUILDER_CHECK
+                     or (c.get("builder") == BUILDER_COACH and str(c.get("sport") or "").lower() in RUN_SPORTS))]
     if to_check:
         details = {**details, **await _current_workouts(tool_context, to_check)}
     staged, needs_structure, totals_notes = finalize_builders(staged, settings_raw, details)
@@ -190,7 +197,8 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
             "staged_id": staged_id,
             "changes": [
                 {k: c.get(k) for k in ("kind", "action", "date", "sport", "title", "replaces_title", "replaces",
-                                       "distance_km", "duration_minutes", "tss_planned", "structure_summary")
+                                       "distance_km", "duration_minutes", "tss_planned", "structure_summary",
+                                       "strides_added")
                  if c.get(k) is not None}
                 for c in staged
             ],
@@ -198,6 +206,10 @@ async def stage_workout_changes(tool_context: ToolContext, changes: list[dict[st
         })
         if totals_notes:
             result["totals_from_builder"] = totals_notes
+        strides = [{"date": c["date"][:10], "title": c.get("title"), "strides": c["strides_added"]}
+                   for c in staged if c.get("strides_added")]
+        if strides:
+            result["strides_added"] = strides  # kept from the current builder, or added after the warm-up
         if not problems:
             # Explained already (or a plain move / rename): the coded line ends the turn.
             if is_edit_only(staged) or _wrote_text_this_turn(tool_context):

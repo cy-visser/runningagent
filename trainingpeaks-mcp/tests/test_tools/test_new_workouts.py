@@ -1110,3 +1110,50 @@ class TestPlannedIntensityFactor:
             title="Renamed",
         )
         assert put_payload["ifPlanned"] == 0.78
+
+
+class TestPlannedVelocity:
+    """velocityPlanned (planned pace) stays consistent with planned distance and duration on update."""
+
+    _update = staticmethod(TestPlannedIntensityFactor._update)
+    STALE = 2.6315789473684212  # 6:20/km left over from an earlier version of the session
+
+    @pytest.mark.asyncio
+    async def test_distance_and_duration_update_replaces_stale_velocity(self):
+        put_payload = await self._update(
+            {"workoutId": 1001, "velocityPlanned": self.STALE, "distancePlanned": 13000.0, "totalTimePlanned": 1.1},
+            distance_km=15.11, duration_minutes=78,
+        )
+        assert put_payload["velocityPlanned"] == pytest.approx(15110.0 / (1.3 * 3600.0))
+
+    @pytest.mark.asyncio
+    async def test_distance_only_update_uses_existing_duration(self):
+        put_payload = await self._update(
+            {"workoutId": 1001, "velocityPlanned": self.STALE, "distancePlanned": 13000.0, "totalTimePlanned": 1.05},
+            distance_km=11.0,
+        )
+        assert put_payload["velocityPlanned"] == pytest.approx(11000.0 / (1.05 * 3600.0))
+
+    @pytest.mark.asyncio
+    async def test_duration_only_update_uses_existing_distance(self):
+        put_payload = await self._update(
+            {"workoutId": 1001, "velocityPlanned": self.STALE, "distancePlanned": 11000.0, "totalTimePlanned": 1.2},
+            duration_minutes=63,
+        )
+        assert put_payload["velocityPlanned"] == pytest.approx(11000.0 / (1.05 * 3600.0))
+
+    @pytest.mark.asyncio
+    async def test_distance_without_planned_time_drops_velocity(self):
+        put_payload = await self._update(
+            {"workoutId": 1001, "velocityPlanned": self.STALE, "distancePlanned": 13000.0, "totalTimePlanned": None},
+            distance_km=11.0,
+        )
+        assert "velocityPlanned" not in put_payload
+
+    @pytest.mark.asyncio
+    async def test_title_only_update_keeps_velocity(self):
+        put_payload = await self._update(
+            {"workoutId": 1001, "velocityPlanned": self.STALE, "distancePlanned": 11000.0, "totalTimePlanned": 1.05},
+            title="Renamed",
+        )
+        assert put_payload["velocityPlanned"] == self.STALE

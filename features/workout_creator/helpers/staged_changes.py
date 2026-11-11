@@ -13,6 +13,7 @@ from ....shared.athlete_settings import sport_family, sport_thresholds
 from ....shared.dates import iso_date, parse_date
 from ....shared.units import as_float
 from ....shared.workout_status import is_workout_completed
+from .strides import ensure_strides
 from .workout_builder import (
     builder_summary,
     builder_totals,
@@ -296,6 +297,8 @@ def resolve_changes(
             change["builder"] = BUILDER_COACH
         elif needs_builder(sport):
             change["builder"] = BUILDER_MISSING
+        if raw.get("strides") is False:
+            change["strides"] = False  # the runner asked to drop strides: never keep or add them
 
         workout_id = str(raw.get("workout_id") or "").strip()
         if workout_id:
@@ -370,20 +373,23 @@ def _totals_mismatch(change: dict, totals: dict) -> Optional[str]:
     return None
 
 
-def _apply_builder(change: dict, native: dict, thr: dict, notes: list[dict]) -> None:
+def _apply_builder(change: dict, native: dict, thr: dict, notes: list[dict], note_totals: Optional[dict] = None) -> None:
     """Attaches the native builder; distance / duration / TSS follow it (the coach's numbers are reported
-    back when they differ by more than TOTALS_NOTE_REL; values inherited from the current workout are not
-    the coach's and are simply replaced)."""
+    back when they differ by more than TOTALS_NOTE_REL from `note_totals`, the coach's own builder, which
+    defaults to `native`; values inherited from the current workout are not the coach's and are simply
+    replaced)."""
     totals = builder_totals(native, thr)
+    compared = note_totals or totals
     inherited = set(change.get("inherited") or ())
     for field in (*_TOTAL_FIELDS, "tss_planned"):
         value = totals[field]
         if value is None:
             continue
         coach = None if field in inherited else change.get(field)
-        if field in _TOTAL_FIELDS and coach is not None and abs(value - coach) > TOTALS_NOTE_REL * max(value, coach):
+        own = compared.get(field)
+        if field in _TOTAL_FIELDS and coach is not None and own is not None and abs(own - coach) > TOTALS_NOTE_REL * max(own, coach):
             notes.append({"date": change["date"][:10], "title": change.get("title"), "field": field,
-                          "coach": coach, "builder": value})
+                          "coach": coach, "builder": own})
         change[field] = value
         inherited.discard(field)
     _set_inherited(change, inherited)
@@ -447,7 +453,11 @@ def finalize_builders(
             if mismatch:
                 needs.append(_needs_structure(change, mismatch))
                 continue
-            _apply_builder(change, native, thr, notes)
+            current = (details_by_id.get(str(change.get("workout_id"))) or {}).get("structured_workout")
+            final, strides = ensure_strides(change, native, current if has_builder(current) else None, thr)
+            if strides:
+                change["strides_added"] = strides  # "kept" (from the current builder) or "added" (default)
+            _apply_builder(change, final, thr, notes, note_totals=builder_totals(native, thr))
         elif marker == BUILDER_MISSING:
             needs.append(_needs_structure(change, "missing"))
             continue

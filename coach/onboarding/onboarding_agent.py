@@ -19,6 +19,27 @@ class SubGoalAnswer(BaseModel):
     race_date: str = Field(description="Race date that finishes the block, as ISO (YYYY-MM-DD)")
 
 
+class PersonalRecordAnswer(BaseModel):
+    time: str = Field(description="PR time as MM:SS or H:MM:SS, e.g. '19:45' or '1:27:48'")
+    date: Optional[str] = Field(None, description="Date the PR was set, as ISO (YYYY-MM-DD), if known")
+
+
+class PersonalRecordsAnswer(BaseModel):
+    five_k: Optional[PersonalRecordAnswer] = Field(None, description="5K personal record")
+    ten_k: Optional[PersonalRecordAnswer] = Field(None, description="10K personal record")
+    ten_mile: Optional[PersonalRecordAnswer] = Field(None, description="10 mile personal record")
+    half_marathon: Optional[PersonalRecordAnswer] = Field(None, description="Half marathon personal record")
+    marathon: Optional[PersonalRecordAnswer] = Field(None, description="Marathon personal record")
+
+
+class ShoeRotationAnswer(BaseModel):
+    easy: Optional[str] = Field(None, description="Shoe for easy runs")
+    tempo: Optional[str] = Field(None, description="Shoe for tempo/threshold runs")
+    interval: Optional[str] = Field(None, description="Shoe for intervals")
+    long_run: Optional[str] = Field(None, description="Shoe for long runs")
+    race: Optional[str] = Field(None, description="Race-day shoe")
+
+
 class OnboardingAnswers(BaseModel):
     age: Optional[str] = Field(None, description="Age of the runner")
     height: Optional[str] = Field(None, description="Height of the runner")
@@ -56,14 +77,15 @@ class OnboardingAnswers(BaseModel):
         default_factory=list,
         description="Plan only. Sub goals in order; each is a full training block finishing with a race",
     )
-    recent_race_times: Optional[str] = Field(None, description="Recent race or time trial times")
+    personal_records: Optional[PersonalRecordsAnswer] = Field(
+        None, description="Personal records per distance (5K, 10K, 10 mile, half marathon, marathon)"
+    )
     injuries: Optional[str] = Field(None, description="Past or present injuries")
     cross_training_strength: Optional[str] = Field(
         None, description="Cross-training or strength work"
     )
-    shoe_rotation: Optional[str] = Field(
-        None,
-        description="Current shoe rotation (e.g. shoes for easy runs, tempo runs, intervals, race days)",
+    shoe_rotation: Optional[ShoeRotationAnswer] = Field(
+        None, description="Shoe per run type (easy, tempo/threshold, interval, long run, race)"
     )
     taper_weeks: Optional[float] = Field(
         None,
@@ -98,10 +120,10 @@ onboarding_agent = Agent(
          b. Sub goals, in order. Each sub goal is a full training block: goal ("Sub-21 5K"), block start date,
             and the race (name and date) that finishes the block
          c. Optional: the start date of the north-star training block (default: the day after the last sub-goal race)
-    5. Recent Race Times / Time Trials (most recent 5K, 10K or half marathon)
+    5. Personal Records: time (and date, if known) for 5K, 10K, 10 mile, half marathon and marathon. Only the distances they have raced.
     6. Past and Present Injuries
     7. Cross-Training & Strength Work
-    8. Current Shoe Rotation (easy, tempo, intervals, race day)
+    8. Shoe Rotation: which shoe for easy runs, tempo/threshold, intervals, long runs and races (any may be empty)
     9. Preferred Taper Length in weeks for the goal race (optional; if they have no preference leave it empty and the distance default is used)
 
     REQUIRED fields:
@@ -117,7 +139,7 @@ onboarding_agent = Agent(
     - As soon as the required fields are collected and the missing optional fields have been asked once, call `finish_task` with the collected information. Do not keep chatting.
 
     GOAL REALISM CHECK (Required):
-    - Once you have the goal(s) and the recent race times, sanity-check the target against the time available.
+    - Once you have the goal(s) and the personal records (weigh recent PRs more than old ones), sanity-check the target against the time available.
       The stated goal drives every downstream fitness target and ramp-rate calculation, so an implausible goal
       silently corrupts all future coaching.
     - If the target is not physiologically plausible in the time remaining (for example, a large required

@@ -13,6 +13,7 @@ from ...shared.goal_plan import (
     race_day,
     sub_goals_missing_result,
 )
+from ...shared.race_time import format_personal_records, format_shoe_rotation
 from .goal_plan_summary import format_goal_plan
 from .quick_actions import is_quick_action_report
 
@@ -178,14 +179,18 @@ def format_profile_summary(profile: dict, today: Optional[date] = None) -> str:
         _goal_line(profile, today),
         _block_line(profile, today),
     ]
+    prs = format_personal_records(profile.get("personal_records"))
+    if prs:
+        lines.append(f"PRs: {prs}")
     for label, key in (
-        ("Recent Races", "recent_race_times"),
         ("Injuries", "injuries"),
         ("Cross-Training", "cross_training_strength"),
-        ("Shoe Rotation", "shoe_rotation"),
     ):
         if _present(profile.get(key)):
             lines.append(f"{label}: {profile[key]}")
+    shoes = format_shoe_rotation(profile.get("shoe_rotation"))
+    if shoes:
+        lines.append(f"Shoes: {shoes}")
     return "\n".join(line for line in lines if line)
 
 

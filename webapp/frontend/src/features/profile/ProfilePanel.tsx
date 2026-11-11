@@ -21,6 +21,7 @@ import type {
   SubGoal,
 } from "../../shared/types";
 import { ProfileForm } from "./ProfileForm";
+import { PR_DISTANCES, SHOE_SLOTS } from "./performanceGear";
 
 interface ProfilePanelProps {
   open: boolean;
@@ -371,12 +372,58 @@ export function ProfilePanel({
                   Coaching Context
                 </h3>
 
+                <div className="rounded-2xl border border-slate-200 bg-white p-3.5">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                    <Trophy className="h-3.5 w-3.5 text-rose-700" />
+                    <span>Personal Records</span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5">
+                    {PR_DISTANCES.map(({ key, label }) => {
+                      const pr = profile.personal_records?.[key];
+                      return (
+                        <div
+                          key={key}
+                          className="rounded-xl bg-slate-50 px-2 py-1.5 text-center"
+                        >
+                          <p className="text-xs font-medium text-slate-500">
+                            {label}
+                          </p>
+                          <p className="text-sm font-bold text-slate-900 tabular-nums">
+                            {pr?.time || "—"}
+                          </p>
+                          <p className="text-[11px] text-slate-500">
+                            {pr?.date ? formatShortDate(pr.date) : "\u00a0"}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-3.5">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                    <Footprints className="h-3.5 w-3.5 text-rose-700" />
+                    <span>Shoe Rotation</span>
+                  </div>
+                  {SHOE_SLOTS.some(({ key }) => profile.shoe_rotation?.[key]) ? (
+                    <dl className="mt-1.5 grid grid-cols-[7.25rem_1fr] gap-x-2 gap-y-1 text-sm">
+                      {SHOE_SLOTS.filter(({ key }) => profile.shoe_rotation?.[key]).map(
+                        ({ key, label }) => (
+                          <div key={key} className="contents">
+                            <dt className="text-slate-500">{label}</dt>
+                            <dd className="font-medium text-slate-700">
+                              {profile.shoe_rotation?.[key]}
+                            </dd>
+                          </div>
+                        ),
+                      )}
+                    </dl>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-600">Not specified yet</p>
+                  )}
+                </div>
+
                 {[
-                  {
-                    icon: Trophy,
-                    title: "Recent Race Times",
-                    value: profile.recent_race_times,
-                  },
                   {
                     icon: HeartPulse,
                     title: "Injuries & Watchpoints",
@@ -386,11 +433,6 @@ export function ProfilePanel({
                     icon: CheckCircle2,
                     title: "Cross-Training & Strength",
                     value: profile.cross_training_strength,
-                  },
-                  {
-                    icon: Footprints,
-                    title: "Shoe Rotation",
-                    value: profile.shoe_rotation,
                   },
                 ].map((item) => {
                   const Icon = item.icon;

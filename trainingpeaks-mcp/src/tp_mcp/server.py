@@ -6,6 +6,7 @@ import logging
 import sys
 from typing import Any
 
+from mcp import types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import (
@@ -92,9 +93,6 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger("tp-mcp")
-
-# Create the MCP server
-server = Server("trainingpeaks-mcp")
 
 STRUCTURE_DESCRIPTION = (
     "Interval structure as a JSON object or string."
@@ -1011,10 +1009,9 @@ _ATHLETE_PARAM = {
 
 for _tool in TOOLS:
     if _tool.name not in _ATHLETE_EXEMPT_TOOLS:
-        _tool.inputSchema["properties"]["athlete"] = _ATHLETE_PARAM
+        _tool.input_schema["properties"]["athlete"] = _ATHLETE_PARAM
 
 
-@server.list_tools()
 async def list_tools() -> list[Tool]:
     """List available tools."""
     return TOOLS
@@ -1373,7 +1370,6 @@ async def _h_schedule_lib(args):
     )
 
 
-@server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Handle tool calls."""
     logger.info("Tool call: %s", name)
@@ -1404,6 +1400,23 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
     finally:
         athlete_override.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# MCP server (SDK 2.x: request handlers are passed to the Server constructor)
+# ---------------------------------------------------------------------------
+
+async def _on_list_tools(ctx: Any, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+    """tools/list: every tool in one page."""
+    return types.ListToolsResult(tools=await list_tools())
+
+
+async def _on_call_tool(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult:
+    """tools/call: the JSON result (or error envelope) as one text block, as before."""
+    return types.CallToolResult(content=await call_tool(params.name, dict(params.arguments or {})))
+
+
+server = Server("trainingpeaks-mcp", on_list_tools=_on_list_tools, on_call_tool=_on_call_tool)
 
 
 async def _validate_auth_on_startup() -> bool:

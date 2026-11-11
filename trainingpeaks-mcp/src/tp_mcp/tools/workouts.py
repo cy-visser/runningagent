@@ -87,6 +87,17 @@ def _consistent_if(tss: Any, total_time_hours: Any) -> float | None:
     return round(math.sqrt(tss_value / (hours * 100.0)), 3)
 
 
+def _consistent_velocity(distance_m: Any, total_time_hours: Any) -> float | None:
+    """Planned average speed (m/s), shown by TrainingPeaks as planned pace: distance / time."""
+    try:
+        metres, hours = float(distance_m), float(total_time_hours)
+    except (TypeError, ValueError):
+        return None
+    if metres <= 0 or hours <= 0:
+        return None
+    return metres / (hours * 3600.0)
+
+
 def _validate_structured_workout(structured_workout: dict[str, Any]) -> str | None:
     """Validate the minimum schema needed to round-trip TP native structures."""
     required = {
@@ -720,6 +731,14 @@ async def tp_update_workout(
                 existing["ifPlanned"] = planned_if
             else:
                 existing.pop("ifPlanned", None)
+        # Keep the planned average speed (shown as planned pace) consistent with the merged distance
+        # and duration whenever either changes; on PUT TrainingPeaks stores the stale value otherwise.
+        if params.distance_km is not None or effective_duration is not None:
+            velocity = _consistent_velocity(existing.get("distancePlanned"), existing.get("totalTimePlanned"))
+            if velocity is not None:
+                existing["velocityPlanned"] = velocity
+            else:
+                existing.pop("velocityPlanned", None)
 
         # PUT updated workout
         put_endpoint = f"/fitness/v6/athletes/{athlete_id}/workouts/{params.workout_id}"

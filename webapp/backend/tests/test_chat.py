@@ -148,7 +148,7 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
                 "goal_type": "single",
                 "training_goal": "Sub-3:30 Marathon",
                 "timeline": "2027-04-11",
-                "shoe_rotation": "Asics Superblast 2",
+                "shoe_rotation": {"easy": "Asics Superblast 2"},
             },
         )
         assert edited.status_code == 200

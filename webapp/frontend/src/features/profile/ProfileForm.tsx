@@ -9,6 +9,15 @@ import {
   Trash2,
 } from "lucide-react";
 import type { ProfileUpdatePayload, RunnerProfile } from "../../shared/types";
+import { PersonalRecordsFields } from "./PersonalRecordsFields";
+import { ShoeRotationFields } from "./ShoeRotationFields";
+import {
+  toEditablePersonalRecords,
+  toEditableShoeRotation,
+  toPersonalRecordsPayload,
+  toShoeRotationPayload,
+  validatePersonalRecords,
+} from "./performanceGear";
 
 interface ProfileFormProps {
   profile: RunnerProfile;
@@ -92,14 +101,16 @@ export function ProfileForm({
   });
 
   // Training context
-  const [recentRaceTimes, setRecentRaceTimes] = useState(
-    profile.recent_race_times ?? "",
+  const [personalRecords, setPersonalRecords] = useState(() =>
+    toEditablePersonalRecords(profile.personal_records),
   );
   const [injuries, setInjuries] = useState(profile.injuries ?? "");
   const [crossTraining, setCrossTraining] = useState(
     profile.cross_training_strength ?? "",
   );
-  const [shoeRotation, setShoeRotation] = useState(profile.shoe_rotation ?? "");
+  const [shoeRotation, setShoeRotation] = useState(() =>
+    toEditableShoeRotation(profile.shoe_rotation),
+  );
 
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -117,6 +128,22 @@ export function ProfileForm({
     e.preventDefault();
     setLocalError(null);
 
+    const prError = validatePersonalRecords(personalRecords);
+    if (prError) {
+      setLocalError(prError);
+      return;
+    }
+    const contextFields = {
+      age: age || null,
+      height: height || null,
+      weight: weight || null,
+      location: location || null,
+      personal_records: toPersonalRecordsPayload(personalRecords),
+      injuries: injuries || null,
+      cross_training_strength: crossTraining || null,
+      shoe_rotation: toShoeRotationPayload(shoeRotation),
+    };
+
     if (goalType === "single") {
       if (!trainingGoal.trim()) {
         setLocalError("Please enter your target goal (e.g. Sub-1:28 Half Marathon).");
@@ -127,20 +154,13 @@ export function ProfileForm({
         return;
       }
       await onSave({
-        age: age || null,
-        height: height || null,
-        weight: weight || null,
-        location: location || null,
+        ...contextFields,
         goal_type: "single",
         training_goal: trainingGoal.trim(),
         timeline: timeline.trim(),
         taper_weeks: parseOptionalNumber(singleTaper),
         north_star: null,
         sub_goals: [],
-        recent_race_times: recentRaceTimes || null,
-        injuries: injuries || null,
-        cross_training_strength: crossTraining || null,
-        shoe_rotation: shoeRotation || null,
       });
       return;
     }
@@ -163,10 +183,7 @@ export function ProfileForm({
     }
 
     await onSave({
-      age: age || null,
-      height: height || null,
-      weight: weight || null,
-      location: location || null,
+      ...contextFields,
       goal_type: "plan",
       north_star: {
         goal: nsGoal.trim(),
@@ -182,10 +199,6 @@ export function ProfileForm({
         race_date: sg.race_date.trim(),
         taper_weeks: parseOptionalNumber(sg.taper_weeks),
       })),
-      recent_race_times: recentRaceTimes || null,
-      injuries: injuries || null,
-      cross_training_strength: crossTraining || null,
-      shoe_rotation: shoeRotation || null,
     });
   };
 
@@ -583,23 +596,23 @@ export function ProfileForm({
         )}
       </div>
 
+      {/* Performance & Gear */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
+          Performance & Gear
+        </h3>
+        <PersonalRecordsFields
+          value={personalRecords}
+          onChange={setPersonalRecords}
+        />
+        <ShoeRotationFields value={shoeRotation} onChange={setShoeRotation} />
+      </div>
+
       {/* Coaching Context */}
       <div className="space-y-3">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
-          Training Context & Gear
+          Training Context
         </h3>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Recent Race Times / PRs
-          </label>
-          <textarea
-            rows={2}
-            value={recentRaceTimes}
-            onChange={(e) => setRecentRaceTimes(e.target.value)}
-            placeholder="10K: 39:12 · HM: 1:27:48 · Marathon: 3:04:19"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
-          />
-        </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
             Injuries & Biomechanical Watchpoints
@@ -621,18 +634,6 @@ export function ProfileForm({
             value={crossTraining}
             onChange={(e) => setCrossTraining(e.target.value)}
             placeholder="2x/wk strength, cycling, swimming…"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Shoe Rotation
-          </label>
-          <textarea
-            rows={2}
-            value={shoeRotation}
-            onChange={(e) => setShoeRotation(e.target.value)}
-            placeholder="Daily trainer, tempo/interval shoe, carbon racer…"
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
           />
         </div>

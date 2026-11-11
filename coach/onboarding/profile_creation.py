@@ -4,6 +4,7 @@ from typing import Any, Optional
 from ...integrations import firestore, open_meteo
 from ...shared.dates import get_today_str, parse_date
 from ...shared.goal_plan import GOAL_TYPE_PLAN, GOAL_TYPE_SINGLE
+from ...shared.race_time import normalize_personal_records, normalize_shoe_rotation
 from ...shared.runner_identity import normalize_email, profile_user_id
 from ...shared.session_state import AUTH_EMAIL_STATE_KEY, sync_profile_to_state
 import asyncio
@@ -29,11 +30,16 @@ _MERGED_FIELDS = (
     "age",
     "height",
     "weight",
-    "recent_race_times",
+    "personal_records",
     "injuries",
     "cross_training_strength",
     "shoe_rotation",
 )
+# Structured fields normalised on merge (answer first, then the existing profile value).
+_STRUCTURED_NORMALIZERS = {
+    "personal_records": normalize_personal_records,
+    "shoe_rotation": normalize_shoe_rotation,
+}
 
 # Profile fields pre-filled from an existing profile so (re-)onboarding can
 # skip questions the runner has already answered and preserve immutable identity fields.
@@ -131,7 +137,11 @@ def merge_profile_data(
     if answers.get("goal_type") == GOAL_TYPE_PLAN:
         profile.update(_plan_fields(answers, temp_data.get("sub_goals")))
     for field in _MERGED_FIELDS:
-        profile[field] = answers.get(field) or temp_data.get(field)
+        normalize = _STRUCTURED_NORMALIZERS.get(field)
+        if normalize:
+            profile[field] = normalize(answers.get(field)) or normalize(temp_data.get(field))
+        else:
+            profile[field] = answers.get(field) or temp_data.get(field)
     return profile
 
 
