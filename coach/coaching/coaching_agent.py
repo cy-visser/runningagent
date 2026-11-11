@@ -10,8 +10,8 @@ from ...features.nutrition_planner.fetch_nutrition_context_tool import (
 from ...features.plan_builder.apply_training_plan_tool import apply_training_plan_tool
 from ...features.plan_builder.fetch_plan_context_tool import fetch_plan_context_tool
 from ...features.plan_builder.stage_training_plan_tool import stage_training_plan_tool
-from ...features.schedule_audit.fetch_schedule_audit_data_tool import (
-    fetch_schedule_audit_data_tool,
+from ...features.plan_audit.fetch_plan_audit_data_tool import (
+    fetch_plan_audit_data_tool,
 )
 from ...features.trend_analysis.fetch_trend_data_tool import fetch_trend_data_tool
 from ...features.weather_lookup.get_weather_tool import get_weather_tool
@@ -33,7 +33,7 @@ coaching_agent_tools = [
     analyze_workout_tool,
     fetch_checkin_data_tool,
     fetch_trend_data_tool,
-    fetch_schedule_audit_data_tool,
+    fetch_plan_audit_data_tool,
     fetch_nutrition_context_tool,
     stage_workout_changes_tool,
     apply_staged_changes_tool,

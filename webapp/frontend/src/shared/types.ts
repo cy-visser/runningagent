@@ -304,7 +304,7 @@ export interface TrendGoal {
   volume?: TrendVolume | null;
 }
 
-/** Weekly running-volume targets of the current block (same per-week numbers as the schedule audit). */
+/** Weekly running-volume targets of the current block (same per-week numbers as the plan audit). */
 export interface TrendVolume {
   block_target_km: number;
   ns_peak_km: number;
@@ -501,7 +501,7 @@ export interface ToolChip {
 export type QuickAction =
   | { skill: "check-in-report" }
   | { skill: "trend-analysis"; weeks?: number }
-  | { skill: "schedule-audit"; start_date?: string; end_date?: string }
+  | { skill: "plan-audit"; start_date?: string; end_date?: string }
   | { skill: "workout-analysis"; date_str?: string; sport?: "run" | "bike" }
   | { skill: "workout-creator"; staged_id: string }
   | { skill: "plan-builder"; start_date: string; end_date: string; mode?: "new" | "overhaul" }

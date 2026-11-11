@@ -192,12 +192,12 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
         audit = client.post(
             "/api/chat",
             json={"message": "Audit my schedule", "action": {
-                "skill": "schedule-audit", "start_date": "2026-11-02", "end_date": "2026-12-27"}},
+                "skill": "plan-audit", "start_date": "2026-11-02", "end_date": "2026-12-27"}},
             headers=headers,
         )
         assert audit.status_code == 200
         assert agent.calls[3]["quick_action"] == {
-            "skill": "schedule-audit", "args": {"start_date": "2026-11-02", "end_date": "2026-12-27"},
+            "skill": "plan-audit", "args": {"start_date": "2026-11-02", "end_date": "2026-12-27"},
         }
 
         # "Update TrainingPeaks" button: forwards the staged set id; never creates a session of its own.
@@ -217,7 +217,7 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
             {"skill": "workout-creator"},
             {"skill": "workout-creator", "staged_id": "not-a-uuid"},
             {"skill": "trend-analysis", "weeks": 500},
-            {"skill": "schedule-audit", "start_date": "next monday"},
+            {"skill": "plan-audit", "start_date": "next monday"},
             {"skill": "check-in-report", "extra": "x"},
         ):
             rejected = client.post("/api/chat", json={"message": "x", "action": bad}, headers=headers)

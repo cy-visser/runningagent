@@ -6,7 +6,7 @@ This directory contains the web UI and FastAPI BFF for the **AI Running Coach**,
 
 ## Architecture
 
-- **Frontend (`frontend/`)**: React 19 + TypeScript + Vite + Tailwind v4 + lazy-loaded Recharts (`@fontsource/space-grotesk` & `@fontsource/inter` self-hosted for strict CSP), organized into `src/app/` (shell & conversation), `src/features/{check_in_report,trend_analysis,schedule_audit,profile}/`, and `src/shared/`.
+- **Frontend (`frontend/`)**: React 19 + TypeScript + Vite + Tailwind v4 + lazy-loaded Recharts (`@fontsource/space-grotesk` & `@fontsource/inter` self-hosted for strict CSP), organized into `src/app/` (shell & conversation), `src/features/{check_in_report,trend_analysis,plan_audit,profile}/`, and `src/shared/`.
 - **Backend (`backend/`)**: FastAPI + Uvicorn serving static SPA assets and `/api/*`:
   - Verifies Cloud Run Direct IAP ES256 JWT assertions (`X-Goog-IAP-JWT-Assertion`) against Google's public JWK keyset.
   - Reads and edits runner profiles in Firestore (`users/{runner_id}`), keeping `firstname`, `lastname`, and `email` immutable.

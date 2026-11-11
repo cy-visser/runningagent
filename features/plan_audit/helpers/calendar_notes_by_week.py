@@ -1,4 +1,4 @@
-"""Attaches calendar notes to their ISO week buckets for the schedule audit."""
+"""Attaches calendar notes to their ISO week buckets for the plan audit."""
 
 from typing import Optional
 

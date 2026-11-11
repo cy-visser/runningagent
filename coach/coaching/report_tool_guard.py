@@ -1,6 +1,6 @@
 """Keeps report data tools from being used as data lookups.
 
-`fetch_checkin_data`, `fetch_trend_data` and `fetch_schedule_audit_data` write a web report payload to
+`fetch_checkin_data`, `fetch_trend_data` and `fetch_plan_audit_data` write a web report payload to
 state, which the web app renders as a full report card. Called as a lookup in a follow-up turn (e.g. to
 find workout ids for `stage_workout_changes`), they would open a report the runner never asked for.
 
@@ -25,13 +25,13 @@ LOAD_SKILL = "load_skill"
 REPORT_TOOL_SKILLS = {
     "fetch_checkin_data": "check-in-report",
     "fetch_trend_data": "trend-analysis",
-    "fetch_schedule_audit_data": "schedule-audit",
+    "fetch_plan_audit_data": "plan-audit",
 }
 
 _REPORT_NAMES = {
     "fetch_checkin_data": "check-in report",
     "fetch_trend_data": "trend report",
-    "fetch_schedule_audit_data": "schedule audit report",
+    "fetch_plan_audit_data": "plan audit report",
 }
 
 

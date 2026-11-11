@@ -1,4 +1,4 @@
-"""Weekly (ISO week) aggregation of workouts, shared by the schedule audit and the check-in."""
+"""Weekly (ISO week) aggregation of workouts, shared by the plan audit and the check-in."""
 
 from datetime import date, timedelta
 from typing import Any, Optional

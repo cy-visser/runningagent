@@ -53,7 +53,7 @@ function addDays(d: Date, days: number): Date {
  * Audit card config. With an upcoming goal race the audit runs from Monday of the current week
  * until race day (capped at AUDIT_MAX_WEEKS weeks); otherwise it audits the current week.
  */
-export function auditScheduleAction(
+export function auditPlanAction(
   summary: ProfileSummary | null | undefined,
   now: Date = new Date(),
 ): AuditAction {
@@ -64,7 +64,7 @@ export function auditScheduleAction(
       title: "Audit Plan – Current Week",
       subtitle: DEFAULT_AUDIT_SUBTITLE,
       prompt: "Audit my plan for this week",
-      action: { skill: "schedule-audit" },
+      action: { skill: "plan-audit" },
     };
   }
 
@@ -75,7 +75,7 @@ export function auditScheduleAction(
   const end = capped ? capEnd : race;
   const goal = summary?.active_goal?.trim();
   const goalText = goal ? ` (${goal})` : "";
-  const action: QuickAction = { skill: "schedule-audit", start_date: start, end_date: end };
+  const action: QuickAction = { skill: "plan-audit", start_date: start, end_date: end };
 
   if (capped) {
     return {
@@ -194,7 +194,7 @@ export function Dashboard({
     setInput("");
     onSendPrompt(prompt, true, action);
   };
-  const audit = auditScheduleAction(me.summary);
+  const audit = auditPlanAction(me.summary);
   const buildPlan = buildPlanAction(me.summary);
   const handleBuildPlan = () => {
     if (buildPlan.prompt && buildPlan.action) {

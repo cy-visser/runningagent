@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "./App";
-import { Dashboard, auditScheduleAction, buildPlanAction } from "./Dashboard";
+import { Dashboard, auditPlanAction, buildPlanAction } from "./Dashboard";
 import { DEMO_ME_ONBOARDING, DEMO_ME_READY, DEMO_PLAN } from "../demo/fixtures";
 import * as api from "../shared/api";
 import { ApiError, fetchMe, onSessionExpired, parseSseFrame } from "../shared/api";
@@ -106,7 +106,7 @@ describe("app shell & conversation lifecycle", () => {
       screen.getByText(/Last 6 months · progress, load capacity, pacing/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(auditScheduleAction(DEMO_ME_READY.summary).title),
+      screen.getByText(auditPlanAction(DEMO_ME_READY.summary).title),
     ).toBeInTheDocument();
     // 6 equal cards: Profile, Analyze, Check-In, Trend, Audit Plan, Build Plan (no full-width CTA).
     const grid = screen.getByRole("region", { name: "Quick actions" });
@@ -216,7 +216,7 @@ describe("app shell & conversation lifecycle", () => {
   });
 });
 
-describe("auditScheduleAction", () => {
+describe("auditPlanAction", () => {
   // Friday 2026-11-06 (local) -> Monday 2026-11-02; 8-week cap ends Sunday 2026-12-27.
   const now = new Date(2026, 10, 6, 12);
   const summary = (active_date: string | null, active_goal = "Sub-1:26 Half Marathon") => ({
@@ -227,18 +227,18 @@ describe("auditScheduleAction", () => {
 
   it("falls back to the current-week audit without an upcoming race", () => {
     for (const s of [null, summary(null), summary("TBD"), summary("2026-11-05")]) {
-      const action = auditScheduleAction(s, now);
+      const action = auditPlanAction(s, now);
       expect(action.title).toBe("Audit Plan – Current Week");
       expect(action.prompt).toBe("Audit my plan for this week");
-      expect(action.action).toEqual({ skill: "schedule-audit" });
+      expect(action.action).toEqual({ skill: "plan-audit" });
     }
   });
 
   it("audits from Monday of the current week until race day within 4 weeks", () => {
-    const action = auditScheduleAction(summary("2026-11-22"), now);
+    const action = auditPlanAction(summary("2026-11-22"), now);
     expect(action.title).toBe("Audit Plan – Until Race Day");
     expect(action.action).toEqual({
-      skill: "schedule-audit",
+      skill: "plan-audit",
       start_date: "2026-11-02",
       end_date: "2026-11-22",
     });
@@ -248,19 +248,19 @@ describe("auditScheduleAction", () => {
     expect(action.subtitle).toContain("Sub-1:26 Half Marathon");
 
     // Race today and race exactly on the cap boundary are both uncapped.
-    expect(auditScheduleAction(summary("2026-11-06"), now).action).toMatchObject({
+    expect(auditPlanAction(summary("2026-11-06"), now).action).toMatchObject({
       end_date: "2026-11-06",
     });
-    expect(auditScheduleAction(summary("2026-11-29"), now).title).toBe(
+    expect(auditPlanAction(summary("2026-11-29"), now).title).toBe(
       "Audit Plan – Until Race Day",
     );
   });
 
   it("caps the window at 4 weeks for distant races", () => {
-    const action = auditScheduleAction(summary("2027-03-14"), now);
+    const action = auditPlanAction(summary("2027-03-14"), now);
     expect(action.title).toBe("Audit Plan – Next 4 Weeks");
     expect(action.action).toEqual({
-      skill: "schedule-audit",
+      skill: "plan-audit",
       start_date: "2026-11-02",
       end_date: "2026-11-29",
     });

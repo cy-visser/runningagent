@@ -52,7 +52,7 @@ export function AuditReport({ data, markdown }: AuditReportProps) {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-display text-lg font-bold text-slate-900">
-                  Schedule Audit
+                  Plan Audit
                 </h3>
                 <span className="rounded-full bg-white/90 px-2.5 py-0.5 text-xs font-semibold text-orange-800 border border-orange-200">
                   {data.weeks.length}{" "}

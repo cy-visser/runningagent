@@ -8,12 +8,12 @@ vi.mock("./AuditCharts", () => ({
   default: () => <div data-testid="audit-charts" />,
 }));
 
-describe("schedule audit feature", () => {
+describe("plan audit feature", () => {
   it("renders AuditReport with weekly volume totals and assessment markdown", () => {
     render(
       <AuditReport data={DEMO_AUDIT_DATA} markdown={DEMO_AUDIT_MARKDOWN} />,
     );
-    expect(screen.getByText("Schedule Audit")).toBeInTheDocument();
+    expect(screen.getByText("Plan Audit")).toBeInTheDocument();
     expect(screen.getByText("279.0 km total")).toBeInTheDocument();
     expect(screen.getByText("Assessment")).toBeInTheDocument();
     expect(screen.getByText("Recommendations")).toBeInTheDocument();

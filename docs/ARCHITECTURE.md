@@ -43,7 +43,7 @@ Each coaching capability lives in its own vertical slice under `features/<featur
 1. **Co-located Skills** (`features/<feature>/SKILL.md`, next to the feature's `*_tool.py`) hold the coaching protocol and output template for each task, loaded on demand via `load_skill`.
 2. **Feature Tools & Private Helpers** (`features/<feature>/<tool_name>_tool.py` + `helpers/`): each feature tool runs MCP calls, Open-Meteo lookups, and Firestore reads in parallel, computes physiological metrics in deterministic Python using its private `helpers/` and `shared/`, and returns a compact summary.
    - **Plan builder** (`features/plan_builder/`): for a new plan / block, or an overhaul spanning ≥ 3 ISO weeks or > 10 sessions, the coach writes the whole plan in one `stage_training_plan` call as compact session codes (`E 10`, `T 2x15' r2'`, `L 28 +8@M`, `B 4x8' @SS r4'`, `S 45' heavy-lower`, `REST`). Code expands every code with the runner's pace / FTP zones into exact builders (`shared/workout_builder`, `shared/strides`), diffs it per day and sport (Run, Strength, Bike) against the calendar, and stores `staged_training_plan` (spec + zones + card rows, no builders). The web app applies it with one silent `plan-builder:apply` quick action per week (`apply_training_plan`: re-expand, re-diff, ≤ 3 parallel writes with 429 backoff, idempotent per week; `applied_training_plan` tracks progress), with zero LLM calls. `stage_workout_changes` refuses larger sets and points the coach to plan-builder.
-   - `fetch_checkin_data`, `fetch_trend_data`, and `fetch_schedule_audit_data` also write structured JSON payloads (`checkin_report_data`, `trend_report_data`, and `audit_report_data`, `version: 1`) into `tool_context.state`. The Cloud Run Web App BFF extracts these whitelisted `stateDelta` keys from `/run_sse` and streams `event: report` frames so interactive charts render from the exact numbers used in the prose.
+   - `fetch_checkin_data`, `fetch_trend_data`, and `fetch_plan_audit_data` also write structured JSON payloads (`checkin_report_data`, `trend_report_data`, and `audit_report_data`, `version: 1`) into `tool_context.state`. The Cloud Run Web App BFF extracts these whitelisted `stateDelta` keys from `/run_sse` and streams `event: report` frames so interactive charts render from the exact numbers used in the prose.
 
 <img src="diagrams/04_tool_call_sequence.svg" alt="Tool call sequence" style="border: 1px solid #dadce0; border-radius: 8px; max-width: 100%;" />
 
@@ -63,7 +63,7 @@ running_coach/
 │   ├── trend_analysis/              # SKILL.md, fetch_trend_data_tool.py, helpers/
 │   ├── workout_analysis/            # SKILL.md, analyze_workout_tool.py, helpers/
 │   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
-│   ├── schedule_audit/              # SKILL.md, fetch_schedule_audit_data_tool.py, helpers/
+│   ├── plan_audit/              # SKILL.md, fetch_plan_audit_data_tool.py, helpers/
 │   ├── nutrition_planner/           # SKILL.md, fetch_nutrition_context_tool.py, helpers/
 │   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes); <= 10 changes within <= 2 ISO weeks, bigger sets redirect to plan_builder
 │   ├── plan_builder/                # SKILL.md, fetch_plan_context_tool.py, stage_training_plan_tool.py, apply_training_plan_tool.py, helpers/ (session_codes, strength_templates, pace_zones, plan_expand, plan_diff, plan_context_text, plan_summary_text, web_payload)
@@ -80,7 +80,7 @@ running_coach/
 │   └── trainingpeaks/               # credentials, mcp_toolsets, tp_calls
 ├── webapp/
 │   ├── backend/app/                 # FastAPI BFF (IAP auth, profiles, TP connect, SSE translator)
-│   └── frontend/src/                # React SPA: app/, features/{check_in_report,trend_analysis,schedule_audit,profile}/, shared/
+│   └── frontend/src/                # React SPA: app/, features/{check_in_report,trend_analysis,plan_audit,profile}/, shared/
 └── tests/                           # behavioural feature/coach tests + test_structure.py
 ```
 
@@ -90,7 +90,7 @@ running_coach/
 |---|---|---|---|
 | `check_in_report` | `checkin_report_data` | `checkin` | `features/check_in_report/` |
 | `trend_analysis` | `trend_report_data` | `trend` | `features/trend_analysis/` |
-| `schedule_audit` | `audit_report_data` | `audit` | `features/schedule_audit/` |
+| `plan_audit` | `audit_report_data` | `audit` | `features/plan_audit/` |
 
 **Architectural invariants (enforced by `tests/test_structure.py`):**
 1. Every skill lives at `features/<feature>/SKILL.md` (skill name = kebab-case folder name), and every `<tool_name>_tool.py` defines one `FunctionTool` registered on `coaching_agent`.
@@ -104,7 +104,7 @@ running_coach/
 ## 4. Integrations, credentials, and data
 
 - **TrainingPeaks & Cloud KMS:** Runners upload their `Production_tpAuth` cookie in the Web App. The backend validates it live against TrainingPeaks and encrypts it with Cloud KMS (`AAD = b"users/{runner_id}"`) into `users/{runner_id}/private/trainingpeaks`. Inside Agent Runtime, `integrations/trainingpeaks/credentials.py` decrypts the runner's cookie (5-minute TTL cache) and `integrations/trainingpeaks/mcp_toolsets.py` maintains an LRU pool of `tp-mcp` stdio toolsets keyed by cookie hash.
-- **Open-Meteo (`integrations/open_meteo.py`):** Geocoding (cached on the profile), exact-hour historical run weather, and forecasts for fueling/schedule audits.
+- **Open-Meteo (`integrations/open_meteo.py`):** Geocoding (cached on the profile), exact-hour historical run weather, and forecasts for fueling/plan audits.
 - **Firestore (`running-coach` Enterprise DB, `integrations/firestore.py`):**
   - `users/{runner_id}`: runner profile + `email` (indexed via `google_firestore_index.users_by_email`).
   - `users/{runner_id}/private/trainingpeaks`: KMS ciphertext + metadata (`tp_athlete_id`, `tp_name`, `kms_key_version`).

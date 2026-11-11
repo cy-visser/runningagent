@@ -1,4 +1,4 @@
-"""Schedule audit tool for the `schedule-audit` skill."""
+"""Plan audit tool for the `plan-audit` skill."""
 
 from datetime import timedelta
 from typing import Optional
@@ -12,7 +12,7 @@ from ...shared.north_star_targets import baseline_window, recent_volume_baseline
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.tp_payloads import coerce_mcp_payload
 from ...shared.weekly_buckets import build_week_buckets
-from .helpers.audit_summary_text import format_schedule_audit_summary
+from .helpers.audit_summary_text import format_plan_audit_summary
 from .helpers.calendar_notes_by_week import add_notes_to_weeks
 from .helpers.long_run_annotations import (
     annotate_long_runs,
@@ -23,14 +23,14 @@ from .helpers.long_run_annotations import (
 from .helpers.web_report import AUDIT_REPORT_STATE_KEY, audit_report_data
 
 
-async def fetch_schedule_audit_data(
+async def fetch_plan_audit_data(
     tool_context: ToolContext,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     weeks_forward: int = 4,
     weeks_back: int = 1,
 ) -> str:
-    """Per-ISO-week schedule audit: volume, TSS, easy/quality split, cross-training, calendar notes,
+    """Per-ISO-week plan audit: volume, TSS, easy/quality split, cross-training, calendar notes,
     goal context and long runs and weekly volume vs target. Past weeks use completed values.
 
     Args:
@@ -87,11 +87,11 @@ async def fetch_schedule_audit_data(
     daily = coerce_mcp_payload(raw["fitness PMC"]).get("daily_data") or [] if raw["fitness PMC"] else []
     ctl = next((d.get("ctl") for d in reversed(daily) if d.get("ctl") is not None), None)
     goal_context = format_goal_context(profile, today_date, ctl, recent_long_runs(history_workouts, today_date))
-    summary = format_schedule_audit_summary(week_list, goal_context=goal_context)
+    summary = format_plan_audit_summary(week_list, goal_context=goal_context)
     if raw["calendar notes"] is None:
         summary += ("\n\n⚠️ Calendar notes unavailable (TrainingPeaks error): travel, illness or other "
                     "calendar notes for this window are not shown above.")
     return summary
 
 
-fetch_schedule_audit_data_tool = FunctionTool(fetch_schedule_audit_data)
+fetch_plan_audit_data_tool = FunctionTool(fetch_plan_audit_data)

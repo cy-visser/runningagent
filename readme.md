@@ -11,7 +11,7 @@ In production, the **Vertex AI Agent Runtime** engine is served through the **Cl
 *   **Feature-Sliced Codebase**: Clear vertical slices (`features/<feature>/`) mapping each skill (`SKILL.md`) to its tool (`*_tool.py`), private helpers (`helpers/`), shared domain modules (`shared/`), and external integrations (`integrations/`), enforced by `tests/test_structure.py`.
 *   **Per-Runner KMS Credential Isolation**: Each runner links their own TrainingPeaks cookie in the Web App, encrypted with **Cloud KMS** (`AAD = b"users/{runner_id}"`) in `users/{runner_id}/private/trainingpeaks`.
 *   **Multi-Agent Orchestration (`coach/`)**: Deterministic email-based routing between onboarding (profile & goal-plan creation) and coaching.
-*   **Interactive Visual Reports**: Structured `checkin_report_data`, `trend_report_data`, and `audit_report_data` session state payloads render 90-day PMC charts, Sunset CTL progress rings, race-day projections, schedule-audit calendars, and 6-month load-capacity ladders alongside coaching prose.
+*   **Interactive Visual Reports**: Structured `checkin_report_data`, `trend_report_data`, and `audit_report_data` session state payloads render 90-day PMC charts, Sunset CTL progress rings, race-day projections, plan-audit calendars, and 6-month load-capacity ladders alongside coaching prose.
 *   **Hourly Weather & Travel Context**: Correlates run splits with exact-hour Open-Meteo weather and scans calendar notes for travel.
 *   **Training Log & 6-Month Trend Analysis**: Stores deterministic workout records in `users/{id}/training_log` for long-horizon efficiency, decoupling, and weekly volume durability analysis.
 

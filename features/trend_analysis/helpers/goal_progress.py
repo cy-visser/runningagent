@@ -84,7 +84,7 @@ def ctl_plan(rows: list[dict], info: dict, ctl_now: Optional[float]) -> list[dic
 
 
 def _volume(profile: dict, today: date, baseline: Optional[float]) -> Optional[dict]:
-    """Weekly running-volume targets of the current block (identical to the schedule audit's per-week targets)."""
+    """Weekly running-volume targets of the current block (identical to the plan audit's per-week targets)."""
     plan = volume_plan(profile, today, baseline)
     if not plan:
         return None
@@ -195,7 +195,7 @@ def _format_volume_line(g: dict, v: dict) -> str:
         peak = (f" -> {v['block_target_km']} km block target{by} (linear reference path, no % cap; "
                 f"every {RECOVERY_EVERY_WEEKS}th build week a recovery week at {round(RECOVERY_SHARE * 100)}%)")
     return (f"- Weekly volume reference ({g['label']} block{ns_part}): {now}{first}{peak}. Same per-week path as "
-            "the schedule audit; whether its steps are a safe ramp for this runner is your judgement.")
+            "the plan audit; whether its steps are a safe ramp for this runner is your judgement.")
 
 
 def format_goal_context(progress: dict, profile: dict, today: date) -> str:

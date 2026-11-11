@@ -1,4 +1,4 @@
-"""Long-run facts shared by the schedule audit and the trend analysis.
+"""Long-run facts shared by the plan audit and the trend analysis.
 
 There is deliberately no computed long-run target, floor or cap: the coach reasons the long-run
 progression toward the goal / north star from these facts (recent long runs, share of the week, time to

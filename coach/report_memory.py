@@ -1,7 +1,7 @@
 """Report memory: report output survives session compaction, verbatim and only the latest of each kind.
 
 Session history is compacted every N runner messages (`agent.py`). ADK's `LlmEventSummarizer` cuts
-every tool result to 2,000 characters and paraphrases the rest, so a schedule audit's calendar (with
+every tool result to 2,000 characters and paraphrases the rest, so a plan audit's calendar (with
 its [workout_id]s) or a workout analysis's numbers used to be lost after compaction.
 
 - `ReportMemorySummarizer`: the summary of a compacted range is the LLM's summary of the
@@ -36,7 +36,7 @@ from google.genai import types
 # Report tools whose latest output is kept verbatim (one per tool: the latest audit, check-in,
 # trend and workout analysis).
 REPORT_LABELS = {
-    "fetch_schedule_audit_data": "Schedule audit",
+    "fetch_plan_audit_data": "Plan audit",
     "analyze_workout": "Workout analysis",
     "fetch_checkin_data": "Check-in",
     "fetch_trend_data": "Trend analysis",

@@ -18,9 +18,9 @@ from running_coach.coach.report_memory import (
     replaced_stagings,
 )
 
-SKILL_TEXT = "# Schedule Audit & Assessment Skill\n" + "Audit protocol step. " * 200
+SKILL_TEXT = "# Plan Audit & Assessment Skill\n" + "Audit protocol step. " * 200
 AUDIT = (
-    "### Training Schedule Audit\n* Nov 09 - Nov 15: 0 km run\n"
+    "### Training Plan Audit\n* Nov 09 - Nov 15: 0 km run\n"
     "  - Fri 13 Nov · Strength · General S&C Work · 45 min [3937622001]"
 )
 ANALYSIS_OLD = "Workout analysis: Easy Run 2026-11-05, Pa:Hr 3.1%, weather 9°C"
@@ -54,10 +54,10 @@ def _event(author: str, ts: float, inv: str, *parts: types.Part) -> Event:
 def _session_events() -> list[Event]:
     return [
         _event("user", 1.0, "i1", types.Part(text="Audit my schedule")),
-        _event("coaching_agent", 2.0, "i1", _call("load_skill", "c1", skill_name="schedule-audit"),
-               _call("fetch_schedule_audit_data", "c2", start_date="2026-11-02", end_date="2026-11-29")),
-        _event("coaching_agent", 3.0, "i1", _resp("load_skill", "c1", {"skill_name": "schedule-audit", "instructions": SKILL_TEXT}),
-               _resp("fetch_schedule_audit_data", "c2", {"result": AUDIT})),
+        _event("coaching_agent", 2.0, "i1", _call("load_skill", "c1", skill_name="plan-audit"),
+               _call("fetch_plan_audit_data", "c2", start_date="2026-11-02", end_date="2026-11-29")),
+        _event("coaching_agent", 3.0, "i1", _resp("load_skill", "c1", {"skill_name": "plan-audit", "instructions": SKILL_TEXT}),
+               _resp("fetch_plan_audit_data", "c2", {"result": AUDIT})),
         _event("coaching_agent", 4.0, "i1", types.Part(text="### Assessment ... move Wed to Thu")),
         _event("user", 5.0, "i2", types.Part(text="Analyze Thursday")),
         _event("coaching_agent", 6.0, "i2", _call("analyze_workout", "c3", date_str="2026-11-05")),
@@ -164,7 +164,7 @@ def test_skill_instructions_of_completed_turns_become_a_stub_and_the_current_tur
 
     request = LlmRequest(contents=[
         types.Content(role="user", parts=[types.Part(text="Audit my schedule")]),
-        *load("k1", "schedule-audit"),
+        *load("k1", "plan-audit"),
         types.Content(role="model", parts=[types.Part(text="### Assessment")]),
         types.Content(role="user", parts=[types.Part(text="Add a tempo run on Thursday")]),
         *load("k2", "workout-creator"),
@@ -173,7 +173,7 @@ def test_skill_instructions_of_completed_turns_become_a_stub_and_the_current_tur
     skills = {p.function_response.response["skill_name"]: p.function_response.response["instructions"]
               for c in request.contents for p in c.parts
               if p.function_response and p.function_response.name == "load_skill"}
-    assert skills == {"schedule-audit": STALE_SKILL_STUB, "workout-creator": SKILL_TEXT}
+    assert skills == {"plan-audit": STALE_SKILL_STUB, "workout-creator": SKILL_TEXT}
 
 
 def test_an_applied_plan_is_stubbed_and_its_week_applies_collapse_into_one_line():

@@ -37,7 +37,7 @@ _ROUTING_RULES = """
                                       -> check-in-report       -> fetch_checkin_data
     - Trends (6+ weeks: progress, load capacity, pacing, training patterns)
                                       -> trend-analysis        -> fetch_trend_data
-    - Review / audit the plan         -> schedule-audit        -> fetch_schedule_audit_data
+    - Review / audit the plan         -> plan-audit        -> fetch_plan_audit_data
     - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
     - Create/change workouts or notes -> workout-creator       -> stage_workout_changes (runner applies via button)
     - New plan / block, or overhaul   -> plan-builder          -> fetch_plan_context (then ONE stage_training_plan)
@@ -56,7 +56,7 @@ _ROUTING_RULES = """
     Skill instructions from an earlier turn are replaced by a stub: to follow a skill again, call load_skill again
     in the same step as its data tool. Within a turn, do not reload a skill that is already loaded.
     New goal (the runner accepts setting one) -> request_new_goal. Ad-hoc weather -> get_weather.
-    REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_schedule_audit_data) each render a full report for
+    REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data) each render a full report for
     the runner: call one only when the runner asks for that report. Never use one as a data lookup for a follow-up
     or another skill; answer from the data already in this conversation (planned sessions carry their [workout_id]).
 

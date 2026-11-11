@@ -1,4 +1,4 @@
-"""Per-week long-run facts, running-volume facts and goal context for the schedule audit.
+"""Per-week long-run facts, running-volume facts and goal context for the plan audit.
 
 Volume is reported as facts only (km, change vs the prior week, deviation from the block's linear
 reference path). There is deliberately no coded ramp limit or ⚠ verdict: the coach judges whether a
@@ -140,7 +140,7 @@ def format_week_volume(w: dict) -> str:
 def format_goal_context(
     profile: Optional[dict], today: date, ctl: Optional[float] = None, long_runs: Optional[list[dict]] = None
 ) -> str:
-    """Goal (plan) context for the schedule audit: current block, north star, long-run and weekly-km facts,
+    """Goal (plan) context for the plan audit: current block, north star, long-run and weekly-km facts,
     volume rule."""
     ctx = block_context(profile, today)
     goal, label = ctx["goal"], ctx["label"]

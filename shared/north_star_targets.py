@@ -1,4 +1,4 @@
-"""North-star targets shared by the trend analysis and the schedule audit.
+"""North-star targets shared by the trend analysis and the plan audit.
 
 Peak weekly km per half / marathon north star (by target time) and the per-week running-volume target of
 each training block. Long-run distance has no computed target: the coach reasons it from the facts.

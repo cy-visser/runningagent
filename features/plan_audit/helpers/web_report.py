@@ -1,4 +1,4 @@
-"""Structured schedule-audit web report payload (`audit_report_data`)."""
+"""Structured plan-audit web report payload (`audit_report_data`)."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def audit_report_data(
     q_end: date,
     weeks: Optional[list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Structured schedule-audit payload (`audit_report_data`) stored in session state."""
+    """Structured plan-audit payload (`audit_report_data`) stored in session state."""
     weeks_payload = [
         {
             "week": iso_or_none(w.get("start_date")),

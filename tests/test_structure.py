@@ -19,7 +19,7 @@ from running_coach.coach.coaching.skill_toolset import SKILL_FEATURES, skill_too
 from running_coach.features.check_in_report.helpers.web_report import (
     CHECKIN_REPORT_STATE_KEY,
 )
-from running_coach.features.schedule_audit.helpers.web_report import (
+from running_coach.features.plan_audit.helpers.web_report import (
     AUDIT_REPORT_STATE_KEY,
 )
 from running_coach.features.trend_analysis.helpers.web_report import (
@@ -125,7 +125,7 @@ def test_architecture_rules_and_cross_stack_contract():
     loaded_skill_names = {s.name for s in skill_toolset._list_skills()}
     assert loaded_skill_names == {f.replace("_", "-") for f in SKILL_FEATURES}
     tool_name_re = re.compile(
-        r"\b(fetch_checkin_data|fetch_trend_data|analyze_workout|fetch_schedule_audit_data|"
+        r"\b(fetch_checkin_data|fetch_trend_data|analyze_workout|fetch_plan_audit_data|"
         r"fetch_nutrition_context|stage_workout_changes|apply_staged_changes|get_weather|request_new_goal|"
         r"fetch_plan_context|stage_training_plan|apply_training_plan)\b"
     )

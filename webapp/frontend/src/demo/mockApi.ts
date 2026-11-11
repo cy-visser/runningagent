@@ -312,13 +312,13 @@ export async function demoStreamChat(
     handlers.onMessage?.({ text: DEMO_TREND_MARKDOWN, kind: "trend" });
   } else if (lower.includes("audit")) {
     handlers.onTool?.({
-      name: "fetch_schedule_audit_data",
+      name: "fetch_plan_audit_data",
       label: "Auditing weekly schedule & calendar notes",
       state: "start",
     });
     await new Promise((r) => setTimeout(r, 220));
     handlers.onTool?.({
-      name: "fetch_schedule_audit_data",
+      name: "fetch_plan_audit_data",
       label: "Auditing weekly schedule & calendar notes",
       state: "done",
     });

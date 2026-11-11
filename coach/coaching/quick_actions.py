@@ -29,8 +29,8 @@ from opentelemetry import trace
 from ...features.check_in_report.fetch_checkin_data_tool import fetch_checkin_data_tool
 from ...features.plan_builder.apply_training_plan_tool import apply_training_plan_tool
 from ...features.plan_builder.fetch_plan_context_tool import fetch_plan_context_tool
-from ...features.schedule_audit.fetch_schedule_audit_data_tool import (
-    fetch_schedule_audit_data_tool,
+from ...features.plan_audit.fetch_plan_audit_data_tool import (
+    fetch_plan_audit_data_tool,
 )
 from ...features.trend_analysis.fetch_trend_data_tool import fetch_trend_data_tool
 from ...features.workout_analysis.analyze_workout_tool import analyze_workout_tool
@@ -49,7 +49,7 @@ DISPATCHED_STATE_KEY = "temp:quick_action_invocation"
 QUICK_ACTIONS = {
     "check-in-report": (fetch_checkin_data_tool, frozenset({"start_date", "end_date"})),
     "trend-analysis": (fetch_trend_data_tool, frozenset({"weeks"})),
-    "schedule-audit": (fetch_schedule_audit_data_tool, frozenset({"start_date", "end_date"})),
+    "plan-audit": (fetch_plan_audit_data_tool, frozenset({"start_date", "end_date"})),
     "workout-analysis": (analyze_workout_tool, frozenset({"date_str", "sport"})),
     # "Update TrainingPeaks" button: applies the staged changes in code. The follow-up model call is
     # answered by `write_confirmation_reply`, so this action makes no LLM call at all.

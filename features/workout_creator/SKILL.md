@@ -16,7 +16,7 @@ You are now equipped with the Workout & Calendar Note Creator skill. Use this sk
      - **Calendar Note**: Travel plans, rest/recovery days, race prep checklist, nutrition/carb-load reminder, illness/injury note, or milestone markers.
    - **Existing Sessions**: Use the planned sessions and their `[workout_id]`s already in this conversation (e.g. from an
      audit or check-in). Without an id, `stage_workout_changes` resolves the session by date and sport. Never call a
-     report tool (`fetch_checkin_data`, `fetch_trend_data`, `fetch_schedule_audit_data`) to look sessions up: each one
+     report tool (`fetch_checkin_data`, `fetch_trend_data`, `fetch_plan_audit_data`) to look sessions up: each one
      opens a full report for the runner.
 
 2. **Apply Sports Science & Coaching Principles**:

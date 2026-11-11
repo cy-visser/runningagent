@@ -1,19 +1,19 @@
-"""Behavioural test for the schedule audit feature (`fetch_schedule_audit_data`)."""
+"""Behavioural test for the plan audit feature (`fetch_plan_audit_data`)."""
 
 import asyncio
 from datetime import date
 import json
 import re
 
-from running_coach.features.schedule_audit.fetch_schedule_audit_data_tool import (
-    fetch_schedule_audit_data,
+from running_coach.features.plan_audit.fetch_plan_audit_data_tool import (
+    fetch_plan_audit_data,
 )
 from running_coach.features.trend_analysis.fetch_trend_data_tool import fetch_trend_data
 
 
-def test_schedule_audit_surfaces_goal_context_long_run_facts_and_web_payload(runner):
+def test_plan_audit_surfaces_goal_context_long_run_facts_and_web_payload(runner):
     ctx = runner.ctx()
-    out = asyncio.run(fetch_schedule_audit_data(ctx, weeks_forward=4, weeks_back=1))
+    out = asyncio.run(fetch_plan_audit_data(ctx, weeks_forward=4, weeks_back=1))
 
     assert "**Goal Plan Context**" in out
     assert "London Marathon 2028" in out
@@ -60,10 +60,10 @@ def test_schedule_audit_surfaces_goal_context_long_run_facts_and_web_payload(run
     }
 
     # Late in the block: taper week at 75% of the block target; nothing planned is a fact, not a verdict.
-    late = asyncio.run(fetch_schedule_audit_data(runner.ctx(), start_date="2027-01-25", end_date="2027-02-07"))
+    late = asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2027-01-25", end_date="2027-02-07"))
     assert "path 72 km (build, 2 wk to 10K" in late
     assert "path 54 km (taper, 1 wk to 10K; 75% of the 72 km block target), no runs planned" in late
-    recovery = asyncio.run(fetch_schedule_audit_data(runner.ctx(), start_date="2026-12-07", end_date="2026-12-13"))
+    recovery = asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2026-12-07", end_date="2026-12-13"))
     assert "(recovery week, 9 wk to 10K; 80% of this week's" in recovery
 
     # Same per-week targets as the trend report (one shared rule and baseline).
@@ -78,7 +78,7 @@ def _span_days(kw: dict) -> int:
     return (date.fromisoformat(kw["end_date"][:10]) - date.fromisoformat(kw["start_date"][:10])).days
 
 
-def test_schedule_audit_over_90_days_is_chunked_and_populated(runner):
+def test_plan_audit_over_90_days_is_chunked_and_populated(runner):
     # Regression: "audit from today until 7 Feb 2027" (> 90 days) came back as an empty schedule because
     # TrainingPeaks rejects list ranges > 90 days and the error was coerced to [].
     runner.workouts.append({
@@ -88,7 +88,7 @@ def test_schedule_audit_over_90_days_is_chunked_and_populated(runner):
     })
     runner.notes.append({"id": "n_far", "date": "2027-02-01", "title": "Taper starts", "description": ""})
     ctx = runner.ctx()
-    out = asyncio.run(fetch_schedule_audit_data(ctx, start_date="2026-10-27", end_date="2027-02-07"))
+    out = asyncio.run(fetch_plan_audit_data(ctx, start_date="2026-10-27", end_date="2027-02-07"))
 
     list_calls = [kw for name, kw in runner.tp_calls if name in ("tp_get_workouts", "tp_list_notes")]
     assert list_calls and all(_span_days(kw) <= 90 for kw in list_calls)
@@ -100,10 +100,10 @@ def test_schedule_audit_over_90_days_is_chunked_and_populated(runner):
     assert report and len(report["weeks"]) == 15
 
 
-def test_schedule_audit_reports_tp_failure_instead_of_empty_schedule(runner):
+def test_plan_audit_reports_tp_failure_instead_of_empty_schedule(runner):
     runner.failing_tools.add("tp_get_workouts")
     ctx = runner.ctx()
-    out = asyncio.run(fetch_schedule_audit_data(ctx, weeks_forward=4, weeks_back=1))
+    out = asyncio.run(fetch_plan_audit_data(ctx, weeks_forward=4, weeks_back=1))
 
     assert out.startswith("Error:")
     assert "TrainingPeaks" in out and "empty" in out

@@ -29,7 +29,7 @@ TOOL_LABELS: dict[str, str] = {
     "fetch_checkin_data": "Pulling 14 days of TrainingPeaks data",
     "fetch_trend_data": "Analysing 6-month training log & load capacity",
     "analyze_workout": "Analysing workout telemetry & recovery",
-    "fetch_schedule_audit_data": "Auditing weekly schedule & calendar notes",
+    "fetch_plan_audit_data": "Auditing weekly schedule & calendar notes",
     "fetch_nutrition_context": "Loading fueling & weather forecast",
     "stage_workout_changes": "Staging plan changes",
     "apply_staged_changes": "Updating TrainingPeaks",
@@ -45,7 +45,7 @@ TOOL_TO_MESSAGE_KIND: dict[str, MessageKind] = {
     "fetch_checkin_data": "checkin",
     "fetch_trend_data": "trend",
     "analyze_workout": "workout",
-    "fetch_schedule_audit_data": "audit",
+    "fetch_plan_audit_data": "audit",
     "fetch_nutrition_context": "nutrition",
 }
 
@@ -57,7 +57,7 @@ def label_for_tool(name: str) -> str:
 def infer_message_kind(tools_used: set[str], report_kind: Optional[str] = None) -> MessageKind:
     if report_kind in ("checkin", "trend", "audit", "workout"):
         return report_kind  # type: ignore[return-value]
-    for tool_name in ("fetch_checkin_data", "fetch_trend_data", "analyze_workout", "fetch_schedule_audit_data", "fetch_nutrition_context"):
+    for tool_name in ("fetch_checkin_data", "fetch_trend_data", "analyze_workout", "fetch_plan_audit_data", "fetch_nutrition_context"):
         if tool_name in tools_used:
             return TOOL_TO_MESSAGE_KIND[tool_name]
     return "chat"

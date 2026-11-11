@@ -63,7 +63,7 @@
     ]
   },
   {
-    "name": "four_week_schedule_audit",
+    "name": "four_week_plan_audit",
     "initial_session": {
       "state": {
         "user_profile": {
@@ -83,11 +83,11 @@
           {
             "tool_name": "load_skill",
             "tool_input": {
-              "skill_name": "schedule-audit"
+              "skill_name": "plan-audit"
             }
           },
           {
-            "tool_name": "fetch_schedule_audit_data",
+            "tool_name": "fetch_plan_audit_data",
             "tool_input": {}
           }
         ],
@@ -321,11 +321,11 @@
           {
             "tool_name": "load_skill",
             "tool_input": {
-              "skill_name": "schedule-audit"
+              "skill_name": "plan-audit"
             }
           },
           {
-            "tool_name": "fetch_schedule_audit_data",
+            "tool_name": "fetch_plan_audit_data",
             "tool_input": {}
           }
         ],

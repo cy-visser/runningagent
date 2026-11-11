@@ -1,16 +1,16 @@
 ---
-name: schedule-audit
+name: plan-audit
 description: Audits the runner's training schedule to calculate weekly volume, planned TSS, workout intensity distribution (easy vs tempo/intervals), travel alignment, and taper/recovery compliance.
 ---
 
-# Schedule Audit & Assessment Skill
+# Plan Audit & Assessment Skill
 
-You are now equipped with the Schedule Audit & Assessment skill. Use this skill when the runner asks you to audit, assess, analyze, review, or check their training schedule or plan.
+You are now equipped with the Plan Audit & Assessment skill. Use this skill when the runner asks you to audit, assess, analyze, review, or check their training schedule or plan.
 
 ## Audit Protocol:
 
 1. **Retrieve Data**:
-   - Call `fetch_schedule_audit_data` (defaults: 4 weeks ahead, `weeks_back=1` so the previous week is included as the ramp/taper baseline). It returns per-week running volume, TSS, easy vs. quality counts, cross-training/strength sessions and calendar notes.
+   - Call `fetch_plan_audit_data` (defaults: 4 weeks ahead, `weeks_back=1` so the previous week is included as the ramp/taper baseline). It returns per-week running volume, TSS, easy vs. quality counts, cross-training/strength sessions and calendar notes.
    - When the runner gives an explicit window (e.g. "from YYYY-MM-DD until my race on YYYY-MM-DD" or "Use start_date=… and end_date=…"), pass those dates as `start_date` / `end_date` exactly; do not shorten or extend it to the defaults.
 
 2. **Use the Pre-Computed Weekly Totals**:

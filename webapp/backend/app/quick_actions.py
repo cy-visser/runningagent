@@ -15,7 +15,7 @@ QUICK_ACTION_STATE_KEY = "temp:quick_action"
 # Message part carrying the action (Agent Runtime's /api/run_sse drops state_delta): prefix + JSON.
 QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
 QUICK_ACTION_SKILLS = (
-    "check-in-report", "trend-analysis", "schedule-audit", "workout-analysis", "workout-creator",
+    "check-in-report", "trend-analysis", "plan-audit", "workout-analysis", "workout-creator",
     "plan-builder", "plan-builder:apply",
 )
 
@@ -41,7 +41,7 @@ class TrendAction(_Action):
 
 
 class AuditAction(_Action):
-    skill: Literal["schedule-audit"]
+    skill: Literal["plan-audit"]
     start_date: Optional[IsoDate] = None
     end_date: Optional[IsoDate] = None
 

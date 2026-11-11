@@ -17,7 +17,7 @@ SKILL_FEATURES = (
     "trend_analysis",
     "workout_analysis",
     "bike_workout_analysis",
-    "schedule_audit",
+    "plan_audit",
     "workout_creator",
     "plan_builder",
 )

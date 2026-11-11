@@ -36,13 +36,13 @@ def _run(contents: list[types.Content]) -> list[types.Content]:
 def test_completed_turns_lose_thoughts_and_signatures():
     out = _run([
         _user("audit my plan"),
-        _model(types.Part(text="thinking...", thought=True), _call("fetch_schedule_audit_data")),
-        _resp("fetch_schedule_audit_data"),
+        _model(types.Part(text="thinking...", thought=True), _call("fetch_plan_audit_data")),
+        _resp("fetch_plan_audit_data"),
         _model(types.Part(text="### Assessment", thought_signature=SIG), types.Part(text="", thought_signature=SIG)),
         _user("yes update it"),
     ])
     assert len(out) == 5
     first_model, second_model = out[1], out[3]
-    assert [p.function_call.name for p in first_model.parts] == ["fetch_schedule_audit_data"]
+    assert [p.function_call.name for p in first_model.parts] == ["fetch_plan_audit_data"]
     assert all(p.thought_signature is None and not p.thought for p in first_model.parts + second_model.parts)
     assert [p.text for p in second_model.parts] == ["### Assessment"]  # empty signed part dropped

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Activity, AlertCircle } from "lucide-react";
 import type { AppliedTrainingPlan, ChatMessage } from "../shared/types";
-import { AuditReport } from "../features/schedule_audit/AuditReport";
+import { AuditReport } from "../features/plan_audit/AuditReport";
 import { CheckinReport } from "../features/check_in_report/CheckinReport";
 import {
   PlanStagedCard,
