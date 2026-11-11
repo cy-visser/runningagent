@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """One-time cleanup of legacy free-text runner profile fields in Firestore.
 
-Deletes `recent_race_times` (replaced by structured `personal_records`) and string-valued
-`shoe_rotation` (replaced by structured shoe slots) from every `users/*` document. Structured
+Deletes `recent_race_times` (replaced by structured `personal_records`), string-valued
+`shoe_rotation` (replaced by structured shoe slots) and `cross_training_strength` (replaced by
+`run_time_of_day` / `strength_time_of_day`) from every `users/*` document. Structured
 `shoe_rotation` objects are left untouched, so re-running is safe.
 
 Dry-run by default: prints every affected document with its current values. Pass `--apply` to delete.
@@ -15,11 +16,12 @@ import os
 
 from google.cloud import firestore
 
+# Legacy fields deleted whenever present (any value).
+_ALWAYS_LEGACY = ("recent_race_times", "cross_training_strength")
+
 
 def _legacy_fields(doc: dict) -> dict[str, str]:
-    legacy = {}
-    if "recent_race_times" in doc:
-        legacy["recent_race_times"] = doc["recent_race_times"]
+    legacy = {key: doc[key] for key in _ALWAYS_LEGACY if key in doc}
     if isinstance(doc.get("shoe_rotation"), str):
         legacy["shoe_rotation"] = doc["shoe_rotation"]
     return legacy

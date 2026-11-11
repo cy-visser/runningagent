@@ -9,6 +9,7 @@ from ....shared.dates import iso_date, monday_of, parse_date
 from ....shared.goal_plan import blocks, current_goal, north_star, race_day
 from ....shared.long_run_facts import format_history, recent_long_runs
 from ....shared.north_star_targets import block_context, recent_volume_baseline, volume_rule_summary
+from ....shared.training_times import training_times_text
 from ....shared.weekly_buckets import build_week_buckets
 from ....shared.workout_status import is_workout_completed
 from .pace_zones import zone_table_text
@@ -41,9 +42,11 @@ def _goal_lines(profile: dict, start: date, end: date) -> list[str]:
     races = [b for b in blocks(profile) if (d := race_day(b)) and start <= d <= end]
     if races:
         lines.append("Goal races in the window: " + " · ".join(f"{b['timeline']} {b['training_goal']}" for b in races))
-    for label, key in (("Injuries", "injuries"), ("Cross-training / strength", "cross_training_strength")):
-        if str(profile.get(key) or "").strip():
-            lines.append(f"{label}: {profile[key]}")
+    if str(profile.get("injuries") or "").strip():
+        lines.append(f"Injuries: {profile['injuries']}")
+    times = training_times_text(profile)
+    lines.append(f"Training times: {times}" if times else
+                 "Training times: not set (default: run first, strength after on a double day)")
     return lines
 
 

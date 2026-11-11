@@ -33,7 +33,6 @@ export const DEMO_ME_READY: MeResponse = {
     active_goal: "Sub-1:26 Half Marathon",
     active_race_name: "CPC Loop Den Haag",
     active_date: "2027-03-14",
-    active_start_date: "2026-11-23",
     weeks_remaining: 18.4,
     north_star: {
       goal: "Sub-2:58 Marathon",
@@ -106,7 +105,8 @@ export const DEMO_PROFILE_RESPONSE: ProfileResponse = {
       marathon: { time: "3:04:19", time_s: 11059, date: "2025-10-19" },
     },
     injuries: "Mild left Achilles tightness after steep hill repeats; managed with eccentric heel drops.",
-    cross_training_strength: "2x/wk posterior-chain strength (35 min) + 1x easy indoor spin recovery.",
+    run_time_of_day: "morning",
+    strength_time_of_day: "evening",
     shoe_rotation: {
       easy: "Superblast 2",
       tempo: "Magic Speed 4",
@@ -644,13 +644,19 @@ function demoPlanWeek(week: number): PlanWeek {
       : week === 2 ? (i === 1 ? "update" : "create")
       : "create";
   const isRaceWeek = week === DEMO_PLAN_WEEKS;
+  const taper = phase === "taper";
   const rows: PlanSessionRow[] = [
-    { date: start, day: "Mon", sport: "Strength", action: action(0), title: phase === "taper" ? "Strength: activation" : "Strength: heavy lower body", code: "S 40' heavy-lower", distance_km: null, duration_minutes: phase === "taper" ? 20 : 40, tss_planned: 30 },
+    { date: start, day: "Mon", sport: "Strength", action: action(0), title: taper ? "Strength: activation" : "Strength: heavy lower body", code: "S 40' heavy-lower", distance_km: null, duration_minutes: taper ? 20 : 40, tss_planned: 30,
+      exercises: taper ? ["Activation: bodyweight squat 2x10", "Glute bridge 2x12", "Calf raise 2x12"] : ["Back squat 4x5", "Deadlift 3x5", "Bulgarian split squat 3x6/leg", "Single-leg calf raise 3x10"],
+      load: taper ? "RPE 5, no soreness · rest 60\"" : "RPE 8 (2 reps in reserve) · rest 2-3'" },
     { date: demoAddDays(start, 1), day: "Tue", sport: "Run", action: action(1), title: phase === "base" ? "Hills 8x60\"" : "VO2max 6x1 km", code: "I 6x1k r2'", distance_km: Math.round(11 * scale), duration_minutes: 58, tss_planned: 78 },
     { date: demoAddDays(start, 2), day: "Wed", sport: "Run", action: action(2), title: "Easy run", code: "E 10", distance_km: Math.round(9 * scale), duration_minutes: 52, tss_planned: 45 },
-    { date: demoAddDays(start, 3), day: "Thu", sport: "Run", action: action(3), title: "Threshold 2x15'", code: "T 2x15' r2'", distance_km: Math.round(12 * scale), duration_minutes: 62, tss_planned: 82 },
+    { date: demoAddDays(start, 3), day: "Thu", sport: "Run", action: action(3), title: "Threshold 2x15'", code: "T 2x15' r2'", distance_km: Math.round(12 * scale), duration_minutes: 62, tss_planned: 82,
+      time: phase === "base" || phase === "build" ? "07:00" : null },
     ...(phase === "base" || phase === "build"
-      ? [{ date: demoAddDays(start, 3), day: "Thu", sport: "Strength", action: action(4), title: "Strength: core & hips", code: "S 30' core-hips", distance_km: null, duration_minutes: 30, tss_planned: 20 }]
+      ? [{ date: demoAddDays(start, 3), day: "Thu", sport: "Strength", action: action(4), title: "Strength: core & hips", code: "S 30' core-hips", distance_km: null, duration_minutes: 30, tss_planned: 20, time: "18:00",
+          exercises: ["Single-leg glute bridge 3x12/leg", "Copenhagen plank 3x25\"/side", "Pallof press 3x12/side", "Hip airplane 3x6/leg"],
+          load: "Controlled tempo, add load where easy · rest 45\"" }]
       : []),
     { date: demoAddDays(start, 4), day: "Fri", sport: "Bike", action: action(5), title: "Recovery spin Z1", code: "B 45' Z1", distance_km: null, duration_minutes: 45, tss_planned: 25 },
     isRaceWeek
@@ -696,6 +702,20 @@ export const DEMO_PLAN: StagedTrainingPlan = {
   ),
   weeks: DEMO_PLAN_WEEK_LIST,
 };
+
+/** Demo coach opener after Build Plan: proposes a block and asks questions; nothing is built yet. */
+export const DEMO_BLOCK_OPENER = `Hey Cyrille! 👋 Let's shape your next block together.
+
+You're heading for **Sub-1:26 at CPC Loop Den Haag on 14 Mar**, then the Rotterdam Marathon. With your 1:27:40 half PR and a steady ~45 km/week lately, here's what I'd propose:
+
+- **16 weeks**, 23 Nov → 14 Mar: base (5) → build (6) → HM-specific (3) → taper (2)
+- Peak around **60 km/week**, long run up to **24 km** with HM-pace blocks
+- Two quality sessions a week (threshold + HM pace), strength 2x in base and build
+
+Before I put it together, a few things only you can tell me:
+1. How many days a week can you run, and which day suits the long run?
+2. Any holidays, travel or work peaks between now and March?
+3. How's the body feeling right now — any niggles I should plan around?`;
 
 export const DEMO_PLAN_MARKDOWN = `Your block builds from an aerobic base into HM-pace endurance, with a down week every fourth week and a two-week taper into CPC. Heavy lower-body strength sits on your hard-run days (after the run) so easy days stay easy, dropping to maintenance in the peak and activation only in the taper. The Friday spin adds low-impact aerobic volume without extra running load.
 

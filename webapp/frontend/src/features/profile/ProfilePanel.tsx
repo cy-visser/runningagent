@@ -21,6 +21,7 @@ import type {
   SubGoal,
 } from "../../shared/types";
 import { ProfileForm } from "./ProfileForm";
+import { trainingTimesText } from "./TrainingTimesFields";
 import { PR_DISTANCES, SHOE_SLOTS } from "./performanceGear";
 
 interface ProfilePanelProps {
@@ -297,6 +298,7 @@ export function ProfilePanel({
                               {sg.taper_weeks != null
                                 ? ` · ${sg.taper_weeks}w taper`
                                 : ""}
+                              <PlanStatusBadge planned={Boolean(sg.planned)} />
                             </p>
                             {sg.result && (
                               <p className="mt-2 rounded-xl bg-white/90 px-3 py-1.5 text-sm font-medium text-emerald-800 border border-emerald-200/70">
@@ -342,6 +344,7 @@ export function ProfilePanel({
                         {profile.north_star.taper_weeks != null
                           ? ` · ${profile.north_star.taper_weeks}w taper`
                           : ""}
+                        <PlanStatusBadge planned={Boolean(profile.north_star.planned)} />
                       </p>
                     </div>
                   </div>
@@ -361,6 +364,7 @@ export function ProfilePanel({
                       {profile.taper_weeks != null
                         ? ` · ${profile.taper_weeks}w taper`
                         : ""}
+                      {profile.training_goal && <PlanStatusBadge planned={Boolean(profile.planned)} />}
                     </p>
                   </div>
                 )}
@@ -431,8 +435,8 @@ export function ProfilePanel({
                   },
                   {
                     icon: CheckCircle2,
-                    title: "Cross-Training & Strength",
-                    value: profile.cross_training_strength,
+                    title: "Training Times",
+                    value: trainingTimesText(profile),
                   },
                 ].map((item) => {
                   const Icon = item.icon;
@@ -483,5 +487,20 @@ export function ProfilePanel({
         </div>
       </div>
     </div>
+  );
+}
+
+/** "Planned" / "Not planned" chip: whether the goal's training plan is already in TrainingPeaks. */
+function PlanStatusBadge({ planned }: { planned: boolean }) {
+  return (
+    <span
+      className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold border ${
+        planned
+          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+          : "bg-amber-50 text-amber-800 border-amber-200"
+      }`}
+    >
+      {planned ? "Planned" : "Not planned"}
+    </span>
   );
 }

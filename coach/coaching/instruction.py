@@ -3,19 +3,23 @@ from typing import Any, Optional
 
 from google.adk.agents.readonly_context import ReadonlyContext
 
-from ...shared.dates import get_today_date, get_today_str
+from ...shared.dates import get_today_date, get_today_str, iso_date
 from ...shared.goal_plan import (
     KIND_NORTH_STAR,
+    all_future_goals_planned,
     current_goal,
     final_race_passed,
     next_block,
+    next_unplanned_goal,
     north_star,
     race_day,
     sub_goals_missing_result,
 )
+from ...shared.key_events import format_key_events
 from ...shared.race_time import format_personal_records, format_shoe_rotation
+from ...shared.training_times import training_times_text
 from .goal_plan_summary import format_goal_plan
-from .quick_actions import is_quick_action_report
+from .quick_actions import is_plan_intake, is_quick_action_report
 
 _COACH_ROLE = (
     "You are an expert running coach and exercise physiologist. Your coaching is analytical, direct, "
@@ -40,7 +44,16 @@ _ROUTING_RULES = """
     - Review / audit the plan         -> plan-audit        -> fetch_plan_audit_data
     - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
     - Create/change workouts or notes -> workout-creator       -> stage_workout_changes (runner applies via button)
-    - New plan / block, or overhaul   -> plan-builder          -> fetch_plan_context (then ONE stage_training_plan)
+    - New plan / block: ALWAYS for the NEXT UNPLANNED GOAL and its block window (see the profile block); never plan
+      a goal marked planned again unless the runner explicitly asks to rework it. DEFINE THE BLOCK WITH THE RUNNER
+      FIRST (no skill, no write tool yet). Open warmly and personally, grounded in the profile, PRs, goal plan and
+      KEY EVENTS (recent races, injuries, breaks). Propose the block yourself: window and length, phases, target peak
+      weekly km and longest long run, key session types, strength. Ask only what the data cannot tell you (days
+      available, long-run day, upcoming travel or constraints). Keep it short. If this conversation has no plan
+      context yet, call fetch_plan_context without dates (it uses that block window). Refine it with the runner.
+      Only when the runner agrees with the block -> plan-builder -> fetch_plan_context (the agreed dates), then
+      ONE stage_training_plan that follows the agreed block. Never offer to "just build it" before that.
+    - Overhaul of an existing plan    -> plan-builder          -> fetch_plan_context (then ONE stage_training_plan)
       THRESHOLD: plan-builder for a new plan or block (any length), or changes spanning >= 3 ISO weeks or
       > 10 sessions; workout-creator for <= 2 weeks and <= 10 sessions.
     - Move / swap / rename planned sessions (no new content): NO load_skill. Call stage_workout_changes directly
@@ -56,6 +69,11 @@ _ROUTING_RULES = """
     Skill instructions from an earlier turn are replaced by a stub: to follow a skill again, call load_skill again
     in the same step as its data tool. Within a turn, do not reload a skill that is already loaded.
     New goal (the runner accepts setting one) -> request_new_goal. Ad-hoc weather -> get_weather.
+    KEY EVENTS: when the runner tells you about something that changes their training (injury, illness, a break
+    without running such as a holiday or travel, a race result not on a goal race date, a major life change), call
+    record_key_event in the same step as your reply, one call per event. Never ask, and never say you saved or noted
+    it: respond to the event itself. Skip routine things (one sore day, a skipped easy run) and events already
+    listed under KEY EVENTS.
     REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data) each render a full report for
     the runner: call one only when the runner asks for that report. Never use one as a data lookup for a follow-up
     or another skill; answer from the data already in this conversation (planned sessions carry their [workout_id]).
@@ -142,7 +160,8 @@ def _goal_line(profile: dict, today: Optional[date]) -> str:
     if not ns:
         if not _present(goal.get("training_goal")):
             return "Goal: not set"
-        return f"Goal: {goal['training_goal']} (Timeline: {goal['timeline']})"
+        status = "planned" if goal["planned"] else "not planned"
+        return f"Goal: {goal['training_goal']} (Timeline: {goal['timeline']}; {status})"
     if goal["kind"] == KIND_NORTH_STAR:
         return f"Goal: North star {ns['training_goal']} (Race: {ns['timeline']}); final block"
     return (
@@ -187,12 +206,11 @@ def format_profile_summary(profile: dict, today: Optional[date] = None) -> str:
     prs = format_personal_records(profile.get("personal_records"))
     if prs:
         lines.append(f"PRs: {prs}")
-    for label, key in (
-        ("Injuries", "injuries"),
-        ("Cross-Training", "cross_training_strength"),
-    ):
-        if _present(profile.get(key)):
-            lines.append(f"{label}: {profile[key]}")
+    if _present(profile.get("injuries")):
+        lines.append(f"Injuries: {profile['injuries']}")
+    times = training_times_text(profile)
+    if times:
+        lines.append(f"Training times: {times}")
     shoes = format_shoe_rotation(profile.get("shoe_rotation"))
     if shoes:
         lines.append(f"Shoes: {shoes}")
@@ -264,6 +282,24 @@ def goal_reasoning(profile: dict, today: date) -> str:
     return "\n".join(parts)
 
 
+def planning_status(profile: dict, today: date) -> str:
+    """Which goal a new plan is for: the first unplanned goal and its block window ('' without future goals)."""
+    nxt = next_unplanned_goal(profile, today)
+    if nxt:
+        name = f" ({nxt['race_name']})" if _present(nxt.get("race_name")) else ""
+        return (
+            f"NEXT UNPLANNED GOAL: {nxt['training_goal'] or 'goal race'}{name}, race {iso_date(nxt['window_end'])}; "
+            f"block window {iso_date(nxt['window_start'])} -> {iso_date(nxt['window_end'])}. A new plan is for this "
+            "goal only."
+        )
+    if all_future_goals_planned(profile, today):
+        return (
+            "ALL GOALS ARE PLANNED: every upcoming goal already has its plan in TrainingPeaks. Do not plan an "
+            "existing block again unless the runner explicitly asks to rework it."
+        )
+    return ""
+
+
 def build_profile_context(profile: dict, today: Optional[date] = None) -> str:
     """The delimited profile block: summary, goal plan, goal reasoning and date-driven notices.
 
@@ -275,6 +311,12 @@ def build_profile_context(profile: dict, today: Optional[date] = None) -> str:
     goal_plan = format_goal_plan(profile, today)
     if goal_plan:
         sections.append(goal_plan)
+    planning = planning_status(profile, today)
+    if planning:
+        sections.append(planning)
+    key_events = format_key_events(profile, today)
+    if key_events:
+        sections.append(key_events)
     sections.append(goal_reasoning(profile, today))
     notice = goal_notice(profile, today)
     if notice:
@@ -282,10 +324,28 @@ def build_profile_context(profile: dict, today: Optional[date] = None) -> str:
     return f"{PROFILE_CONTEXT_START}\n" + "\n\n".join(sections) + f"\n{PROFILE_CONTEXT_END}"
 
 
+# The Build Plan opener (plan-builder:intake quick action): the plan context is already in the request.
+_PLAN_INTAKE_RULES = """
+    PLAN INTAKE (this reply only; you cannot call tools): open the block definition for the NEXT UNPLANNED GOAL
+    using the plan context above. At most ~180 words, in this order:
+    1. One warm, personal line (profile, PRs, KEY EVENTS). No filler praise.
+    2. The proposed block in 3-5 short bullets: window and length, phases in one line, peak weekly km and longest
+       long run (from the recent training), key session types, strength.
+    3. At most 3 questions only the runner can answer (days available, long-run day, travel or constraints).
+    No week-by-week phasing, no paces, no session lists, no plan yet: the plan is built once the runner agrees.
+"""
+
+
 def build_coach_instruction(ctx: ReadonlyContext) -> str:
     """InstructionProvider: role, date and rules. The profile block is added by `ensure_profile_context`."""
     sections = [_COACH_ROLE, f"Today's date is {get_today_str(with_weekday=True)}."]
+    state, invocation_id = ctx.state, getattr(ctx, "invocation_id", None)
     # A web quick action's report call already holds its skill and data and cannot call tools,
     # so the routing rules are omitted there (typed chat turns always get them).
-    routing = "" if is_quick_action_report(ctx.state, getattr(ctx, "invocation_id", None)) else _ROUTING_RULES
+    if is_plan_intake(state, invocation_id):
+        routing = _PLAN_INTAKE_RULES
+    elif is_quick_action_report(state, invocation_id):
+        routing = ""
+    else:
+        routing = _ROUTING_RULES
     return "\n\n".join(sections) + "\n" + routing + _CONTRACT_RULES

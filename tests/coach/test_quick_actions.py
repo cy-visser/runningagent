@@ -168,7 +168,35 @@ def test_a_tools_off_report_call_never_runs_a_function_call_the_model_returns_an
         role="model", parts=[types.Part(text="only text")]))) is None
 
 
-def test_build_plan_button_loads_the_skill_and_context_and_keeps_tools_on_for_staging(runner, monkeypatch):
+def test_build_plan_intake_reads_the_next_unplanned_goal_in_code_and_writes_one_short_opener(runner, monkeypatch):
+    llm = RecordingLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+    # The 5K sub goal is already past; mark the 10K planned so the north star is the next unplanned goal.
+    runner.profiles["cyrille_visser"]["sub_goals"][1]["planned"] = True
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        events = await _turn(r, session.id, "I'd like to build a new training plan", {"skill": "plan-builder:intake", "args": {"x": 1}})
+        s = await r.session_service.get_session(app_name="running_coach", user_id="web_runner", session_id=session.id)
+        return events, s
+
+    events, s = asyncio.run(scenario())
+    assert _calls(events) == [("fetch_plan_context", {})]          # in code: no load_skill, no routing call
+    context = next(str(p.function_response.response) for e in events if e.content
+                   for p in e.content.parts or [] if p.function_response)
+    assert "PLAN CONTEXT (new): 2027-02-15 →" in context            # day after the 10K race: the north star
+    assert len(llm.requests) == 1                                  # the opener is the only model call
+    call = llm.requests[0]
+    assert _tool_mode(call) == types.FunctionCallingConfigMode.NONE
+    assert call.config.thinking_config.thinking_level == types.ThinkingLevel.LOW
+    system = _system_text(call)
+    assert "PLAN INTAKE" in system and "SKILL ROUTING" not in system
+    assert "NEXT UNPLANNED GOAL: Sub-3:15 Marathon (London Marathon 2028)" in system
+
+
+def test_a_stale_plan_builder_action_falls_back_to_routing(runner, monkeypatch):
     llm = RecordingLlm(model="fake")
     llm.requests = []
     monkeypatch.setattr(coaching_agent, "model", llm)
@@ -177,16 +205,18 @@ def test_build_plan_button_loads_the_skill_and_context_and_keeps_tools_on_for_st
     async def scenario():
         r = InMemoryRunner(app=app)
         session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
-        events = await _turn(r, session.id, "Build my plan", {"skill": "plan-builder", "args": {**args, "bogus": 1}})
+        events = await _turn(r, session.id, "I'd like to build a new training plan", {"skill": "plan-builder", "args": args})
         s = await r.session_service.get_session(app_name="running_coach", user_id="web_runner", session_id=session.id)
         return events, s
 
     events, s = asyncio.run(scenario())
-    assert _calls(events) == [("load_skill", {"skill_name": "plan-builder"}), ("fetch_plan_context", args)]
-    assert len(llm.requests) == 1                                  # the one planning call
-    plan_call = llm.requests[0]
-    assert _tool_mode(plan_call) is None                           # tools on: it must call stage_training_plan
-    assert "stage_training_plan" in plan_call.tools_dict
+    assert _calls(events) == []                                    # nothing dispatched in code
+    assert len(llm.requests) == 1
+    call = llm.requests[0]
+    assert _tool_mode(call) is None                                # a normal chat turn: tools on
+    assert {"record_key_event", "fetch_plan_context", "stage_training_plan"} <= set(call.tools_dict)
+    system = _system_text(call)
+    assert "NEXT UNPLANNED GOAL" in system and "KEY EVENTS:" in system and "PLAN INTAKE" not in system
     assert DISPATCHED_STATE_KEY not in s.state
 
 

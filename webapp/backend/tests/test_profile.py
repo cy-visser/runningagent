@@ -63,3 +63,39 @@ def test_profile_single_goal_edit_plan_result_preservation_and_ordering_validati
             north_star={"goal": "Sub-3:15 Marathon", "race_date": "2027-04-01"},
             sub_goals=[{"goal": "Sub-21 5K", "start_date": "2027-03-01", "race_date": "2027-05-01"}],
         )
+
+
+def test_profile_edit_round_trips_planned_flags():
+    existing = {"goal_type": "plan", "north_star": {"goal": "Sub-3:15", "race_date": "2028-04-23"},
+                "sub_goals": [{"goal": "Sub-43 10K", "race_date": "2027-02-14", "result": None}], "planned": True}
+    payload = ProfileUpdatePayload(
+        goal_type="plan",
+        north_star={"goal": "Sub-3:15", "race_date": "2028-04-23", "planned": True},
+        sub_goals=[{"goal": "Sub-43 10K", "start_date": "2026-11-16", "race_date": "2027-02-14", "planned": True},
+                   {"goal": "Sub-1:30 HM", "start_date": "2027-03-01", "race_date": "2027-05-02"}],
+    )
+    updates, deleted = apply_profile_edit(existing, payload, today_iso="2026-11-11")
+    assert [s["planned"] for s in updates["sub_goals"]] == [True, False]
+    assert updates["north_star"]["planned"] is True
+    assert "planned" in deleted  # a stale single-goal flag is removed when switching to a plan
+
+    single = ProfileUpdatePayload(goal_type="single", training_goal="Sub-3:20", timeline="2027-04-11", planned=True)
+    updates, _ = apply_profile_edit({"goal_type": "single"}, single, today_iso="2026-11-11")
+    assert updates["planned"] is True
+
+
+def test_profile_edit_saves_training_times_and_deletes_the_legacy_strength_text():
+    existing = {"goal_type": "single", "training_goal": "Sub-3:20", "timeline": "2027-04-11",
+                "cross_training_strength": "2x cycling + 1x strength"}
+    payload = ProfileUpdatePayload(goal_type="single", training_goal="Sub-3:20", timeline="2027-04-11",
+                                   run_time_of_day="morning", strength_time_of_day="evening")
+    updates, deleted = apply_profile_edit(existing, payload, today_iso="2026-11-11")
+    assert (updates["run_time_of_day"], updates["strength_time_of_day"]) == ("morning", "evening")
+    assert "cross_training_strength" in deleted and "cross_training_strength" not in updates
+
+    _, clean = apply_profile_edit({"goal_type": "single"}, payload, today_iso="2026-11-11")
+    assert "cross_training_strength" not in clean
+
+    with pytest.raises(ValidationError):
+        ProfileUpdatePayload(goal_type="single", training_goal="Sub-3:20", timeline="2027-04-11",
+                             run_time_of_day="noon")

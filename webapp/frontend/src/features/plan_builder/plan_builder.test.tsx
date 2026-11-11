@@ -139,3 +139,38 @@ describe("plan builder feature", () => {
     expect(weekHeadline({ ...week(1), run_km: 42, bike_minutes: 45 })).toBe("W1 · 30 Nov · Base · 42 km · Bike 45 min · TSS 290");
   });
 });
+
+describe("plan builder: strength exercises and training times", () => {
+  it("lists each planned strength session's exercises and shows double-day times", () => {
+    const base = week(1);
+    const doubleDay: PlanWeek = {
+      ...base,
+      rows: [
+        { date: base.start, day: "Tue", sport: "Run", action: "create", title: "Threshold 2x15'", distance_km: 12, time: "07:00" },
+        { date: base.start, day: "Tue", sport: "Strength", action: "create", title: "Strength: heavy lower body",
+          duration_minutes: 40, time: "18:00", exercises: ["Back squat 4x5", "Deadlift 3x5"],
+          load: "RPE 8 (2 reps in reserve) · rest 2-3'" },
+        { date: base.start, day: "Fri", sport: "Strength", action: "delete", title: "Old gym", duration_minutes: 30,
+          exercises: ["Leg press 3x10"] },
+      ],
+    };
+    render(<PlanStagedCard plan={{ ...plan(1), weeks: [doubleDay] }} status="pending" onApply={vi.fn()} />);
+
+    const chips = screen.getAllByTestId("plan-session");
+    expect(chips[0]).toHaveTextContent("Tue07:00NewThreshold 2x15'12 km");
+    expect(chips[1]).toHaveTextContent("Tue18:00New");
+
+    const section = screen.getByTestId("strength-exercises");
+    expect(within(section).getByText("Strength exercises (1)")).toBeInTheDocument();
+    const [session] = within(section).getAllByTestId("strength-session");
+    expect(session).toHaveTextContent("Tue · 18:00 · Strength: heavy lower body · 40 min");
+    expect(within(session).getByText("Back squat 4x5")).toBeInTheDocument();
+    expect(within(session).getByText("RPE 8 (2 reps in reserve) · rest 2-3'")).toBeInTheDocument();
+    expect(within(section).queryByText("Leg press 3x10")).not.toBeInTheDocument(); // removed sessions are not listed
+  });
+
+  it("shows no strength section when a week has no strength exercises", () => {
+    render(<PlanStagedCard plan={plan(1)} status="pending" onApply={vi.fn()} />);
+    expect(screen.queryByTestId("strength-exercises")).not.toBeInTheDocument();
+  });
+});

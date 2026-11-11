@@ -95,56 +95,14 @@ export function auditPlanAction(
   };
 }
 
-export interface BuildPlanConfig {
-  subtitle: string;
-  /** Unset without a future goal race: the card opens the profile instead. */
-  prompt?: string;
-  action?: QuickAction;
-}
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** "30 Nov" */
-function dayMonth(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    timeZone: "UTC",
-  });
-}
-
-function isoToLocalDate(iso: string): Date {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
-
+export const BUILD_PLAN_SUBTITLE = "Build a new periodized training plan with your coach";
+export const ALL_GOALS_PLANNED_SUBTITLE = "All goals are planned";
 /**
- * Build Plan card config: the next block runs from its start (the active block's start date when it is
- * still ahead, else Monday of next week) to the goal race.
+ * Build Plan card: the agent reads the next unplanned goal's plan context in code (plan-builder:intake) and the coach
+ * proposes the block; the plan itself is only built once the runner agrees in the conversation.
  */
-export function buildPlanAction(
-  summary: ProfileSummary | null | undefined,
-  now: Date = new Date(),
-): BuildPlanConfig {
-  const today = localIsoDate(now);
-  const race = summary?.active_date?.slice(0, 10);
-  if (!race || !ISO_DATE.test(race) || race <= today) {
-    return { subtitle: "Set a goal race in your Profile to build a periodized training plan" };
-  }
-  const blockStart = summary?.active_start_date?.slice(0, 10);
-  const nextMonday = localIsoDate(addDays(now, 7 - ((now.getDay() + 6) % 7)));
-  let start = blockStart && ISO_DATE.test(blockStart) && blockStart > today ? blockStart : nextMonday;
-  if (start > race) start = today; // race within the week: plan from today
-  const days = Math.round((isoToLocalDate(race).getTime() - isoToLocalDate(start).getTime()) / 86_400_000) + 1;
-  const weeks = Math.max(1, Math.ceil(days / 7));
-  const goal = summary?.active_goal?.trim();
-  return {
-    subtitle: `Next block: ${goal || "Goal race"} · ${dayMonth(start)} → ${dayMonth(race)} (${weeks} ${weeks === 1 ? "week" : "weeks"})`,
-    prompt: `Build my training plan for ${goal || "my goal race"} from ${start} to ${race}`,
-    action: { skill: "plan-builder", start_date: start, end_date: race, mode: "new" },
-  };
-}
+export const BUILD_PLAN_PROMPT = "I'd like to build a new training plan";
+export const BUILD_PLAN_ACTION: QuickAction = { skill: "plan-builder:intake" };
 
 interface DashboardProps {
   me: MeResponse;
@@ -195,14 +153,7 @@ export function Dashboard({
     onSendPrompt(prompt, true, action);
   };
   const audit = auditPlanAction(me.summary);
-  const buildPlan = buildPlanAction(me.summary);
-  const handleBuildPlan = () => {
-    if (buildPlan.prompt && buildPlan.action) {
-      startNewConversation(buildPlan.prompt, buildPlan.action);
-    } else {
-      onViewProfile();
-    }
-  };
+  const allGoalsPlanned = me.summary?.all_goals_planned === true;
 
   const handleComposerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -525,11 +476,11 @@ export function Dashboard({
               <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-orange-600 shrink-0 mt-1" />
             </button>
 
-            {/* 6. Build Plan (next block → goal race; without a future goal it opens the profile) */}
+            {/* 6. Build Plan (next unplanned goal; the block is defined in conversation before anything is built) */}
             <button
               type="button"
-              disabled={buildPlan.action ? !canSend : false}
-              onClick={handleBuildPlan}
+              disabled={!canSend || allGoalsPlanned}
+              onClick={() => startNewConversation(BUILD_PLAN_PROMPT, BUILD_PLAN_ACTION)}
               className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-amber-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
             >
               <div className="flex items-start gap-3.5">
@@ -541,7 +492,7 @@ export function Dashboard({
                     Build Plan
                   </h2>
                   <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                    {buildPlan.subtitle}
+                    {allGoalsPlanned ? ALL_GOALS_PLANNED_SUBTITLE : BUILD_PLAN_SUBTITLE}
                   </p>
                 </div>
               </div>

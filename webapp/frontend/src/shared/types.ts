@@ -1,5 +1,8 @@
 export type ProfileState = "none" | "needs_onboarding" | "ready";
 
+/** Preferred part of the day to run / do strength training (profile run_time_of_day, strength_time_of_day). */
+export type TimeOfDay = "morning" | "afternoon" | "evening";
+
 export type MessageKind =
   | "checkin"
   | "trend"
@@ -30,10 +33,10 @@ export interface ProfileSummary {
   active_goal?: string | null;
   active_race_name?: string | null;
   active_date?: string | null;
-  /** Start of the current or next block (active sub-goal's start_date, or the single goal's goal_set_date). */
-  active_start_date?: string | null;
   weeks_remaining?: number | null;
   north_star?: NorthStarSummary | null;
+  /** At least one upcoming goal and every upcoming goal is planned (Build Plan has nothing to do). */
+  all_goals_planned?: boolean;
 }
 
 export interface MeResponse {
@@ -53,6 +56,8 @@ export interface SubGoal {
   race_date: string;
   taper_weeks?: number | null;
   result?: string | null;
+  /** Its training plan is already in TrainingPeaks. */
+  planned?: boolean | null;
 }
 
 export interface NorthStarGoal {
@@ -61,6 +66,7 @@ export interface NorthStarGoal {
   start_date?: string | null;
   race_date: string;
   taper_weeks?: number | null;
+  planned?: boolean | null;
 }
 
 export type PersonalRecordKey =
@@ -97,11 +103,14 @@ export interface RunnerProfile {
   timeline?: string | null;
   taper_weeks?: number | null;
   goal_set_date?: string | null;
+  /** Single goal: its training plan is already in TrainingPeaks. */
+  planned?: boolean | null;
   north_star?: NorthStarGoal | null;
   sub_goals?: SubGoal[] | null;
   personal_records?: PersonalRecords | null;
   injuries?: string | null;
-  cross_training_strength?: string | null;
+  run_time_of_day?: TimeOfDay | null;
+  strength_time_of_day?: TimeOfDay | null;
   shoe_rotation?: ShoeRotation | null;
 }
 
@@ -122,6 +131,7 @@ export interface ProfileUpdatePayload {
   training_goal?: string | null;
   timeline?: string | null;
   taper_weeks?: number | null;
+  planned?: boolean;
   north_star?: NorthStarGoal | null;
   sub_goals: Array<{
     goal: string;
@@ -129,10 +139,12 @@ export interface ProfileUpdatePayload {
     start_date: string;
     race_date: string;
     taper_weeks?: number | null;
+    planned?: boolean;
   }>;
   personal_records?: PersonalRecords | null;
   injuries?: string | null;
-  cross_training_strength?: string | null;
+  run_time_of_day?: TimeOfDay | null;
+  strength_time_of_day?: TimeOfDay | null;
   shoe_rotation?: ShoeRotation | null;
 }
 
@@ -504,7 +516,7 @@ export type QuickAction =
   | { skill: "plan-audit"; start_date?: string; end_date?: string }
   | { skill: "workout-analysis"; date_str?: string; sport?: "run" | "bike" }
   | { skill: "workout-creator"; staged_id: string }
-  | { skill: "plan-builder"; start_date: string; end_date: string; mode?: "new" | "overhaul" }
+  | { skill: "plan-builder:intake" }
   | { skill: "plan-builder:apply"; staged_id: string; week: number };
 
 /** One proposed workout / note change staged by the coach (mirrors `helpers/staged_changes.py`). */
@@ -569,6 +581,11 @@ export interface PlanSessionRow {
   duration_minutes?: number | null;
   tss_planned?: number | null;
   summary?: string | null;
+  /** Strength sessions: the main-set exercises ("Back squat 4x5", ...) and the load / rest line. */
+  exercises?: string[] | null;
+  load?: string | null;
+  /** "HH:MM" when the session is timed (am / mid / pm code or the runner's training times on a double day). */
+  time?: string | null;
 }
 
 export interface PlanWeekCounts {

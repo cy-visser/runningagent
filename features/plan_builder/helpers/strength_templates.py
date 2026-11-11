@@ -114,7 +114,7 @@ def focus_key(text: str) -> Optional[str]:
 
 
 def strength_session(focus: str, minutes: int, phase: Optional[str]) -> dict:
-    """{title, description, summary, tss_planned} of a strength session of `focus` in `phase`."""
+    """{title, description, summary, exercises, load, tss_planned} of a strength session of `focus` in `phase`."""
     key = phase_key(phase)
     main, load = TEMPLATES[focus][key]
     description = "\n".join([_WARMUP, f"Main: {main}", f"Load: {load}", _COOLDOWN])
@@ -122,5 +122,7 @@ def strength_session(focus: str, minutes: int, phase: Optional[str]) -> dict:
         "title": FOCI[focus],
         "description": description,
         "summary": main,
+        "exercises": [item.strip() for item in main.split(" · ") if item.strip()],
+        "load": load,
         "tss_planned": round(minutes * TSS_PER_MIN[focus]),
     }

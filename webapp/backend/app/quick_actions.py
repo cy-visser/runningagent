@@ -16,7 +16,7 @@ QUICK_ACTION_STATE_KEY = "temp:quick_action"
 QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
 QUICK_ACTION_SKILLS = (
     "check-in-report", "trend-analysis", "plan-audit", "workout-analysis", "workout-creator",
-    "plan-builder", "plan-builder:apply",
+    "plan-builder:intake", "plan-builder:apply",
 )
 
 IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
@@ -59,13 +59,11 @@ class ApplyStagedAction(_Action):
     staged_id: str = Field(..., pattern=r"^[0-9a-f-]{36}$")
 
 
-class PlanBuildAction(_Action):
-    """'Build Plan' button: plan context in code, then one planning call that stages the plan."""
+class PlanIntakeAction(_Action):
+    """'Build Plan' button: the agent reads the next unplanned goal's plan context in code and writes a short
+    block proposal (never a plan). No arguments: the agent computes the window from the profile."""
 
-    skill: Literal["plan-builder"]
-    start_date: IsoDate
-    end_date: IsoDate
-    mode: Literal["new", "overhaul"] = "new"
+    skill: Literal["plan-builder:intake"]
 
 
 class PlanApplyAction(_Action):
@@ -77,6 +75,7 @@ class PlanApplyAction(_Action):
 
 
 QuickAction = Annotated[
-    Union[CheckinAction, TrendAction, AuditAction, WorkoutAction, ApplyStagedAction, PlanBuildAction, PlanApplyAction],
+    Union[CheckinAction, TrendAction, AuditAction, WorkoutAction, ApplyStagedAction, PlanIntakeAction,
+          PlanApplyAction],
     Field(discriminator="skill"),
 ]

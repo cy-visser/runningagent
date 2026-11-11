@@ -19,7 +19,9 @@ from .trainingpeaks import (
 )
 
 CREDENTIAL_DOC_ID = "trainingpeaks"
-INTERNAL_PROFILE_FIELDS = ("latitude", "longitude")
+# Never sent to the browser. `key_events` is the coach's hidden memory: not shown and not editable (edits
+# patch only the payload's fields, so it is preserved).
+INTERNAL_PROFILE_FIELDS = ("latitude", "longitude", "key_events")
 
 
 class ProfileStore:

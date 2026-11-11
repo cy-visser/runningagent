@@ -24,6 +24,7 @@ from ..report_memory import keep_latest_reports_and_skills
 from .instruction import build_coach_instruction
 from .model_callbacks import apply_thinking_policy, strip_stale_thoughts
 from .profile_context import ensure_profile_context
+from .record_key_event_tool import record_key_event_tool
 from .quick_actions import dispatch_quick_action, drop_disabled_tool_calls
 from .report_tool_guard import guard_report_tools, track_turn_calls
 from .skill_toolset import skill_toolset
@@ -41,6 +42,7 @@ coaching_agent_tools = [
     stage_training_plan_tool,
     apply_training_plan_tool,
     request_new_goal_tool,
+    record_key_event_tool,
     get_weather_tool,
 ]
 

@@ -8,9 +8,10 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import type { ProfileUpdatePayload, RunnerProfile } from "../../shared/types";
+import type { ProfileUpdatePayload, RunnerProfile, TimeOfDay } from "../../shared/types";
 import { PersonalRecordsFields } from "./PersonalRecordsFields";
 import { ShoeRotationFields } from "./ShoeRotationFields";
+import { TrainingTimesFields, toTimeOfDay } from "./TrainingTimesFields";
 import {
   toEditablePersonalRecords,
   toEditableShoeRotation,
@@ -35,6 +36,34 @@ interface EditableSubGoal {
   race_date: string;
   taper_weeks: string;
   savedResult?: string | null;
+  planned: boolean;
+}
+
+/** "Planned" checkbox per goal: its training plan is already in TrainingPeaks (Build Plan skips it). */
+function PlannedToggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  label: string;
+}) {
+  return (
+    <label
+      className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 cursor-pointer select-none"
+      title="Its training plan is already in TrainingPeaks; Build Plan moves on to the next unplanned goal"
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={label}
+        className="h-3.5 w-3.5 rounded border-slate-300 accent-orange-500 cursor-pointer"
+      />
+      Planned
+    </label>
+  );
 }
 
 export function ProfileForm({
@@ -60,6 +89,7 @@ export function ProfileForm({
   const [singleTaper, setSingleTaper] = useState(
     profile.taper_weeks != null ? String(profile.taper_weeks) : "",
   );
+  const [singlePlanned, setSinglePlanned] = useState(Boolean(profile.planned));
 
   // Plan fields
   const [nsGoal, setNsGoal] = useState(profile.north_star?.goal ?? "");
@@ -77,6 +107,7 @@ export function ProfileForm({
       ? String(profile.north_star.taper_weeks)
       : "3",
   );
+  const [nsPlanned, setNsPlanned] = useState(Boolean(profile.north_star?.planned));
 
   const [subGoals, setSubGoals] = useState<EditableSubGoal[]>(() => {
     if (profile.sub_goals && profile.sub_goals.length > 0) {
@@ -87,6 +118,7 @@ export function ProfileForm({
         race_date: (sg.race_date ?? "").slice(0, 10),
         taper_weeks: sg.taper_weeks != null ? String(sg.taper_weeks) : "",
         savedResult: sg.result,
+        planned: Boolean(sg.planned),
       }));
     }
     return [
@@ -96,6 +128,7 @@ export function ProfileForm({
         start_date: "",
         race_date: "",
         taper_weeks: "1.5",
+        planned: false,
       },
     ];
   });
@@ -105,8 +138,9 @@ export function ProfileForm({
     toEditablePersonalRecords(profile.personal_records),
   );
   const [injuries, setInjuries] = useState(profile.injuries ?? "");
-  const [crossTraining, setCrossTraining] = useState(
-    profile.cross_training_strength ?? "",
+  const [runTime, setRunTime] = useState<TimeOfDay | "">(() => toTimeOfDay(profile.run_time_of_day));
+  const [strengthTime, setStrengthTime] = useState<TimeOfDay | "">(() =>
+    toTimeOfDay(profile.strength_time_of_day),
   );
   const [shoeRotation, setShoeRotation] = useState(() =>
     toEditableShoeRotation(profile.shoe_rotation),
@@ -133,6 +167,10 @@ export function ProfileForm({
       setLocalError(prError);
       return;
     }
+    if (!runTime || !strengthTime) {
+      setLocalError("Please choose when you prefer to run and to do strength training.");
+      return;
+    }
     const contextFields = {
       age: age || null,
       height: height || null,
@@ -140,7 +178,8 @@ export function ProfileForm({
       location: location || null,
       personal_records: toPersonalRecordsPayload(personalRecords),
       injuries: injuries || null,
-      cross_training_strength: crossTraining || null,
+      run_time_of_day: runTime,
+      strength_time_of_day: strengthTime,
       shoe_rotation: toShoeRotationPayload(shoeRotation),
     };
 
@@ -159,6 +198,7 @@ export function ProfileForm({
         training_goal: trainingGoal.trim(),
         timeline: timeline.trim(),
         taper_weeks: parseOptionalNumber(singleTaper),
+        planned: singlePlanned,
         north_star: null,
         sub_goals: [],
       });
@@ -191,6 +231,7 @@ export function ProfileForm({
         start_date: nsStartDate.trim() || null,
         race_date: nsRaceDate.trim(),
         taper_weeks: parseOptionalNumber(nsTaper),
+        planned: nsPlanned,
       },
       sub_goals: subGoals.map((sg) => ({
         goal: sg.goal.trim(),
@@ -198,6 +239,7 @@ export function ProfileForm({
         start_date: sg.start_date.trim(),
         race_date: sg.race_date.trim(),
         taper_weeks: parseOptionalNumber(sg.taper_weeks),
+        planned: sg.planned,
       })),
     });
   };
@@ -344,9 +386,16 @@ export function ProfileForm({
         {goalType === "single" ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Target Goal
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-slate-700">
+                  Target Goal
+                </label>
+                <PlannedToggle
+                  checked={singlePlanned}
+                  onChange={setSinglePlanned}
+                  label="Goal planned"
+                />
+              </div>
               <input
                 type="text"
                 value={trainingGoal}
@@ -404,6 +453,7 @@ export function ProfileForm({
                         start_date: "",
                         race_date: "",
                         taper_weeks: "1.5",
+                        planned: false,
                       },
                     ])
                   }
@@ -423,17 +473,28 @@ export function ProfileForm({
                       Block #{idx + 1}
                       {sg.savedResult ? " · Result saved" : ""}
                     </span>
-                    {subGoals.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSubGoals((prev) => prev.filter((_, i) => i !== idx))
+                    <div className="flex items-center gap-3">
+                      <PlannedToggle
+                        checked={sg.planned}
+                        onChange={(value) =>
+                          setSubGoals((prev) =>
+                            prev.map((item, i) => (i === idx ? { ...item, planned: value } : item)),
+                          )
                         }
-                        className="inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-800 cursor-pointer"
-                      >
-                        <Trash2 className="h-3 w-3" /> Remove
-                      </button>
-                    )}
+                        label={`Block ${idx + 1} planned`}
+                      />
+                      {subGoals.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSubGoals((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          className="inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-800 cursor-pointer"
+                        >
+                          <Trash2 className="h-3 w-3" /> Remove
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <input
@@ -533,9 +594,12 @@ export function ProfileForm({
 
             {/* North Star Goal */}
             <div className="rounded-2xl border border-violet-200 bg-violet-50/50 p-4 space-y-2.5">
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-violet-900">
-                <Compass className="h-4 w-4 text-violet-600" />
-                North Star Destination Race
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-violet-900">
+                  <Compass className="h-4 w-4 text-violet-600" />
+                  North Star Destination Race
+                </div>
+                <PlannedToggle checked={nsPlanned} onChange={setNsPlanned} label="North star planned" />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <input
@@ -625,18 +689,12 @@ export function ProfileForm({
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Strength & Cross-Training
-          </label>
-          <textarea
-            rows={2}
-            value={crossTraining}
-            onChange={(e) => setCrossTraining(e.target.value)}
-            placeholder="2x/wk strength, cycling, swimming…"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-400/25"
-          />
-        </div>
+        <TrainingTimesFields
+          run={runTime}
+          strength={strengthTime}
+          onRunChange={setRunTime}
+          onStrengthChange={setStrengthTime}
+        />
       </div>
 
       <div className="sticky bottom-0 flex items-center justify-end gap-2.5 border-t border-slate-200 bg-white/95 pt-4 pb-1 backdrop-blur-xs">

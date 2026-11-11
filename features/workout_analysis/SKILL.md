@@ -44,6 +44,7 @@ You are now equipped with the Workout Analysis skill. Use this skill when the ru
    - **Goal Alignment** (see GOAL REASONING in your instructions): say what this run means for the current goal (if set) and, with a north star, for the north star too (e.g. a threshold session's value for a 10K block and what it adds or costs for the marathon's aerobic base and durability).
      - **Goal plans** (the tool output contains a **Goal plan** or **Sub-goal race** line): judge the run on both levels, the current sub-goal block and the north star.
      - **Sub-goal race day**: congratulate the runner, then frame the finish time as progress toward the north star using the north-star equivalent and gap provided (not pass/fail). When the line says the result was saved, mention it in one short sentence. Riegel equivalents are optimistic for the marathon without marathon-specific volume: say so. Never offer onboarding for a sub-goal race.
+     - **Other races** (not on a goal race date, but the title, athlete feedback or the runner says it was a race, e.g. a tune-up or parkrun): if you can call tools in this turn, call `record_key_event` (type `race`, the race date, name and finish time) in the same step as your summary. Goal-race results are recorded automatically.
 
 3. **Deliver Workout Summary**:
    - Deliver an objective, data-backed assessment in clean standard Markdown:

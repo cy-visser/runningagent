@@ -67,3 +67,34 @@ def test_router_outcomes_profile_guards_and_sub_goal_result_preservation(runner)
     )
     assert [s["goal"] for s in merged["sub_goals"]] == ["Sub-21 5K", "Sub-43 10K"]
     assert merged["sub_goals"][0]["result"] == saved
+
+
+def test_re_onboarding_keeps_the_coachs_key_events(runner):
+    events = [{"date": "2026-10-20", "type": "race", "summary": "Amsterdam 5K: finished in 20:45", "source": "workout_analysis"}]
+    runner.profiles["cyrille_visser"]["key_events"] = events
+    ctx = FakeContext(state={
+        "temp_onboarding_data": {"firstname": "Cyrille", "lastname": "Visser", "email": EMAIL},
+        "onboarding_answers": {"goal_type": "single", "training_goal": "Sub-3:20 Marathon", "timeline": "2027-04-11"},
+    })
+    assert asyncio.run(profile_creation.create_profile_step(ctx)) == profile_creation.PROFILE_SAVED
+    stored = runner.profiles["cyrille_visser"]
+    assert stored["training_goal"] == "Sub-3:20 Marathon" and stored["key_events"] == events
+
+
+def test_onboarding_stores_training_times_and_drops_the_legacy_strength_text():
+    answers = {"goal_type": "single", "training_goal": "Sub-3:20 Marathon", "timeline": "2027-04-11",
+               "run_time_of_day": "morning", "strength_time_of_day": "evening"}
+    legacy = {"firstname": "Cyrille", "lastname": "Visser", "cross_training_strength": "2x cycling + 1x strength"}
+    merged = profile_creation.merge_profile_data(answers=answers, temp_data=legacy)
+    assert (merged["run_time_of_day"], merged["strength_time_of_day"]) == ("morning", "evening")
+    assert "cross_training_strength" not in merged
+
+    # Re-onboarding for a new goal keeps (and normalises) the times already on the profile.
+    again = profile_creation.merge_profile_data(
+        answers={"goal_type": "single", "training_goal": "Sub-1:25 HM", "timeline": "2027-09-12"},
+        temp_data={"firstname": "Cyrille", "lastname": "Visser", "run_time_of_day": "Afternoon",
+                   "strength_time_of_day": "pm"},
+    )
+    assert (again["run_time_of_day"], again["strength_time_of_day"]) == ("afternoon", "evening")
+    prefill = profile_creation.onboarding_prefill(merged)
+    assert prefill["run_time_of_day"] == "morning" and "cross_training_strength" not in prefill

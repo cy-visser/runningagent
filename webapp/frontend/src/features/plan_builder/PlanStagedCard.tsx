@@ -99,6 +99,7 @@ function SessionChip({ row }: { row: PlanSessionRow }) {
       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50/60 px-2 py-1 text-xs"
     >
       <span className="font-semibold text-slate-700">{row.day}</span>
+      {row.time && <span className="tabular-nums text-slate-500">{row.time}</span>}
       <span className={`rounded-full border px-1.5 py-px text-[11px] font-semibold ${badge.className}`}>
         {badge.label}
       </span>
@@ -108,6 +109,42 @@ function SessionChip({ row }: { row: PlanSessionRow }) {
       </span>
       {size && <span className="tabular-nums text-slate-500">{size}</span>}
     </li>
+  );
+}
+
+/** Planned (not removed) strength sessions of a week that carry an exercise list. */
+export function strengthRows(week: PlanWeek): PlanSessionRow[] {
+  return week.rows.filter(
+    (row) => row.sport === "Strength" && row.action !== "delete" && (row.exercises?.length ?? 0) > 0,
+  );
+}
+
+/** Collapsible "Strength exercises (n)": per session the day, title, duration, exercises and load. */
+function StrengthExercises({ rows }: { rows: PlanSessionRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <details data-testid="strength-exercises" className="group rounded-lg border border-slate-200 bg-white text-xs">
+      <summary className="flex cursor-pointer items-center gap-1.5 px-2 py-1.5 font-semibold text-slate-700 select-none">
+        <Dumbbell className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+        Strength exercises ({rows.length})
+      </summary>
+      <ul className="space-y-2 border-t border-slate-100 px-2 py-2">
+        {rows.map((row, i) => {
+          const size = sessionSize(row);
+          return (
+            <li key={`${row.date}-${i}`} data-testid="strength-session">
+              <p className="font-semibold text-slate-800">
+                {[row.day, row.time, row.title, size].filter(Boolean).join(" · ")}
+              </p>
+              <ul className="mt-0.5 list-disc pl-4 text-slate-700">
+                {row.exercises?.map((exercise) => <li key={exercise}>{exercise}</li>)}
+              </ul>
+              {row.load && <p className="mt-0.5 text-slate-500">{row.load}</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }
 
@@ -153,6 +190,7 @@ function WeekRow({ week, state }: { week: PlanWeek; state: WeekState }) {
       ) : (
         <p className="text-xs italic text-slate-500">Rest week</p>
       )}
+      <StrengthExercises rows={strengthRows(week)} />
     </li>
   );
 }

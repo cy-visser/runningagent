@@ -102,3 +102,13 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
         state={"user_profile": dict(PLAN_PROFILE), DISPATCHED_STATE_KEY: "inv-1"}, invocation_id="inv-2"
     )
     assert "SKILL ROUTING" in build_coach_instruction(later_chat)
+
+
+def test_profile_summary_shows_training_times_not_the_legacy_strength_text():
+    from running_coach.coach.coaching.instruction import format_profile_summary
+
+    summary = format_profile_summary({**PLAN_PROFILE, "cross_training_strength": "2x cycling"})
+    assert "Training times: run morning · strength evening" in summary
+    assert "Cross-Training" not in summary and "2x cycling" not in summary
+    unset = {k: v for k, v in PLAN_PROFILE.items() if not k.endswith("_time_of_day")}
+    assert "Training times" not in format_profile_summary(unset)

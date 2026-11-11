@@ -125,11 +125,23 @@ def cutoff_date(spec: dict, today: date) -> date:
     return max(today, start) if start else today
 
 
-def expand_week(week: dict, monday: date, zones: dict, cutoff: date) -> dict:
+def _time_double_day(day_sessions: list[dict], times: Optional[dict]) -> None:
+    """On a day with a Run and a Strength session, untimed sessions of those sports get `times[sport]`
+    (the runner's preferred order); explicit 'am' / 'mid' / 'pm' codes are kept."""
+    sports = {s["sport"] for s in day_sessions}
+    if not times or not {"Run", "Strength"} <= sports:
+        return
+    for s in day_sessions:
+        if not s.get("time") and times.get(s["sport"]):
+            s["time"] = times[s["sport"]]
+
+
+def expand_week(week: dict, monday: date, zones: dict, cutoff: date, times: Optional[dict] = None) -> dict:
     """{week, start, phase, focus, sessions, rest (ISO dates), days (ISO dates in scope), skipped, errors}.
 
     Each session (session_codes.build_session) gets its ISO `date`, `day` label and `write_date` (with the
-    time of day for 'am' / 'pm' codes); sessions keep the order of the spec within a day.
+    time of day for 'am' / 'mid' / 'pm' codes, or from `times` {sport: 'HH:MM'} on a run + strength double
+    day); sessions keep the order of the spec within a day.
     """
     sessions: list[dict] = []
     rest: list[str] = []
@@ -137,6 +149,7 @@ def expand_week(week: dict, monday: date, zones: dict, cutoff: date) -> dict:
     skipped = 0
     for offset, label in enumerate(DAYS):
         day = monday + timedelta(days=offset)
+        day_sessions: list[dict] = []
         for code in week["days"].get(label, []):
             if day < cutoff:
                 skipped += code != REST
@@ -149,9 +162,11 @@ def expand_week(week: dict, monday: date, zones: dict, cutoff: date) -> dict:
             except CodeError as e:
                 errors.append(_error(week["week"], label, code, str(e)))
                 continue
-            when = iso_date(day)
-            sessions.append({**session, "date": when, "day": label,
-                             "write_date": f"{when}T{session['time']}:00" if session.get("time") else when})
+            day_sessions.append({**session, "date": iso_date(day), "day": label})
+        _time_double_day(day_sessions, times)
+        for s in day_sessions:
+            s["write_date"] = f"{s['date']}T{s['time']}:00" if s.get("time") else s["date"]
+        sessions.extend(day_sessions)
     in_scope = [iso_date(monday + timedelta(days=i)) for i in range(7) if monday + timedelta(days=i) >= cutoff]
     return {"week": week["week"], "start": iso_date(monday), "phase": week.get("phase") or "",
             "focus": week.get("focus") or "", "sessions": sessions, "rest": rest, "days": in_scope,
@@ -159,7 +174,8 @@ def expand_week(week: dict, monday: date, zones: dict, cutoff: date) -> dict:
 
 
 def expand_plan(spec: dict, zones: dict, today: date) -> tuple[list[dict], list[dict]]:
-    """(expanded weeks, errors over the whole plan)."""
+    """(expanded weeks, errors over the whole plan). Double days are timed with `spec["times"]`."""
     cutoff = cutoff_date(spec, today)
-    weeks = [expand_week(w, week_monday(spec, w["week"]), zones, cutoff) for w in spec.get("weeks") or []]
+    weeks = [expand_week(w, week_monday(spec, w["week"]), zones, cutoff, spec.get("times"))
+             for w in spec.get("weeks") or []]
     return weeks, [e for w in weeks for e in w["errors"]]

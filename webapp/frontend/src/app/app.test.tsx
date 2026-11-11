@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "./App";
-import { Dashboard, auditPlanAction, buildPlanAction } from "./Dashboard";
+import {
+  ALL_GOALS_PLANNED_SUBTITLE,
+  BUILD_PLAN_ACTION,
+  BUILD_PLAN_PROMPT,
+  BUILD_PLAN_SUBTITLE,
+  Dashboard,
+  auditPlanAction,
+} from "./Dashboard";
 import { DEMO_ME_ONBOARDING, DEMO_ME_READY, DEMO_PLAN } from "../demo/fixtures";
 import * as api from "../shared/api";
 import { ApiError, fetchMe, onSessionExpired, parseSseFrame } from "../shared/api";
@@ -113,9 +120,7 @@ describe("app shell & conversation lifecycle", () => {
     expect(within(grid).getAllByRole("button")).toHaveLength(6);
     expect(within(grid).getByText(/^Audit Plan – /)).toBeInTheDocument();
     expect(within(grid).getByText("Build Plan")).toBeInTheDocument();
-    expect(
-      within(grid).getByText(buildPlanAction(DEMO_ME_READY.summary).subtitle),
-    ).toBeInTheDocument();
+    expect(within(grid).getByText(BUILD_PLAN_SUBTITLE)).toBeInTheDocument();
     expect(screen.queryByText(/Audit Schedule/)).not.toBeInTheDocument();
     expect(grid.querySelector(".bg-sunset")).toBeNull();
 
@@ -278,7 +283,7 @@ describe("plan builder: Build Plan card and week-by-week apply loop", () => {
     vi.restoreAllMocks();
   });
 
-  it("stages a plan, applies it with silent per-week turns, stops on a failed week and resumes", async () => {
+  it("defines the block in chat first, stages it on agreement, applies it per week, stops on a failed week and resumes", async () => {
     const plan: StagedTrainingPlan = {
       ...DEMO_PLAN,
       title: "Sub-1:26 Half Marathon · 6 weeks",
@@ -296,7 +301,9 @@ describe("plan builder: Build Plan card and week-by-week apply loop", () => {
       actions.push({ action: params.action, sessionId: params.sessionId, message: params.message });
       handlers.onSession?.(sid);
       const a = params.action;
-      if (a?.skill === "plan-builder") {
+      if (a?.skill === "plan-builder:intake") {
+        handlers.onMessage?.({ text: "Let's shape your next block: 16 weeks, peak 60 km. How many days can you run?", kind: "chat" });
+      } else if (!a && /build it/i.test(params.message)) {
         handlers.onTool?.({ name: "stage_training_plan", label: "Building your plan", state: "done" });
         handlers.onPlanStaged?.(plan);
         handlers.onMessage?.({ text: "📋 6-week plan staged", kind: "chat" });
@@ -317,9 +324,19 @@ describe("plan builder: Build Plan card and week-by-week apply loop", () => {
 
     render(<App />);
     await waitFor(() => expect(screen.getByText("Build Plan")).toBeInTheDocument());
+    // Build Plan: a plain chat turn (no quick action); the coach proposes the block, nothing is staged.
     fireEvent.click(screen.getByText("Build Plan"));
+    await waitFor(() => expect(screen.getByText(/Let's shape your next block/)).toBeInTheDocument());
+    expect(actions[0]).toEqual({ action: BUILD_PLAN_ACTION, sessionId: null, message: BUILD_PLAN_PROMPT });
+    expect(screen.getByText(BUILD_PLAN_PROMPT)).toBeInTheDocument(); // the runner's bubble
+    expect(screen.queryByText("Proposed training plan")).not.toBeInTheDocument();
+
+    // The runner agrees in chat (same session) -> the coach stages the plan.
+    const textarea = screen.getByPlaceholderText(/Ask your running coach anything/i);
+    fireEvent.change(textarea, { target: { value: "4 days, long run Sunday. Looks good, build it" } });
+    fireEvent.submit(textarea.closest("form")!);
     await waitFor(() => expect(screen.getByText("Proposed training plan")).toBeInTheDocument());
-    expect(actions[0].action).toEqual(buildPlanAction(DEMO_ME_READY.summary).action);
+    expect(actions[1]).toMatchObject({ action: undefined, sessionId: "plan-sess" });
     expect(screen.getByText("Weeks 1–4 of 6")).toBeInTheDocument();
     // "AI Running Coach" labels = top bar + one per assistant bubble.
     const coachBubbles = () => screen.getAllByText("AI Running Coach").length;
@@ -337,7 +354,7 @@ describe("plan builder: Build Plan card and week-by-week apply loop", () => {
 
     // Week 3 fails -> the loop stops and the card offers Resume.
     await waitFor(() => expect(screen.getByRole("button", { name: /Resume/ })).toBeInTheDocument());
-    expect(actions.slice(1).map((c) => c.action)).toEqual([1, 2, 3].map((week) => ({
+    expect(actions.slice(2).map((c) => c.action)).toEqual([1, 2, 3].map((week) => ({
       skill: "plan-builder:apply", staged_id: plan.staged_id, week,
     })));
     expect(actions.slice(1).every((c) => c.sessionId === "plan-sess")).toBe(true);
@@ -349,56 +366,50 @@ describe("plan builder: Build Plan card and week-by-week apply loop", () => {
     // Resume re-runs the loop for the remaining weeks (3..6); the last week's reply is the only new bubble.
     fireEvent.click(screen.getByRole("button", { name: /Resume/ }));
     await waitFor(() => expect(screen.getByText("Applied to TrainingPeaks")).toBeInTheDocument());
-    expect(actions.slice(4).map((c) => (c.action as { week: number }).week)).toEqual([3, 4, 5, 6]);
+    expect(actions.slice(5).map((c) => (c.action as { week: number }).week)).toEqual([3, 4, 5, 6]);
     expect(screen.getByText("Resume applying plan to TrainingPeaks")).toBeInTheDocument();
     expect(screen.getByText(/TrainingPeaks updated: 6 weeks/)).toBeInTheDocument();
     expect(coachBubbles()).toBe(oneBubble + 1);
   });
 
-  // Wednesday 2026-11-11 (local) -> next Monday 2026-11-16.
-  const now = new Date(2026, 10, 11, 12);
-  const summary = (active_date: string | null, active_start_date: string | null = null) => ({
-    ...DEMO_ME_READY.summary!,
-    active_goal: "Sub-3:20 Marathon",
-    active_date,
-    active_start_date,
-  });
-
-  it("builds the next block from its start date to the race", () => {
-    const cfg = buildPlanAction(summary("2027-05-16", "2026-11-30"), now);
-    expect(cfg.action).toEqual({ skill: "plan-builder", start_date: "2026-11-30", end_date: "2027-05-16", mode: "new" });
-    expect(cfg.subtitle).toBe("Next block: Sub-3:20 Marathon · 30 Nov → 16 May (24 weeks)");
-    expect(cfg.prompt).toBe("Build my training plan for Sub-3:20 Marathon from 2026-11-30 to 2027-05-16");
-  });
-
-  it("starts next Monday when the block already started or has no start date", () => {
-    for (const start of ["2026-09-01", null]) {
-      const cfg = buildPlanAction(summary("2027-02-07", start), now);
-      expect(cfg.action).toMatchObject({ start_date: "2026-11-16", end_date: "2027-02-07" });
-      expect(cfg.subtitle).toContain("16 Nov → 7 Feb (12 weeks)");
+  it("Build Plan starts a new conversation with the intake action, with or without a goal", () => {
+    for (const summary of [DEMO_ME_READY.summary, { ...DEMO_ME_READY.summary!, active_goal: null, active_date: null }]) {
+      const onViewProfile = vi.fn();
+      const onSendPrompt = vi.fn();
+      render(
+        <Dashboard
+          me={{ ...DEMO_ME_READY, summary }}
+          messages={[]}
+          streaming={false}
+          onSendPrompt={onSendPrompt}
+          onViewProfile={onViewProfile}
+          onOpenTrainingPeaks={vi.fn()}
+        />,
+      );
+      expect(screen.getByText(BUILD_PLAN_SUBTITLE)).toBeInTheDocument();
+      fireEvent.click(screen.getByText("Build Plan"));
+      expect(onSendPrompt).toHaveBeenCalledWith(BUILD_PLAN_PROMPT, true, BUILD_PLAN_ACTION);
+      expect(onViewProfile).not.toHaveBeenCalled();
+      cleanup();
     }
   });
 
-  it("asks for a goal in Profile without a future race, and the card opens the profile", () => {
-    for (const s of [null, summary(null), summary("2026-11-11"), summary("2026-10-01")]) {
-      const cfg = buildPlanAction(s, now);
-      expect(cfg.action).toBeUndefined();
-      expect(cfg.subtitle).toMatch(/goal race in your Profile/);
-    }
-    const onViewProfile = vi.fn();
+  it("Build Plan is disabled with 'All goals are planned' when every upcoming goal is planned", () => {
     const onSendPrompt = vi.fn();
     render(
       <Dashboard
-        me={{ ...DEMO_ME_READY, summary: summary(null) }}
+        me={{ ...DEMO_ME_READY, summary: { ...DEMO_ME_READY.summary!, all_goals_planned: true } }}
         messages={[]}
         streaming={false}
         onSendPrompt={onSendPrompt}
-        onViewProfile={onViewProfile}
+        onViewProfile={vi.fn()}
         onOpenTrainingPeaks={vi.fn()}
       />,
     );
+    expect(screen.getByText(ALL_GOALS_PLANNED_SUBTITLE)).toBeInTheDocument();
+    expect(screen.queryByText(BUILD_PLAN_SUBTITLE)).not.toBeInTheDocument();
+    expect(screen.getByText("Build Plan").closest("button")).toBeDisabled();
     fireEvent.click(screen.getByText("Build Plan"));
-    expect(onViewProfile).toHaveBeenCalledTimes(1);
     expect(onSendPrompt).not.toHaveBeenCalled();
   });
 });

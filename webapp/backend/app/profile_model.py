@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 import re
 from typing import Any, Literal, Optional
 
@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Mirrors running_coach/shared/race_time.py (the web backend is deployed without the coach package).
 _RACE_TIME_RE = re.compile(r"^(?:(\d{1,2}):)?(\d{1,3}):(\d{2})$")
+# Mirrors running_coach/shared/training_times.py: preferred part of the day to run / do strength.
+TimeOfDay = Literal["morning", "afternoon", "evening"]
+# Free-text profile field replaced by run_time_of_day / strength_time_of_day; deleted on every save.
+LEGACY_PROFILE_FIELDS = ("cross_training_strength",)
 
 
 def parse_race_time(raw: Optional[str]) -> tuple[str, int]:
@@ -53,6 +57,7 @@ class SubGoalInput(BaseModel):
     start_date: str
     race_date: str
     taper_weeks: Optional[float] = Field(default=None, ge=0.5, le=6.0)
+    planned: bool = False
 
     @model_validator(mode="after")
     def _validate_dates(self) -> "SubGoalInput":
@@ -73,6 +78,7 @@ class NorthStarInput(BaseModel):
     start_date: Optional[str] = None
     race_date: str
     taper_weeks: Optional[float] = Field(default=None, ge=0.5, le=6.0)
+    planned: bool = False
 
     @model_validator(mode="after")
     def _validate_dates(self) -> "NorthStarInput":
@@ -155,16 +161,18 @@ class ProfileUpdatePayload(BaseModel):
     training_goal: Optional[str] = Field(default=None, max_length=160)
     timeline: Optional[str] = None
     taper_weeks: Optional[float] = Field(default=None, ge=0.5, le=6.0)
+    planned: bool = False  # single goal: its training plan is already in TrainingPeaks
     north_star: Optional[NorthStarInput] = None
     sub_goals: list[SubGoalInput] = Field(default_factory=list)
     personal_records: Optional[PersonalRecordsInput] = None
     injuries: Optional[str] = Field(default=None, max_length=800)
-    cross_training_strength: Optional[str] = Field(default=None, max_length=800)
+    run_time_of_day: Optional[TimeOfDay] = None
+    strength_time_of_day: Optional[TimeOfDay] = None
     shoe_rotation: Optional[ShoeRotationInput] = None
 
     @model_validator(mode="after")
     def _validate_goal_mode(self) -> "ProfileUpdatePayload":
-        for attr in ("age", "height", "weight", "location", "injuries", "cross_training_strength"):
+        for attr in ("age", "height", "weight", "location", "injuries"):
             setattr(self, attr, _opt_str(getattr(self, attr)))
 
         if self.goal_type == "single":
@@ -211,6 +219,7 @@ def apply_profile_edit(
     delete_fields: list[str] = []
     if "onboarding_pending" in existing:
         delete_fields.append("onboarding_pending")
+    delete_fields.extend(f for f in LEGACY_PROFILE_FIELDS if f in existing)
 
     old_loc = str(existing.get("location") or "").strip()
     new_loc = edit.location or ""
@@ -226,7 +235,8 @@ def apply_profile_edit(
         "location": new_loc,
         "personal_records": edit.personal_records.to_doc() if edit.personal_records else None,
         "injuries": edit.injuries,
-        "cross_training_strength": edit.cross_training_strength,
+        "run_time_of_day": edit.run_time_of_day,
+        "strength_time_of_day": edit.strength_time_of_day,
         "shoe_rotation": edit.shoe_rotation.to_doc() if edit.shoe_rotation else None,
         "goal_type": edit.goal_type,
     }
@@ -240,6 +250,7 @@ def apply_profile_edit(
         updates["training_goal"] = edit.training_goal
         updates["timeline"] = edit.timeline
         updates["taper_weeks"] = edit.taper_weeks
+        updates["planned"] = edit.planned
         if goal_changed or not existing.get("goal_set_date"):
             updates["goal_set_date"] = today_str
         for plan_key in ("north_star", "sub_goals"):
@@ -261,6 +272,7 @@ def apply_profile_edit(
                 "race_date": sg.race_date,
                 "taper_weeks": sg.taper_weeks,
                 "result": saved_results.get(_sub_goal_key(sg.goal, sg.race_date)),
+                "planned": sg.planned,
             }
             for sg in sorted_sub_goals
         ]
@@ -270,11 +282,14 @@ def apply_profile_edit(
             "start_date": edit.north_star.start_date,
             "race_date": edit.north_star.race_date,
             "taper_weeks": edit.north_star.taper_weeks if edit.north_star.taper_weeks is not None else edit.taper_weeks,
+            "planned": edit.north_star.planned,
         }
         updates["sub_goals"] = sub_goal_docs
         updates["training_goal"] = None
         updates["timeline"] = None
         updates["taper_weeks"] = None
+        if "planned" in existing:
+            delete_fields.append("planned")
         if not existing.get("goal_set_date"):
             updates["goal_set_date"] = today_str
 
@@ -303,8 +318,6 @@ def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] =
     active_goal = profile.get("training_goal")
     active_race_name = None
     active_date = profile.get("timeline")
-    # Start of the current or next block (Build Plan button): a single goal starts when it was set.
-    active_start_date = profile.get("goal_set_date") or None
     north_star_summary = None
 
     if goal_type == "plan":
@@ -315,7 +328,6 @@ def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] =
             "race_date": ns.get("race_date"),
         }
         chosen = None
-        last_past_race: Optional[date] = None
         for sg in profile.get("sub_goals") or []:
             if not isinstance(sg, dict):
                 continue
@@ -326,20 +338,14 @@ def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] =
             if rd >= ref:
                 chosen = sg
                 break
-            last_past_race = rd if last_past_race is None else max(last_past_race, rd)
         if chosen:
             active_goal = chosen.get("goal")
             active_race_name = chosen.get("race_name")
             active_date = chosen.get("race_date")
-            active_start_date = chosen.get("start_date") or None
         else:
             active_goal = ns.get("goal")
             active_race_name = ns.get("race_name")
             active_date = ns.get("race_date")
-            # The north-star block starts at its own start_date, else right after the last sub-goal race.
-            active_start_date = ns.get("start_date") or (
-                (last_past_race + timedelta(days=1)).isoformat() if last_past_race else None
-            )
 
     weeks_remaining: Optional[float] = None
     if active_date:
@@ -358,7 +364,28 @@ def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] =
         "active_goal": active_goal,
         "active_race_name": active_race_name,
         "active_date": active_date,
-        "active_start_date": active_start_date,
         "weeks_remaining": weeks_remaining,
         "north_star": north_star_summary,
+        "all_goals_planned": all_goals_planned(profile, ref),
     }
+
+
+def _race(goal_date: Any) -> Optional[date]:
+    try:
+        return date.fromisoformat(str(goal_date or "")[:10])
+    except ValueError:
+        return None
+
+
+def all_goals_planned(profile: Optional[dict[str, Any]], today: Optional[date] = None) -> bool:
+    """At least one goal races today or later and every such goal is planned (Build Plan has nothing to do).
+    Mirrors `running_coach.shared.goal_plan.all_future_goals_planned`."""
+    profile = profile or {}
+    ref = today or date.today()
+    if profile.get("goal_type") == "plan" and isinstance(profile.get("north_star"), dict):
+        goals = [(s.get("race_date"), s.get("planned")) for s in profile.get("sub_goals") or [] if isinstance(s, dict)]
+        goals.append((profile["north_star"].get("race_date"), profile["north_star"].get("planned")))
+    else:
+        goals = [(profile.get("timeline"), profile.get("planned"))]
+    future = [bool(planned) for race, planned in goals if (r := _race(race)) and r >= ref]
+    return bool(future) and all(future)

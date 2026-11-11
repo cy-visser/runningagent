@@ -42,6 +42,7 @@ def _block(kind: str, data: dict, index: Optional[int] = None, start: Optional[s
         "timeline": data.get("race_date"),
         "taper_weeks": data.get("taper_weeks"),
         "result": data.get("result"),
+        "planned": bool(data.get("planned")),
     }
 
 
@@ -67,6 +68,20 @@ def blocks(profile: Optional[dict]) -> list[dict]:
     return out
 
 
+def _single_goal(profile: dict) -> dict:
+    return {
+        "kind": KIND_SINGLE,
+        "index": None,
+        "training_goal": profile.get("training_goal"),
+        "race_name": None,
+        "goal_set_date": profile.get("goal_set_date"),
+        "timeline": profile.get("timeline"),
+        "taper_weeks": profile.get("taper_weeks"),
+        "result": None,
+        "planned": bool(profile.get("planned")),
+    }
+
+
 def current_goal(profile: Optional[dict], today: Optional[date] = None) -> dict:
     """The goal that drives training now, with single-goal profile keys.
 
@@ -78,20 +93,71 @@ def current_goal(profile: Optional[dict], today: Optional[date] = None) -> dict:
     today = today or get_today_date()
     all_blocks = blocks(profile)
     if not all_blocks:
-        return {
-            "kind": KIND_SINGLE,
-            "index": None,
-            "training_goal": profile.get("training_goal"),
-            "race_name": None,
-            "goal_set_date": profile.get("goal_set_date"),
-            "timeline": profile.get("timeline"),
-            "taper_weeks": profile.get("taper_weeks"),
-            "result": None,
-            "before_start": False,
-        }
+        return {**_single_goal(profile), "before_start": False}
     active = next((b for b in all_blocks if (race_day(b) or date.max) >= today), all_blocks[-1])
     start = parse_date(active["goal_set_date"])
     return {**active, "before_start": bool(start and today < start)}
+
+
+def goal_list(profile: Optional[dict]) -> list[dict]:
+    """Every goal in race order: the plan's blocks, or the single goal (when it has a target)."""
+    profile = profile or {}
+    if is_plan(profile):
+        return blocks(profile)
+    single = _single_goal(profile)
+    return [single] if single["training_goal"] or single["timeline"] else []
+
+
+def next_unplanned_goal(profile: Optional[dict], today: Optional[date] = None) -> Optional[dict]:
+    """The first goal (race order) racing today or later that is not planned, with its block window
+    (`window_start`, `window_end` = race day), or None.
+
+    window_start: the goal's own start date if still ahead, else the day after the previous goal's
+    race if still ahead, else next Monday (never after the race).
+    """
+    today = today or get_today_date()
+    goals = goal_list(profile)
+    for i, goal in enumerate(goals):
+        race = race_day(goal)
+        if not race or race < today or goal["planned"]:
+            continue
+        next_monday = today + timedelta(days=7 - today.weekday())
+        own = parse_date(goal.get("goal_set_date"))
+        prev_race = race_day(goals[i - 1]) if i > 0 else None
+        after_prev = prev_race + timedelta(days=1) if prev_race else None
+        start = next((d for d in (own, after_prev) if d and d > today), next_monday)
+        return {**goal, "window_start": min(start, race), "window_end": race}
+    return None
+
+
+def all_future_goals_planned(profile: Optional[dict], today: Optional[date] = None) -> bool:
+    """True when there is at least one goal racing today or later and every such goal is planned."""
+    today = today or get_today_date()
+    future = [g for g in goal_list(profile) if (race_day(g) or date.min) >= today]
+    return bool(future) and all(g["planned"] for g in future)
+
+
+def planned_update(profile: Optional[dict], start: date, end: date) -> Optional[dict]:
+    """Firestore update marking every unplanned goal whose race falls in [start, end] as planned
+    (None when nothing changes)."""
+    profile = profile or {}
+    if not is_plan(profile):
+        race = parse_date(profile.get("timeline"))
+        if race and start <= race <= end and not profile.get("planned"):
+            return {"planned": True}
+        return None
+    update: dict[str, Any] = {}
+    subs = [dict(s) if isinstance(s, dict) else s for s in profile.get("sub_goals") or []]
+    for s in subs:
+        race = parse_date(s.get("race_date")) if isinstance(s, dict) else None
+        if race and start <= race <= end and not s.get("planned"):
+            s["planned"] = True
+            update["sub_goals"] = subs
+    ns = dict(profile.get("north_star") or {})
+    race = parse_date(ns.get("race_date"))
+    if race and start <= race <= end and not ns.get("planned"):
+        update["north_star"] = {**ns, "planned": True}
+    return update or None
 
 
 def goal_race_dates(profile: Optional[dict]) -> set[date]:

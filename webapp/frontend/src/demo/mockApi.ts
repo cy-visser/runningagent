@@ -10,6 +10,7 @@ import type {
 import {
   DEMO_AUDIT_DATA,
   DEMO_AUDIT_MARKDOWN,
+  DEMO_BLOCK_OPENER,
   DEMO_CHECKIN_DATA,
   DEMO_CHECKIN_MARKDOWN,
   DEMO_ME_ONBOARDING,
@@ -61,7 +62,8 @@ export async function demoUpdateProfile(
   updated.profile.goal_type = payload.goal_type;
   updated.profile.personal_records = payload.personal_records ?? null;
   updated.profile.injuries = payload.injuries ?? null;
-  updated.profile.cross_training_strength = payload.cross_training_strength ?? null;
+  updated.profile.run_time_of_day = payload.run_time_of_day ?? null;
+  updated.profile.strength_time_of_day = payload.strength_time_of_day ?? null;
   updated.profile.shoe_rotation = payload.shoe_rotation ?? null;
 
   if (payload.goal_type === "single") {
@@ -270,7 +272,9 @@ export async function demoStreamChat(
   await new Promise((r) => setTimeout(r, 180));
 
   const lower = params.message.toLowerCase();
-  if (action?.skill === "plan-builder") {
+  if (lower.includes("build a new training plan")) {
+    handlers.onMessage?.({ kind: "chat", text: DEMO_BLOCK_OPENER });
+  } else if (/build it|looks good|go ahead|let's do it|agreed/.test(lower)) {
     demoPlanWeeksDone = [];
     for (const [name, label] of [
       ["fetch_plan_context", "Reading your training history"],

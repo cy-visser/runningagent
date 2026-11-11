@@ -7,11 +7,15 @@ from ....integrations import firestore
 from ....shared.dates import parse_date
 from ....shared.goal_plan import (
     KIND_NORTH_STAR,
+    blocks,
     current_goal,
+    goal_race_dates,
     is_plan,
     north_star,
+    race_day,
     sub_goal_for_date,
 )
+from ....shared.key_events import SOURCE_WORKOUT_ANALYSIS, make_event, save_key_event
 from ....shared.race_equivalents import (
     format_gap,
     goal_target_s,
@@ -120,3 +124,39 @@ async def goal_plan_context(
         except Exception as e:
             logger.error("Failed to save sub-goal race result for %s: %s", user_id, e)
     return format_workout_goal_context(profile, workout_date, duration_s, saved)
+
+
+def goal_race_event(
+    profile: Optional[dict], workout_date: Any, duration_s: Optional[float], workout_id: Any,
+    sport: Optional[str] = None,
+) -> Optional[dict]:
+    """A `race` key event for a run on a goal race date (single goal, sub goal or north star), else None."""
+    day = parse_date(workout_date)
+    if not day or day not in goal_race_dates(profile) or not duration_s or duration_s <= 0:
+        return None
+    if sport and sport.strip().lower() not in RUN_SPORTS:
+        return None
+    if is_plan(profile):
+        block = next((b for b in blocks(profile) if race_day(b) == day), None) or {}
+        level = "north star" if block.get("kind") == KIND_NORTH_STAR else "sub goal"
+    else:
+        block, level = current_goal(profile, day), "goal race"
+    goal = block.get("training_goal") or "goal race"
+    name = block.get("race_name") or goal
+    summary = f"{name}: finished in {format_seconds_hms(duration_s)} (goal {goal}, {level})"
+    return make_event("race", day, summary, SOURCE_WORKOUT_ANALYSIS, workout_id=str(workout_id or "") or None)
+
+
+async def save_goal_race_event(
+    tool_context: ToolContext, profile: dict, workout_date: Any, workout_id: str, sport: Any, meta: dict, data: dict,
+) -> bool:
+    """Saves the goal-race result to the runner's key events. Never raises (the analysis must not break)."""
+    try:
+        event = goal_race_event(profile, workout_date, race_duration_s(meta, data), workout_id, sport=sport)
+        if not event:
+            return False
+        latest = tool_context.state.get("user_profile") or profile  # may already hold a saved sub-goal result
+        return await save_key_event(tool_context, latest, event)
+    except Exception as e:
+        logger.error("Failed to save goal race key event for %s: %s", workout_id, e)
+        return False

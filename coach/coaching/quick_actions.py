@@ -7,8 +7,7 @@ before it is persisted and puts the action in `temp:quick_action` state for that
 keys are never persisted). On the turn's first model call `dispatch_quick_action` returns the
 `load_skill` + data-tool calls itself, so no LLM call routes the request. The report call that follows
 has tool calling disabled and omits the routing rules and skill catalog: the LLM only writes the
-recommendations. Exception: `plan-builder` keeps tool calling for its follow-up call, which has to call
-`stage_training_plan` (TOOLS_ON_ACTIONS).
+recommendations.
 
 Everything is scoped to the dispatching invocation: typed chat turns (no action) keep the full
 instruction, the skill catalog and tool calling.
@@ -44,6 +43,9 @@ QUICK_ACTION_STATE_KEY = "temp:quick_action"
 QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
 # Invocation id of the turn whose report call runs without routing / tool calling.
 DISPATCHED_STATE_KEY = "temp:quick_action_invocation"
+# Skill of that dispatched action (the plan-builder:intake opener gets its own rules and LOW thinking).
+DISPATCHED_SKILL_STATE_KEY = "temp:quick_action_skill"
+PLAN_INTAKE = "plan-builder:intake"
 
 # skill -> (data tool, arguments the web app may set)
 QUICK_ACTIONS = {
@@ -54,15 +56,14 @@ QUICK_ACTIONS = {
     # "Update TrainingPeaks" button: applies the staged changes in code. The follow-up model call is
     # answered by `write_confirmation_reply`, so this action makes no LLM call at all.
     "workout-creator": (apply_staged_changes_tool, frozenset({"staged_id"})),
-    # Build Plan button: plan context in code; the one LLM call that follows plans and stages the plan.
-    "plan-builder": (fetch_plan_context_tool, frozenset({"start_date", "end_date", "mode"})),
+    # Build Plan button: the plan context of the next unplanned goal in code (no routing call); the one
+    # model call that follows writes a short block proposal with tools off. It never builds a plan.
+    PLAN_INTAKE: (fetch_plan_context_tool, frozenset()),
     # Apply to TrainingPeaks on a staged plan: one silent action per week, written in code (zero LLM calls).
     "plan-builder:apply": (apply_training_plan_tool, frozenset({"staged_id", "week"})),
 }
 # Actions that only execute code: no skill instructions are loaded for them.
-SKILL_FREE_ACTIONS = frozenset({"workout-creator", "plan-builder:apply"})
-# Actions whose follow-up model call keeps tool calling (it must call a write tool, not write a report).
-TOOLS_ON_ACTIONS = frozenset({"plan-builder"})
+SKILL_FREE_ACTIONS = frozenset({"workout-creator", "plan-builder:apply", PLAN_INTAKE})
 
 LOAD_SKILL = "load_skill"
 # Gemini 3 validates thought signatures on the current turn's function calls; calls that were not
@@ -77,6 +78,11 @@ NO_TOOL_CALLS = types.ToolConfig(
 def is_quick_action_report(state: Any, invocation_id: Optional[str]) -> bool:
     """True during the report call of a dispatched quick action (this invocation only)."""
     return bool(invocation_id) and state.get(DISPATCHED_STATE_KEY) == invocation_id
+
+
+def is_plan_intake(state: Any, invocation_id: Optional[str]) -> bool:
+    """True during the Build Plan opener call (the plan-builder:intake action's report call)."""
+    return is_quick_action_report(state, invocation_id) and state.get(DISPATCHED_SKILL_STATE_KEY) == PLAN_INTAKE
 
 
 def _is_turn_start(llm_request: LlmRequest) -> bool:
@@ -124,8 +130,7 @@ def dispatch_quick_action(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
     """before_model_callback: runs a web quick action's skill + data tool without a routing LLM call,
-    then disables tool calling for that turn's report call (except TOOLS_ON_ACTIONS). No-op for typed
-    chat turns."""
+    then disables tool calling for that turn's report call. No-op for typed chat turns."""
     state = callback_context.state
     invocation_id = callback_context.invocation_id
     if is_quick_action_report(state, invocation_id):
@@ -139,8 +144,8 @@ def dispatch_quick_action(
     parts = quick_action_calls(action, llm_request)
     if not parts:
         return None  # unknown action: fall back to normal LLM routing of the message
-    if action["skill"] not in TOOLS_ON_ACTIONS:
-        state[DISPATCHED_STATE_KEY] = invocation_id
+    state[DISPATCHED_STATE_KEY] = invocation_id
+    state[DISPATCHED_SKILL_STATE_KEY] = action["skill"]
     return LlmResponse(content=types.Content(role="model", parts=parts))
 
 

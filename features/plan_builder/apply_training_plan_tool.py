@@ -9,18 +9,22 @@ apply resumes where it stopped.
 
 import asyncio
 import json
+import logging
 import re
 from datetime import timedelta
 from typing import Any
 
 from google.adk.tools import FunctionTool, ToolContext
 
+from ...integrations import firestore
 from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import get_today_date, iso_date, parse_date
+from ...shared.goal_plan import planned_update
+from ...shared.runner_identity import profile_user_id
 from ...shared.ui_channel import reply
 from ...shared.workout_upsert import write_change
 from .helpers.plan_diff import diff_week, write_change as plan_write_change
-from .helpers.plan_expand import cutoff_date, expand_week, week_monday
+from .helpers.plan_expand import cutoff_date, expand_week, plan_window, week_monday
 from .helpers.plan_summary_text import (
     NOTHING_STAGED_TEXT,
     REPLACED_TEXT,
@@ -39,6 +43,25 @@ WRITE_CONCURRENCY = 3
 BACKOFF_SECONDS = (2, 4, 8)
 _RATE_LIMITED = re.compile(r"\b429\b|too many requests", re.IGNORECASE)
 _sleep = asyncio.sleep  # module-level so tests can skip the real backoff
+logger = logging.getLogger(__name__)
+
+
+async def mark_goals_planned(tool_context: ToolContext, staged: dict) -> bool:
+    """Marks every goal whose race falls inside the fully applied plan as planned (Firestore + state).
+    Never raises: a failed save must not break the apply."""
+    try:
+        profile = tool_context.state.get("user_profile") or {}
+        start, end = plan_window(staged["spec"])
+        update = planned_update(profile, start, end)
+        user_id = profile_user_id(profile)
+        if not update or not user_id:
+            return False
+        await firestore.update_user_profile(user_id, update)
+        tool_context.state["user_profile"] = {**profile, **update}
+        return True
+    except Exception as e:
+        logger.error("Failed to mark goals planned: %s", e)
+        return False
 
 
 async def _write_with_backoff(tool_context: ToolContext, change: dict, gate: asyncio.Semaphore) -> dict:
@@ -93,7 +116,7 @@ async def apply_training_plan(tool_context: ToolContext, staged_id: str, week: i
 
     spec = staged["spec"]
     monday = week_monday(spec, week)
-    expanded = expand_week(spec_week, monday, staged["zones"], cutoff_date(spec, get_today_date()))
+    expanded = expand_week(spec_week, monday, staged["zones"], cutoff_date(spec, get_today_date()), spec.get("times"))
     try:
         workouts = await tp_calls.fetch_workouts(tool_context, iso_date(monday), iso_date(monday + timedelta(days=6)))
     except Exception as e:  # never diff against a calendar we could not read (it would create duplicates)
@@ -113,6 +136,8 @@ async def apply_training_plan(tool_context: ToolContext, staged_id: str, week: i
               for r in results if not r.get("ok")]
     applied = applied_after_week(applied, staged, week, ok, len(errors))
     state[APPLIED_PLAN_STATE_KEY] = applied
+    if applied["done"]:
+        await mark_goals_planned(tool_context, staged)
     _finish(tool_context, staged, applied, week, week_failed_text(week, errors) if errors else "")
     result: dict[str, Any] = {"success": not errors, "week": week, "written": ok, "failed": len(errors),
                               APPLIED_PLAN_STATE_KEY: applied}

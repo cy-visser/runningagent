@@ -112,6 +112,10 @@ RUNTIME_ENV_VARS=(
     "OTEL_INSTRUMENTATION_GENAI_COMPLETION_HOOK=upload"
     "OTEL_INSTRUMENTATION_GENAI_UPLOAD_FORMAT=jsonl"
     "OTEL_INSTRUMENTATION_GENAI_UPLOAD_BASE_PATH=gs://${TRACES_BUCKET}/completions"
+    # Record every run. Agent Runtime's front end forwards a rate-limited traceparent (often
+    # sampled=0, e.g. a run started right after its session is created); the default
+    # parentbased_always_on sampler would then silently drop the whole run.
+    "OTEL_TRACES_SAMPLER=always_on"
 )
 RUNTIME_ENV_CSV=$(IFS=,; echo "${RUNTIME_ENV_VARS[*]}")
 

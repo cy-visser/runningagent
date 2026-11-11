@@ -81,8 +81,11 @@ class OnboardingAnswers(BaseModel):
         None, description="Personal records per distance (5K, 10K, 10 mile, half marathon, marathon)"
     )
     injuries: Optional[str] = Field(None, description="Past or present injuries")
-    cross_training_strength: Optional[str] = Field(
-        None, description="Cross-training or strength work"
+    run_time_of_day: Optional[Literal["morning", "afternoon", "evening"]] = Field(
+        None, description="Part of the day the runner prefers to run"
+    )
+    strength_time_of_day: Optional[Literal["morning", "afternoon", "evening"]] = Field(
+        None, description="Part of the day the runner prefers to do strength training"
     )
     shoe_rotation: Optional[ShoeRotationAnswer] = Field(
         None, description="Shoe per run type (easy, tempo/threshold, interval, long run, race)"
@@ -122,13 +125,15 @@ onboarding_agent = Agent(
          c. Optional: the start date of the north-star training block (default: the day after the last sub-goal race)
     5. Personal Records: time (and date, if known) for 5K, 10K, 10 mile, half marathon and marathon. Only the distances they have raced.
     6. Past and Present Injuries
-    7. Cross-Training & Strength Work
+    7. Training Times: when they prefer to run and when to do strength training, each as morning, afternoon or evening
+       (e.g. run in the morning, strength in the evening). On a day with both, the plan follows this order.
     8. Shoe Rotation: which shoe for easy runs, tempo/threshold, intervals, long runs and races (any may be empty)
     9. Preferred Taper Length in weeks for the goal race (optional; if they have no preference leave it empty and the distance default is used)
 
     REQUIRED fields:
     - Single goal: `goal_type`, `training_goal` and `timeline`.
     - Goal plan: `goal_type`, `north_star_goal`, `north_star_race_date` and at least one sub goal with `goal`, `start_date` and `race_date`.
+    - Always: `run_time_of_day` and `strength_time_of_day` (morning, afternoon or evening).
     The others are optional; collect them if missing but do not insist.
 
     CRITICAL RULES:

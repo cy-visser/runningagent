@@ -38,12 +38,13 @@ def format_goal_plan(profile: Optional[dict], today: Optional[date] = None) -> s
     lines = [
         "GOAL PLAN (north star with sub goals):",
         f"- North star: {ns_goal}{race_name}, race {ns['timeline']}{weeks}; "
-        f"marathon-block start {ns['goal_set_date'] or 'not set'}.",
+        f"marathon-block start {ns['goal_set_date'] or 'not set'}; planned: {'yes' if ns['planned'] else 'no'}.",
         "- Sub goals (each a full training block; results are progress toward the north star, "
-        "never pass/fail). Times shown as 'time -> north-star equivalent' (Riegel):",
+        "never pass/fail). Times shown as 'time -> north-star equivalent' (Riegel). Planned = its training "
+        "plan is already in TrainingPeaks:",
         "",
-        "| Sub goal | Block | Status | Target | Result | Result gap to north star |",
-        "|---|---|---|---|---|---|",
+        "| Sub goal | Block | Status | Planned | Target | Result | Result gap to north star |",
+        "|---|---|---|---|---|---|---|",
     ]
     for b in blocks(profile):
         if b["kind"] != KIND_SUB_GOAL:
@@ -64,6 +65,7 @@ def format_goal_plan(profile: Optional[dict], today: Optional[date] = None) -> s
             result = "-"
         lines.append(
             f"| {b['training_goal']} | {b['goal_set_date']} -> {b['timeline']} | {status} | "
+            f"{'yes' if b['planned'] else 'no'} | "
             f"{_equivalent_cell(goal_target_s(b['training_goal']), b['training_goal'], ns_goal)} | "
             f"{result} | {_gap_cell(result_s, b['training_goal'], ns_goal, ns_target_s)} |"
         )

@@ -1,6 +1,7 @@
 """Model callbacks for the coaching agent.
 
-- Per call: thinking (COACH_THINKING_LEVEL, default MEDIUM; LOW for a short chat approval of staged changes).
+- Per call: thinking (COACH_THINKING_LEVEL, default MEDIUM; LOW for a short chat approval of staged changes and
+  for the Build Plan opener).
 - History: thought signatures of completed turns are dropped before each call.
 (The staging call carries the coaching message and ends the turn itself: `stage_workout_changes`, `shared/ui_channel.py`.)
 """
@@ -15,6 +16,7 @@ from opentelemetry import trace
 
 from ...features.workout_creator.stage_workout_changes_tool import STAGED_CHANGES_STATE_KEY
 from ..model_config import COACH_THINKING_LEVEL
+from .quick_actions import is_plan_intake
 
 # ------------------------------------------------------------------------------
 # Thinking policy
@@ -48,10 +50,14 @@ def is_staged_approval(state: Any, llm_request: LlmRequest) -> bool:
     return bool(text) and "?" not in text and len(text.split()) <= APPROVAL_MAX_WORDS
 
 
-def thinking_for(state: Any, llm_request: LlmRequest) -> tuple[types.ThinkingConfig, str]:
+def thinking_for(
+    state: Any, llm_request: LlmRequest, invocation_id: Optional[str] = None
+) -> tuple[types.ThinkingConfig, str]:
     """The thinking config for this call and why (recorded on the trace span)."""
     if is_staged_approval(state, llm_request):
         return EXECUTION_THINKING, "approval"
+    if is_plan_intake(state, invocation_id):
+        return EXECUTION_THINKING, "intake"  # short Build Plan opener: the data is already in the request
     return DEFAULT_THINKING, "default"
 
 
@@ -59,7 +65,7 @@ def apply_thinking_policy(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
     """before_model_callback: the call's thinking level. Never changes the prompt (keeps the cache prefix)."""
-    thinking, reason = thinking_for(callback_context.state, llm_request)
+    thinking, reason = thinking_for(callback_context.state, llm_request, callback_context.invocation_id)
     llm_request.config = llm_request.config or types.GenerateContentConfig()
     llm_request.config.thinking_config = thinking
     span = trace.get_current_span()  # no-op span when tracing is off

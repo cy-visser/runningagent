@@ -26,7 +26,7 @@ DISTANCE_TOL_KM = 0.1
 DURATION_TOL_MIN = 1.5
 # Row fields shown on the web card (contract: staged_training_plan.weeks[].rows).
 ROW_FIELDS = ("date", "day", "sport", "action", "title", "code", "distance_km", "duration_minutes", "tss_planned",
-              "summary")
+              "summary", "exercises", "load", "time")
 
 
 def sport_name(raw: Any) -> str:
@@ -116,7 +116,8 @@ def _row(session: dict, action: str, workout: Optional[dict] = None) -> dict:
 def _delete_row(workout: dict, day: str, day_label: str) -> dict:
     return {"date": day, "day": day_label, "sport": sport_name(workout.get("sport")), "action": ACTION_DELETE,
             "title": workout.get("title") or "Planned workout", "code": None, **_existing_values(workout),
-            "summary": None, "workout_id": str(workout.get("id") or ""), "session": None}
+            "summary": None, "exercises": None, "load": None, "time": None,
+            "workout_id": str(workout.get("id") or ""), "session": None}
 
 
 def diff_week(week: dict, workouts: list[dict], mode: str) -> list[dict]:

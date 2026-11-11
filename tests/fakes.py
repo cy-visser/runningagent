@@ -54,7 +54,8 @@ PLAN_PROFILE = {
         "marathon": None,
     },
     "injuries": "Past left Achilles tendinopathy",
-    "cross_training_strength": "2x cycling + 1x strength",
+    "run_time_of_day": "morning",
+    "strength_time_of_day": "evening",
     "shoe_rotation": {
         "easy": "Superblast 2",
         "tempo": "Takumi Sen",

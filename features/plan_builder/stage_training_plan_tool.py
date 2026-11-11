@@ -12,6 +12,7 @@ from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import get_today_date, iso_date
 from ...shared.goal_plan import current_goal
 from ...shared.parallel_fetch import gather_labeled
+from ...shared.training_times import default_session_times
 from ...shared.ui_channel import reply
 from .helpers.pace_zones import resolve_zones
 from .helpers.plan_context_text import PLAN_CONTEXT_STATE_KEY
@@ -110,6 +111,9 @@ async def stage_training_plan(
         errors.append({"week": None, "day": None, "code": None, "why": "the plan has no weeks"})
     if errors:
         return _rejected(tool_context, errors)
+    if not base:
+        # A plan edit keeps the times it was staged with (merge_weeks keeps the base spec's keys).
+        spec["times"] = default_session_times(profile)
 
     start, end = plan_window(spec)
     fetches: dict[str, Any] = {"workouts": tp_calls.fetch_workouts(tool_context, iso_date(start), iso_date(end))}

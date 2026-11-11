@@ -4,9 +4,11 @@ from typing import Any, Optional
 from ...integrations import firestore, open_meteo
 from ...shared.dates import get_today_str, parse_date
 from ...shared.goal_plan import GOAL_TYPE_PLAN, GOAL_TYPE_SINGLE
+from ...shared.key_events import KEY_EVENTS_FIELD
 from ...shared.race_time import normalize_personal_records, normalize_shoe_rotation
 from ...shared.runner_identity import normalize_email, profile_user_id
 from ...shared.session_state import AUTH_EMAIL_STATE_KEY, sync_profile_to_state
+from ...shared.training_times import normalize_time_of_day
 import asyncio
 import logging
 
@@ -32,13 +34,16 @@ _MERGED_FIELDS = (
     "weight",
     "personal_records",
     "injuries",
-    "cross_training_strength",
+    "run_time_of_day",
+    "strength_time_of_day",
     "shoe_rotation",
 )
 # Structured fields normalised on merge (answer first, then the existing profile value).
 _STRUCTURED_NORMALIZERS = {
     "personal_records": normalize_personal_records,
     "shoe_rotation": normalize_shoe_rotation,
+    "run_time_of_day": normalize_time_of_day,
+    "strength_time_of_day": normalize_time_of_day,
 }
 
 # Profile fields pre-filled from an existing profile so (re-)onboarding can
@@ -64,13 +69,12 @@ def _sub_goal_key(sub_goal: dict) -> tuple:
     )
 
 
-def _plan_fields(answers: dict, previous_sub_goals: Any) -> dict:
-    """north_star + sorted sub_goals from onboarding answers; saved results survive re-onboarding."""
-    saved_results = {
-        _sub_goal_key(s): s.get("result")
-        for s in previous_sub_goals or []
-        if isinstance(s, dict) and s.get("result")
-    }
+def _plan_fields(answers: dict, previous_sub_goals: Any, previous_north_star: Any = None) -> dict:
+    """north_star + sorted sub_goals from onboarding answers; saved results and planned flags survive
+    re-onboarding (sub goals matched by goal + race date, the north star by race date)."""
+    previous = [s for s in previous_sub_goals or [] if isinstance(s, dict)]
+    saved_results = {_sub_goal_key(s): s.get("result") for s in previous if s.get("result")}
+    planned_keys = {_sub_goal_key(s) for s in previous if s.get("planned")}
     sub_goals = []
     for answer in answers.get("sub_goals") or []:
         if not isinstance(answer, dict):
@@ -83,16 +87,20 @@ def _plan_fields(answers: dict, previous_sub_goals: Any) -> dict:
             "taper_weeks": answer.get("taper_weeks"),
         }
         sub_goal["result"] = saved_results.get(_sub_goal_key(sub_goal))
+        sub_goal["planned"] = _sub_goal_key(sub_goal) in planned_keys
         sub_goals.append(sub_goal)
     sub_goals.sort(key=lambda s: parse_date(s["race_date"]) or date.max)
+    ns_race = normalize_timeline(answers.get("north_star_race_date"))
+    prev_ns = previous_north_star if isinstance(previous_north_star, dict) else {}
     return {
         "goal_type": GOAL_TYPE_PLAN,
         "north_star": {
             "goal": answers.get("north_star_goal"),
             "race_name": answers.get("north_star_race_name"),
             "start_date": normalize_timeline(answers.get("north_star_start_date")),
-            "race_date": normalize_timeline(answers.get("north_star_race_date")),
+            "race_date": ns_race,
             "taper_weeks": answers.get("taper_weeks"),
+            "planned": bool(prev_ns.get("planned")) and normalize_timeline(prev_ns.get("race_date")) == ns_race,
         },
         "sub_goals": sub_goals,
         "training_goal": None,
@@ -135,7 +143,7 @@ def merge_profile_data(
     if email:
         profile["email"] = email
     if answers.get("goal_type") == GOAL_TYPE_PLAN:
-        profile.update(_plan_fields(answers, temp_data.get("sub_goals")))
+        profile.update(_plan_fields(answers, temp_data.get("sub_goals"), temp_data.get("north_star")))
     for field in _MERGED_FIELDS:
         normalize = _STRUCTURED_NORMALIZERS.get(field)
         if normalize:
@@ -207,6 +215,9 @@ async def create_profile_step(ctx: Context) -> str:
         lon=lon,
         location=location,
     )
+    # The coach's hidden memory survives re-onboarding (save_user_profile replaces the whole document).
+    if existing and existing.get(KEY_EVENTS_FIELD):
+        profile[KEY_EVENTS_FIELD] = existing[KEY_EVENTS_FIELD]
 
     await firestore.save_user_profile(user_id, profile)
     sync_profile_to_state(ctx, profile)

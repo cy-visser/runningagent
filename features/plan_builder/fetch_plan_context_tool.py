@@ -6,7 +6,7 @@ from google.adk.tools import FunctionTool, ToolContext
 
 from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import get_today_date, iso_date, monday_of, parse_date
-from ...shared.goal_plan import current_goal, race_day
+from ...shared.goal_plan import current_goal, next_unplanned_goal, race_day
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.tp_payloads import coerce_mcp_payload
 from .helpers.pace_zones import resolve_zones
@@ -29,16 +29,20 @@ async def fetch_plan_context(
     strength and bike frequency) and the planned calendar of the window per ISO week.
 
     Args:
-        start_date: YYYY-MM-DD, first day of the plan (default: next Monday).
-        end_date: YYYY-MM-DD, last day (default: the current goal race, else 12 weeks).
+        start_date: YYYY-MM-DD, first day of the plan (default: the next unplanned goal's block start,
+            else next Monday).
+        end_date: YYYY-MM-DD, last day (default: the next unplanned goal's race, else the current goal
+            race, else 12 weeks).
         mode: "new" (a new plan / block; existing sessions are updated per day and sport) or "overhaul"
             (rewrite the window: planned Run / Strength / Bike sessions not in the plan are removed;
             sessions are listed with their [workout_id]).
     """
     profile = tool_context.state.get("user_profile") or {}
     today = get_today_date()
-    start = parse_date(start_date) or (monday_of(today) + timedelta(weeks=1))
-    race = race_day(current_goal(profile, start))
+    target = next_unplanned_goal(profile, today)
+    default_start = target["window_start"] if target else monday_of(today) + timedelta(weeks=1)
+    start = parse_date(start_date) or default_start
+    race = target["window_end"] if target and not start_date else race_day(current_goal(profile, start))
     end = parse_date(end_date) or (race if race and race > start else start + timedelta(weeks=DEFAULT_WEEKS, days=-1))
     end = min(end, monday_of(start) + timedelta(weeks=MAX_WEEKS, days=-1))
     mode = mode if mode in MODES else "new"

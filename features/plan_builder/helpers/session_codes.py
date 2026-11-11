@@ -36,7 +36,7 @@ BIKE_STEADY = {"Z1": "Recovery Ride", "Z2": "Endurance Ride", "Z3": "Tempo Ride"
 CROSS_SPORTS = {"swim": "Swim", "walk": "Walk", "hike": "Walk", "crosstrain": "Crosstrain", "xt": "Crosstrain",
                 "elliptical": "Crosstrain", "row": "Crosstrain", "yoga": "Crosstrain"}
 CROSS_TSS_PER_MIN = {"Swim": 0.8, "Walk": 0.35, "Crosstrain": 0.6}
-TIMES_OF_DAY = {"am": "07:00", "pm": "18:00"}
+TIMES_OF_DAY = {"am": "07:00", "mid": "13:00", "pm": "18:00"}
 
 MAX_RUN_M, MAX_S = 60_000, 6 * 3600
 MAX_REPS, MAX_REP_M, MAX_REP_S = 40, 10_000, 3600
@@ -334,8 +334,9 @@ def _strength(parsed: dict, code: str, phase: Optional[str]) -> dict:
         raise CodeError(f"strength needs a focus: {', '.join(FOCI)}")
     s = strength_session(focus, minutes, phase)
     return {"sport": "Strength", "kind": "S", "title": s["title"], "description": f"{s['description']}\nPlan code: {code}",
-            "summary": s["summary"][:SUMMARY_CHARS], "structured_workout": None, "distance_km": None,
-            "duration_minutes": minutes, "tss_planned": s["tss_planned"]}
+            "summary": s["summary"][:SUMMARY_CHARS], "exercises": s["exercises"], "load": s["load"],
+            "structured_workout": None, "distance_km": None, "duration_minutes": minutes,
+            "tss_planned": s["tss_planned"]}
 
 
 def _cross(parsed: dict, code: str) -> dict:
@@ -356,7 +357,7 @@ def _with_totals(base: dict, native: dict, thr: dict, cue: str, code: str) -> di
 
 def build_session(code: Any, zones: dict, phase: Optional[str] = None, day: Optional[date] = None) -> dict:
     """The session of one code: sport, kind, code, title, description, summary, structured_workout (runs and
-    rides), distance_km / duration_minutes / tss_planned and time (from 'am' / 'pm', else None).
+    rides), distance_km / duration_minutes / tss_planned and time (from 'am' / 'mid' / 'pm', else None).
 
     Raises CodeError (why the code cannot be built). REST is not a session (plan_expand handles it).
     """

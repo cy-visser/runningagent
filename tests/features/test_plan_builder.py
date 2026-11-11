@@ -15,6 +15,7 @@ from running_coach.features.plan_builder.helpers.plan_expand import expand_week,
 from running_coach.features.plan_builder.helpers.session_codes import CodeError, build_session
 from running_coach.features.plan_builder.stage_training_plan_tool import stage_training_plan
 from running_coach.features.workout_creator.stage_workout_changes_tool import stage_workout_changes
+from running_coach.shared.training_times import default_session_times
 from running_coach.tests.fakes import PLAN_PROFILE, SETTINGS, TODAY, envelope
 
 ZONES = resolve_zones(envelope(SETTINGS), PLAN_PROFILE, TODAY)
@@ -123,6 +124,45 @@ def test_multi_session_days_rest_and_errors_expand_per_week():
     assert week["rest"] == ["2026-11-06"] and week["skipped"] == 1 and week["days"][0] == "2026-11-04"
     (bad,) = week["errors"]
     assert (bad["day"], bad["code"]) == ("Sun", "Zz 3") and "unknown session type" in bad["why"]
+
+
+def test_strength_sessions_list_their_exercises_and_mid_places_an_afternoon_session():
+    build = build_session("S 45' heavy-lower mid", ZONES, phase="build")
+    assert build["exercises"] == ["Back squat 4x5", "Deadlift 3x5", "Bulgarian split squat 3x6/leg",
+                                  "Single-leg calf raise 3x10"]
+    assert build["load"].startswith("RPE 8") and build["time"] == "13:00"
+    assert build_session("S 20' core-hips", ZONES, phase="taper")["exercises"][0].startswith("Activation")
+
+
+@pytest.mark.parametrize("profile, times", [
+    ({"run_time_of_day": "morning", "strength_time_of_day": "evening"}, {"Run": "07:00", "Strength": "18:00"}),
+    ({"run_time_of_day": "Evening", "strength_time_of_day": "morning"}, {"Run": "18:00", "Strength": "07:00"}),
+    ({"run_time_of_day": "afternoon", "strength_time_of_day": "afternoon"}, {"Run": "13:00", "Strength": "14:30"}),
+    ({"run_time_of_day": "morning"}, {}),                                    # both needed
+    ({}, {}),
+])
+def test_default_session_times_follow_the_runners_training_times(profile, times):
+    assert default_session_times(profile) == times
+
+
+def test_double_days_are_timed_in_the_runners_order_and_explicit_tags_win():
+    spec, errors = normalize_plan({"start_date": "2026-11-02", "weeks": [{"week": 1, "phase": "build", "days": {
+        "Tue": ["I 6x1k r2'", "S 40' heavy-lower"],    # double day: run morning, strength evening
+        "Wed": "S 30' core-hips",                       # strength only: untimed
+        "Thu": ["T 2x15' r2'", "S 30' core-hips am"],   # explicit am wins for strength
+        "Sat": ["B 45' Z2", "S 30' mobility"],           # no run: untimed
+    }}]})
+    assert not errors
+    times = default_session_times({"run_time_of_day": "morning", "strength_time_of_day": "evening"})
+    week = expand_week(spec["weeks"][0], date(2026, 11, 2), ZONES, date(2026, 11, 2), times)
+    write = {(s["day"], s["sport"]): s["write_date"] for s in week["sessions"]}
+    assert write[("Tue", "Run")] == "2026-11-03T07:00:00" and write[("Tue", "Strength")] == "2026-11-03T18:00:00"
+    assert write[("Wed", "Strength")] == "2026-11-04"
+    assert write[("Thu", "Run")] == "2026-11-05T07:00:00" and write[("Thu", "Strength")] == "2026-11-05T07:00:00"
+    assert write[("Sat", "Bike")] == "2026-11-07" and write[("Sat", "Strength")] == "2026-11-07"
+    # Without training times nothing is timed (today's behaviour).
+    untimed = expand_week(spec["weeks"][0], date(2026, 11, 2), ZONES, date(2026, 11, 2))
+    assert untimed["sessions"][0]["write_date"] == "2026-11-03"
 
 
 # ------------------------------------------------------------------------------
@@ -237,6 +277,12 @@ def test_a_24_week_plan_is_staged_compactly_with_one_line_per_week(runner):
     assert ("2026-11-03", "Run", "update") in actions and ("2026-11-06", "Run", "delete") in actions
     assert not any(r["date"] == "2026-11-02" and r["sport"] == "Run" for r in w1["rows"])
     assert staged["version"] == 1 and staged["title"] == "Sub-3:15 Marathon · 24 weeks"
+    # The runner's training times (run morning, strength evening) time the Thu run + strength double; the card
+    # lists the strength exercises.
+    assert staged["spec"]["times"] == {"Run": "07:00", "Strength": "18:00"}
+    thu = {r["sport"]: r for r in w1["rows"] if r["date"] == "2026-11-05"}
+    assert (thu["Run"]["time"], thu["Strength"]["time"]) == ("07:00", "18:00")
+    assert thu["Strength"]["exercises"][0] == "Dead bug 3x10/side" and thu["Strength"]["load"]
 
 
 def test_base_staged_id_replaces_only_the_given_weeks(runner):
@@ -271,6 +317,7 @@ def test_fetch_plan_context_is_compact_and_feeds_the_plan_window(runner):
     assert "PLAN CONTEXT (overhaul): 2026-11-02 → 2027-04-18 · 24 weeks" in text
     assert "T 4:42–4:54/km" in text and "@M 4:34–4:39/km (goal Sub-3:15 Marathon)" in text
     assert "Bike (FTP 260 W)" in text and "strength" in text and "Long runs, last 6 weeks" in text
+    assert "Training times: run morning · strength evening" in text and "Cross-training / strength" not in text
     assert "W1 2026-11-02: Mon Run 'Easy Aerobic Run' 10 km [w" in text      # ids in overhaul mode
     assert len(text) < 8000                                                   # ~1-2k tokens for 24 weeks
     assert ctx.state["temp:plan_context"] == {"start_date": "2026-11-02", "end_date": "2027-04-18", "mode": "overhaul"}

@@ -10,7 +10,8 @@
           "training_goal": "Sub-3:20 Marathon",
           "goal_set_date": "2026-11-30",
           "injuries": "Past left Achilles tendinopathy",
-          "cross_training_strength": "1x cycling + 1x strength"
+          "run_time_of_day": "morning",
+          "strength_time_of_day": "evening"
         }
       },
       "app_name": "running_coach",
