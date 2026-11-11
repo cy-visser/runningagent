@@ -7,8 +7,8 @@ enforced here, in code, on the parsed native builder (exact % targets), via its 
 
 from typing import Any, Optional
 
-from ....shared.sports import RUN_SPORTS
-from ....shared.units import as_float
+from .sports import RUN_SPORTS
+from .units import as_float
 from .workout_builder import PACE, coach_structure_from, parse_coach_structure
 
 # A strides rep: a short fast step (<= 30 s or <= 150 m at >= 100 % of threshold pace), repeated.

@@ -1,0 +1,86 @@
+[
+  {
+    "name": "build_marathon_block_routes_to_plan_builder",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2027-03-21",
+          "training_goal": "Sub-3:20 Marathon",
+          "goal_set_date": "2026-11-30",
+          "injuries": "Past left Achilles tendinopathy",
+          "cross_training_strength": "1x cycling + 1x strength"
+        }
+      },
+      "app_name": "running_coach",
+      "user_id": "test_user"
+    },
+    "data": [
+      {
+        "query": "Build me a 16-week marathon plan from 2026-11-30 to my race on 2027-03-21, with strength and some cycling.",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "plan-builder"
+            }
+          },
+          {
+            "tool_name": "fetch_plan_context",
+            "tool_input": {
+              "start_date": "2026-11-30",
+              "end_date": "2027-03-21"
+            }
+          },
+          {
+            "tool_name": "stage_training_plan",
+            "tool_input": {}
+          }
+        ],
+        "reference": "The plan builds your aerobic base first, then adds marathon-pace work in the long runs, peaks three weeks out and tapers into race day. Heavy strength sits after your hard runs twice a week in base and build, drops to maintenance in the peak and to activation only in the taper; the bike adds low-impact aerobic volume on recovery days."
+      }
+    ]
+  },
+  {
+    "name": "overhaul_six_weeks_routes_to_plan_builder",
+    "initial_session": {
+      "state": {
+        "user_profile": {
+          "firstname": "Alex",
+          "lastname": "Runner",
+          "timeline": "2027-03-21",
+          "training_goal": "Sub-3:20 Marathon"
+        }
+      },
+      "app_name": "running_coach",
+      "user_id": "test_user"
+    },
+    "data": [
+      {
+        "query": "Rework my whole plan from 2026-11-30 to 2027-01-10: three strength sessions a week and replace one easy run per week with a ride.",
+        "expected_tool_use": [
+          {
+            "tool_name": "load_skill",
+            "tool_input": {
+              "skill_name": "plan-builder"
+            }
+          },
+          {
+            "tool_name": "fetch_plan_context",
+            "tool_input": {
+              "start_date": "2026-11-30",
+              "end_date": "2027-01-10",
+              "mode": "overhaul"
+            }
+          },
+          {
+            "tool_name": "stage_training_plan",
+            "tool_input": {}
+          }
+        ],
+        "reference": "I reworked the six weeks: strength moves onto your hard-run days so the easy days stay easy, and one easy run each week becomes a Z2 ride that keeps the aerobic load without the impact."
+      }
+    ]
+  }
+]

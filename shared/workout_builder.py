@@ -10,9 +10,9 @@ TrainingPeaks builder convention: a timed step is converted to metres at the slo
 import json
 from typing import Any, Optional
 
-from ....shared.athlete_settings import sport_family
-from ....shared.sports import BIKE_SPORTS, RUN_SPORTS
-from ....shared.units import as_float, fmt_clock
+from .athlete_settings import sport_family
+from .sports import BIKE_SPORTS, RUN_SPORTS
+from .units import as_float, fmt_clock
 
 PACE, HR, FTP = "percentOfThresholdPace", "percentOfThresholdHr", "percentOfFtp"
 METRICS = (PACE, HR, FTP)

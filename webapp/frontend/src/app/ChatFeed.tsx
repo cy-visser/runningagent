@@ -1,8 +1,12 @@
 import { useEffect, useRef } from "react";
 import { Activity, AlertCircle } from "lucide-react";
-import type { ChatMessage } from "../shared/types";
+import type { AppliedTrainingPlan, ChatMessage } from "../shared/types";
 import { AuditReport } from "../features/schedule_audit/AuditReport";
 import { CheckinReport } from "../features/check_in_report/CheckinReport";
+import {
+  PlanStagedCard,
+  type PlanStatus,
+} from "../features/plan_builder/PlanStagedCard";
 import {
   StagedChangesCard,
   type StagedStatus,
@@ -12,12 +16,24 @@ import { ToolProgress } from "./ToolProgress";
 import { TrendReport } from "../features/trend_analysis/TrendReport";
 import { WorkoutReport } from "../features/workout_analysis/WorkoutReport";
 
+/** Week-by-week plan apply in progress (driven by App's apply loop). */
+export interface PlanApplying {
+  stagedId: string;
+  week: number;
+}
+
 interface ChatFeedProps {
   messages: ChatMessage[];
   streaming?: boolean;
   appliedStagedIds?: ReadonlySet<string>;
   applyingStagedId?: string | null;
   onApplyStaged?: (stagedId: string) => void;
+  /** Latest `applied_training_plan` per staged plan id. */
+  planApplied?: Readonly<Record<string, AppliedTrainingPlan>>;
+  planApplying?: PlanApplying | null;
+  /** Plans whose apply loop stopped on a stream error (Resume). */
+  planFailedIds?: ReadonlySet<string>;
+  onApplyPlan?: (stagedId: string) => void;
 }
 
 export function ChatFeed({
@@ -26,6 +42,10 @@ export function ChatFeed({
   appliedStagedIds,
   applyingStagedId = null,
   onApplyStaged,
+  planApplied,
+  planApplying = null,
+  planFailedIds,
+  onApplyPlan,
 }: ChatFeedProps) {
   const latestTurnRef = useRef<HTMLDivElement | null>(null);
   const mountedCountRef = useRef<number | null>(null);
@@ -54,6 +74,17 @@ export function ChatFeed({
     if (appliedStagedIds?.has(stagedId)) return "applied";
     if (stagedId !== latestStagedId) return "replaced";
     if (streaming && applyingStagedId === stagedId) return "applying";
+    return "pending";
+  };
+
+  // Same for staged plans: a newer plan replaces older, not fully applied ones.
+  const latestPlanId = [...messages].reverse().find((m) => m.plan)?.plan?.staged_id;
+  const planStatus = (stagedId: string): PlanStatus => {
+    const applied = planApplied?.[stagedId];
+    if (applied?.done) return "applied";
+    if (stagedId !== latestPlanId) return "replaced";
+    if (planApplying?.stagedId === stagedId) return "applying";
+    if (applied || planFailedIds?.has(stagedId)) return "partial";
     return "pending";
   };
 
@@ -140,6 +171,19 @@ export function ChatFeed({
                 status={stagedStatus(msg.staged.staged_id)}
                 busy={streaming}
                 onApply={onApplyStaged}
+              />
+            )}
+
+            {msg.plan && onApplyPlan && (
+              <PlanStagedCard
+                plan={msg.plan}
+                status={planStatus(msg.plan.staged_id)}
+                applied={planApplied?.[msg.plan.staged_id] ?? null}
+                applyingWeek={
+                  planApplying?.stagedId === msg.plan.staged_id ? planApplying.week : null
+                }
+                busy={streaming || planApplying !== null}
+                onApply={onApplyPlan}
               />
             )}
           </div>

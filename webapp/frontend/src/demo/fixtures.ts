@@ -2,7 +2,11 @@ import type {
   AuditReportData,
   CheckinReportData,
   MeResponse,
+  PlanRowAction,
+  PlanSessionRow,
+  PlanWeek,
   ProfileResponse,
+  StagedTrainingPlan,
   TrendReportData,
   TrendWeekPoint,
   WorkoutReportData,
@@ -29,6 +33,7 @@ export const DEMO_ME_READY: MeResponse = {
     active_goal: "Sub-1:26 Half Marathon",
     active_race_name: "CPC Loop Den Haag",
     active_date: "2027-03-14",
+    active_start_date: "2026-11-23",
     weeks_remaining: 18.4,
     north_star: {
       goal: "Sub-2:58 Marathon",
@@ -609,3 +614,89 @@ export const DEMO_WORKOUT_MARKDOWN = `## Tempo 3x10' @ Threshold
 ### 🚀 Key Takeaways & Adjustments
 1. **Sub goal (Sub-1:26 HM):** Progress to 3x12' next week at the same pace band.
 2. **North star (Sub-2:58 Marathon):** Keep Saturday's long run fully Zone 2 to bank aerobic volume.`;
+
+/** "2026-11-23" + n days (UTC, so the demo is timezone-independent). */
+function demoAddDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+const DEMO_PLAN_START = "2026-11-23";
+const DEMO_PLAN_WEEKS = 16;
+
+function demoPhase(week: number): string {
+  if (week <= 5) return "base";
+  if (week <= 11) return "build";
+  if (week <= 14) return "peak";
+  return "taper";
+}
+
+/** One week of the demo plan: run sessions + 2x strength (1x in peak/taper) + an easy spin. */
+function demoPlanWeek(week: number): PlanWeek {
+  const start = demoAddDays(DEMO_PLAN_START, (week - 1) * 7);
+  const phase = demoPhase(week);
+  const down = week % 4 === 0;
+  const scale = down ? 0.75 : 1 + Math.min(week, 11) * 0.04;
+  const longKm = Math.round(16 * scale);
+  // The first two weeks overhaul existing calendar sessions; the rest are new.
+  const action = (i: number): PlanRowAction =>
+    week === 1 ? (["update", "keep", "create", "update", "delete", "create", "update"][i] as PlanRowAction)
+      : week === 2 ? (i === 1 ? "update" : "create")
+      : "create";
+  const isRaceWeek = week === DEMO_PLAN_WEEKS;
+  const rows: PlanSessionRow[] = [
+    { date: start, day: "Mon", sport: "Strength", action: action(0), title: phase === "taper" ? "Strength: activation" : "Strength: heavy lower body", code: "S 40' heavy-lower", distance_km: null, duration_minutes: phase === "taper" ? 20 : 40, tss_planned: 30 },
+    { date: demoAddDays(start, 1), day: "Tue", sport: "Run", action: action(1), title: phase === "base" ? "Hills 8x60\"" : "VO2max 6x1 km", code: "I 6x1k r2'", distance_km: Math.round(11 * scale), duration_minutes: 58, tss_planned: 78 },
+    { date: demoAddDays(start, 2), day: "Wed", sport: "Run", action: action(2), title: "Easy run", code: "E 10", distance_km: Math.round(9 * scale), duration_minutes: 52, tss_planned: 45 },
+    { date: demoAddDays(start, 3), day: "Thu", sport: "Run", action: action(3), title: "Threshold 2x15'", code: "T 2x15' r2'", distance_km: Math.round(12 * scale), duration_minutes: 62, tss_planned: 82 },
+    ...(phase === "base" || phase === "build"
+      ? [{ date: demoAddDays(start, 3), day: "Thu", sport: "Strength", action: action(4), title: "Strength: core & hips", code: "S 30' core-hips", distance_km: null, duration_minutes: 30, tss_planned: 20 }]
+      : []),
+    { date: demoAddDays(start, 4), day: "Fri", sport: "Bike", action: action(5), title: "Recovery spin Z1", code: "B 45' Z1", distance_km: null, duration_minutes: 45, tss_planned: 25 },
+    isRaceWeek
+      ? { date: demoAddDays(start, 6), day: "Sun", sport: "Race", action: "create", title: "CPC Loop Den Haag — Sub-1:26 HM", code: "RACE", distance_km: 21.1, duration_minutes: 86, tss_planned: 140 }
+      : { date: demoAddDays(start, 6), day: "Sun", sport: "Run", action: action(6), title: week >= 9 && !down ? `Long run ${longKm} km +6@HM` : `Long run ${longKm} km`, code: `L ${longKm}`, distance_km: longKm, duration_minutes: Math.round(longKm * 5.4), tss_planned: Math.round(longKm * 6.5) },
+  ] as PlanSessionRow[];
+  const counts = { create: 0, update: 0, delete: 0, keep: 0 };
+  for (const r of rows) counts[r.action] += 1;
+  const runKm = rows.filter((r) => r.sport === "Run" || r.sport === "Race").reduce((n, r) => n + (r.distance_km ?? 0), 0);
+  return {
+    week,
+    start,
+    phase,
+    focus: down ? "Down week: absorb the load" : phase === "base" ? "Aerobic base; strength 2x" : phase === "build" ? "HM-pace endurance; heavy strength 2x" : phase === "peak" ? "Race-specific sharpening; strength maintenance" : "Taper: freshen up",
+    run_km: Math.round(runKm * 10) / 10,
+    bike_minutes: 45,
+    strength_sessions: rows.filter((r) => r.sport === "Strength").length,
+    tss: rows.reduce((n, r) => n + (r.action === "delete" ? 0 : r.tss_planned ?? 0), 0),
+    counts,
+    rows,
+  };
+}
+
+const DEMO_PLAN_WEEK_LIST = Array.from({ length: DEMO_PLAN_WEEKS }, (_, i) => demoPlanWeek(i + 1));
+
+export const DEMO_PLAN: StagedTrainingPlan = {
+  version: 1,
+  staged_id: "6b1e7c2a-4f0d-4a7e-9a35-2f1d8c9e0b11",
+  title: `Sub-1:26 Half Marathon · ${DEMO_PLAN_WEEKS} weeks`,
+  mode: "new",
+  start_date: DEMO_PLAN_START,
+  end_date: "2027-03-14",
+  totals: DEMO_PLAN_WEEK_LIST.reduce(
+    (t, w) => ({
+      ...t,
+      sessions: t.sessions + w.rows.length,
+      create: t.create + (w.counts?.create ?? 0),
+      update: t.update + (w.counts?.update ?? 0),
+      delete: t.delete + (w.counts?.delete ?? 0),
+      keep: t.keep + (w.counts?.keep ?? 0),
+    }),
+    { weeks: DEMO_PLAN_WEEKS, sessions: 0, create: 0, update: 0, delete: 0, keep: 0 },
+  ),
+  weeks: DEMO_PLAN_WEEK_LIST,
+};
+
+export const DEMO_PLAN_MARKDOWN = `Your block builds from an aerobic base into HM-pace endurance, with a down week every fourth week and a two-week taper into CPC. Heavy lower-body strength sits on your hard-run days (after the run) so easy days stay easy, dropping to maintenance in the peak and activation only in the taper. The Friday spin adds low-impact aerobic volume without extra running load.
+
+📋 ${DEMO_PLAN_WEEKS}-week plan staged: ${DEMO_PLAN.totals.sessions} sessions (${DEMO_PLAN.totals.create} new · ${DEMO_PLAN.totals.update} updated · ${DEMO_PLAN.totals.delete} removed). Review the weeks below and press **Apply to TrainingPeaks**.`;

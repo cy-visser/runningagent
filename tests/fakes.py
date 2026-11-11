@@ -154,6 +154,8 @@ class FakeRunnerEnv:
         self.rate_limited_workout_ids: set[str] = set()
         # TP tool names that always answer with an error envelope (outage simulation).
         self.failing_tools: set[str] = set()
+        # The next N workout writes (create / update / delete) answer 429 Too Many Requests.
+        self.write_429s = 0
         self.workouts, self.daily_pmc, self.metrics, self.notes = self._build_data()
 
     def ctx(self, profile: dict | None = None, state: dict | None = None, user_id: str | None = None) -> FakeContext:
@@ -297,6 +299,9 @@ class FakeRunnerEnv:
             return envelope({"metrics": [m for m in self.metrics if s <= m["timeStamp"][:10] <= e]})
         if name == "tp_get_athlete_settings":
             return envelope(SETTINGS)
+        if name in ("tp_create_workout", "tp_update_workout", "tp_delete_workout") and self.write_429s > 0:
+            self.write_429s -= 1
+            return envelope({"isError": True, "error_code": "API_ERROR", "message": "429 Too Many Requests"})
         if name == "tp_create_workout":
             return envelope({"id": "created-999"})
         if name == "tp_update_workout":

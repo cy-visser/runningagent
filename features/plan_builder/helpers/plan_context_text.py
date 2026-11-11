@@ -1,0 +1,144 @@
+"""Compact plan context for the coach (~1-2k tokens for 24 weeks): goal, constraints, zones, recent training,
+and the planned calendar of the window summarised per ISO week (no full workout dumps)."""
+
+from datetime import date, timedelta
+from typing import Any, Optional
+
+from ....shared.calendar_notes import truncate_note
+from ....shared.dates import iso_date, monday_of, parse_date
+from ....shared.goal_plan import blocks, current_goal, north_star, race_day
+from ....shared.long_run_facts import format_history, recent_long_runs
+from ....shared.north_star_targets import block_context, recent_volume_baseline, volume_rule_summary
+from ....shared.weekly_buckets import build_week_buckets
+from ....shared.workout_status import is_workout_completed
+from .pace_zones import zone_table_text
+from .plan_diff import MANAGED_SPORTS, sport_name
+
+# Window and mode of the last fetch_plan_context call in this turn (defaults for stage_training_plan).
+PLAN_CONTEXT_STATE_KEY = "temp:plan_context"
+HISTORY_WEEKS = 12
+FREQUENCY_WEEKS = 8
+NOTE_CHARS = 60
+_SPORT_SHORT = {"Run": "Run", "Bike": "Bike", "Strength": "Str"}
+
+
+def history_window(today: date) -> tuple[date, date]:
+    """(Monday HISTORY_WEEKS weeks back, last Sunday): complete weeks before today's week."""
+    end = monday_of(today) - timedelta(days=1)
+    return end - timedelta(weeks=HISTORY_WEEKS) + timedelta(days=1), end
+
+
+def _goal_lines(profile: dict, start: date, end: date) -> list[str]:
+    goal = current_goal(profile, end)
+    lines = []
+    if goal.get("training_goal"):
+        race = race_day(goal)
+        weeks = f", {(race - monday_of(start)).days // 7} weeks after W1 starts" if race else ""
+        lines.append(f"Goal: {goal['training_goal']} on {goal.get('timeline') or 'an unset date'}{weeks}")
+    ns = north_star(profile)
+    if ns and ns.get("timeline") != goal.get("timeline"):
+        lines.append(f"North star: {ns['training_goal']} on {ns.get('timeline')}")
+    races = [b for b in blocks(profile) if (d := race_day(b)) and start <= d <= end]
+    if races:
+        lines.append("Goal races in the window: " + " · ".join(f"{b['timeline']} {b['training_goal']}" for b in races))
+    for label, key in (("Injuries", "injuries"), ("Cross-training / strength", "cross_training_strength")):
+        if str(profile.get(key) or "").strip():
+            lines.append(f"{label}: {profile[key]}")
+    return lines
+
+
+def _recent_lines(history: list[dict], today: date, profile: dict, end: date, fitness: Optional[dict]) -> list[str]:
+    done = [w for w in history if is_workout_completed(w)]
+    start, last = history_window(today)
+    weeks = sorted(build_week_buckets(done, start, last).values(), key=lambda w: w["start_date"])
+    km = " · ".join(f"{w['total_distance_km']:.0f}" if w["total_distance_km"] else "–" for w in weeks)
+    lines = [f"- Running km/week, last {HISTORY_WEEKS} weeks (oldest first): {km}"]
+    baseline = recent_volume_baseline(done, today)
+    if baseline:
+        lines.append(f"- Recent level (4-week mean): {baseline:.0f} km/week")
+    longs = format_history(recent_long_runs(done, today))
+    if longs:
+        lines.append(f"- Long runs, last 6 weeks: {longs}")
+    if fitness:
+        lines.append("- Today: " + " · ".join(f"{k.upper()} {round(v)}" for k, v in fitness.items() if v is not None))
+    recent = weeks[-FREQUENCY_WEEKS:]
+    if recent:
+        strength = sum(w["strength_count"] for w in recent) / len(recent)
+        bike = sum(w["bike_count"] for w in recent) / len(recent)
+        lines.append(f"- Last {len(recent)} weeks: strength {strength:.1f}/week · bike {bike:.1f}/week")
+    rule = volume_rule_summary(block_context(profile, end))
+    if rule:
+        lines.append(f"- Volume reference: {rule}")
+    return lines
+
+
+def _session_text(w: dict, with_ids: bool) -> str:
+    day = parse_date(w.get("date") or w.get("start_time"))
+    sport = sport_name(w.get("sport"))
+    km = w.get("distance_planned_km")
+    text = f"{day.strftime('%a')} {_SPORT_SHORT.get(sport, sport)} '{w.get('title') or sport}'"
+    if km:
+        text += f" {float(km):g} km"
+    elif w.get("duration_planned"):
+        text += f" {round(float(w['duration_planned']) * 60)}'"
+    if with_ids and w.get("id"):
+        text += f" [{w['id']}]"
+    return text
+
+
+def _calendar_lines(workouts: list[dict], notes: list[dict], start: date, n_weeks: int, overhaul: bool) -> list[str]:
+    lines = []
+    monday = monday_of(start)
+    for i in range(n_weeks):
+        w_start, w_end = monday + timedelta(weeks=i), monday + timedelta(weeks=i, days=6)
+        planned = sorted(
+            (w for w in workouts if not is_workout_completed(w)
+             and (d := parse_date(w.get("date") or w.get("start_time"))) and w_start <= d <= w_end),
+            key=lambda w: str(w.get("start_time") or w.get("date")))
+        if overhaul:
+            body = " · ".join(_session_text(w, True) for w in planned) or "nothing planned"
+        else:
+            sports = [sport_name(w.get("sport")) for w in planned]
+            run_km = sum(float(w.get("distance_planned_km") or 0) for w in planned if sport_name(w.get("sport")) == "Run")
+            parts = [f"{sports.count(s)} {s.lower()}" + (f" {run_km:.0f} km" if s == "Run" and run_km else "")
+                     for s in MANAGED_SPORTS if sports.count(s)]
+            others = len(sports) - sum(sports.count(s) for s in MANAGED_SPORTS)
+            parts += [f"{others} other"] if others else []
+            body = ", ".join(parts) or "nothing planned"
+        week_notes = [truncate_note(n.get("title") or "Note", NOTE_CHARS) for n in notes
+                      if (d := parse_date(n.get("date"))) and w_start <= d <= w_end]
+        lines.append(f"W{i + 1} {iso_date(w_start)}: {body}" + (f" | notes: {'; '.join(week_notes)}" if week_notes else ""))
+    return lines
+
+
+def plan_context_text(
+    profile: dict, start: date, end: date, mode: str, today: date, zones: dict,
+    history: Optional[list[dict]], workouts: Optional[list[dict]], notes: Optional[list[dict]],
+    fitness: Optional[dict],
+) -> str:
+    n_weeks = (monday_of(end) - monday_of(start)).days // 7 + 1
+    head = (f"PLAN CONTEXT ({mode}): {iso_date(start)} → {iso_date(end)} · {n_weeks} weeks "
+            f"(W1 = week of {iso_date(monday_of(start))}). Stage with stage_training_plan(plan={{\"start_date\": "
+            f"\"{iso_date(start)}\", \"mode\": \"{mode}\", \"weeks\": [...]}}, message=...).")
+    sections = [head, "\n".join(_goal_lines(profile, start, end)),
+                "ZONES (each code resolves to these; the app builds every session):\n" + zone_table_text(zones)]
+    if history is None:
+        sections.append("RECENT TRAINING: unavailable (TrainingPeaks error).")
+    else:
+        sections.append("RECENT TRAINING (completed):\n" + "\n".join(_recent_lines(history, today, profile, end, fitness)))
+    if workouts is None:
+        sections.append("CALENDAR IN WINDOW: unavailable (TrainingPeaks error); staging reads it again.")
+    else:
+        label = "planned, per ISO week" + (", with [workout_id]" if mode == "overhaul" else "")
+        sections.append(f"CALENDAR IN WINDOW ({label}):\n" + "\n".join(
+            _calendar_lines(workouts, notes or [], start, n_weeks, mode == "overhaul")))
+    return "\n\n".join(s for s in sections if s)
+
+
+def latest_fitness(raw_daily: Any) -> Optional[dict]:
+    """{'ctl', 'atl', 'tsb'} of the latest PMC day with a CTL, or None."""
+    rows = [d for d in raw_daily or [] if isinstance(d, dict) and d.get("ctl") is not None]
+    if not rows:
+        return None
+    last = rows[-1]
+    return {"ctl": last.get("ctl"), "atl": last.get("atl"), "tsb": last.get("tsb")}

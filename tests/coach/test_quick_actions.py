@@ -166,3 +166,58 @@ def test_a_tools_off_report_call_never_runs_a_function_call_the_model_returns_an
     assert drop_disabled_tool_calls(chat_turn, response) is None
     assert drop_disabled_tool_calls(report_call, LlmResponse(content=types.Content(
         role="model", parts=[types.Part(text="only text")]))) is None
+
+
+def test_build_plan_button_loads_the_skill_and_context_and_keeps_tools_on_for_staging(runner, monkeypatch):
+    llm = RecordingLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+    args = {"start_date": "2026-11-02", "end_date": "2027-01-31", "mode": "new"}
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        events = await _turn(r, session.id, "Build my plan", {"skill": "plan-builder", "args": {**args, "bogus": 1}})
+        s = await r.session_service.get_session(app_name="running_coach", user_id="web_runner", session_id=session.id)
+        return events, s
+
+    events, s = asyncio.run(scenario())
+    assert _calls(events) == [("load_skill", {"skill_name": "plan-builder"}), ("fetch_plan_context", args)]
+    assert len(llm.requests) == 1                                  # the one planning call
+    plan_call = llm.requests[0]
+    assert _tool_mode(plan_call) is None                           # tools on: it must call stage_training_plan
+    assert "stage_training_plan" in plan_call.tools_dict
+    assert DISPATCHED_STATE_KEY not in s.state
+
+
+def test_apply_plan_button_writes_one_week_without_any_llm_call(runner, monkeypatch):
+    from running_coach.features.plan_builder.stage_training_plan_tool import stage_training_plan
+
+    llm = RecordingLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+    ctx = runner.ctx()
+    plan = {"start_date": "2026-11-02", "weeks": [
+        {"week": n, "phase": "base", "days": {"Tue": "I 6x1k r2'", "Wed": "S 30' core-hips", "Sun": "L 20"}}
+        for n in (1, 2)]}
+    staged_id = json.loads(asyncio.run(stage_training_plan(ctx, plan)))["staged_id"]
+    staged = ctx.state["staged_training_plan"]
+    runner.tp_calls.clear()
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(
+            app_name="running_coach", user_id="web_runner", state={"staged_training_plan": staged})
+        events = await _turn(r, session.id, "", {"skill": "plan-builder:apply",
+                                                 "args": {"staged_id": staged_id, "week": 1}})
+        s = await r.session_service.get_session(app_name="running_coach", user_id="web_runner", session_id=session.id)
+        return events, s
+
+    events, s = asyncio.run(scenario())
+    assert llm.requests == []                                                     # zero LLM calls
+    assert _calls(events) == [("apply_training_plan", {"staged_id": staged_id, "week": 1})]  # no load_skill
+    writes = sorted({kw.get("date", "")[:10] for n, kw in runner.tp_calls if n in ("tp_create_workout", "tp_update_workout")})
+    assert writes and all(d <= "2026-11-08" for d in writes)                      # week 1 only
+    assert s.state["applied_training_plan"]["weeks_done"] == [1]
+    assert events[-1].actions.skip_summarization
+    assert not [w for e in events for w in e.actions.render_ui_widgets or []]    # intermediate week: no bubble

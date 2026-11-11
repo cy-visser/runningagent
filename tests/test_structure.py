@@ -13,6 +13,7 @@ from running_coach.coach.coaching.quick_actions import (
     QUICK_ACTION_PART_PREFIX,
     QUICK_ACTION_STATE_KEY,
     QUICK_ACTIONS,
+    SKILL_FREE_ACTIONS,
 )
 from running_coach.coach.coaching.skill_toolset import SKILL_FEATURES, skill_toolset
 from running_coach.features.check_in_report.helpers.web_report import (
@@ -125,7 +126,8 @@ def test_architecture_rules_and_cross_stack_contract():
     assert loaded_skill_names == {f.replace("_", "-") for f in SKILL_FEATURES}
     tool_name_re = re.compile(
         r"\b(fetch_checkin_data|fetch_trend_data|analyze_workout|fetch_schedule_audit_data|"
-        r"fetch_nutrition_context|stage_workout_changes|apply_staged_changes|get_weather|request_new_goal)\b"
+        r"fetch_nutrition_context|stage_workout_changes|apply_staged_changes|get_weather|request_new_goal|"
+        r"fetch_plan_context|stage_training_plan|apply_training_plan)\b"
     )
     for smd in skill_mds:
         for match in tool_name_re.findall(smd.read_text(encoding="utf-8")):
@@ -289,4 +291,8 @@ def test_architecture_rules_and_cross_stack_contract():
     assert _eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_STATE_KEY") == QUICK_ACTION_STATE_KEY
     assert _eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_PART_PREFIX") == QUICK_ACTION_PART_PREFIX
     assert set(_eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_SKILLS")) == set(QUICK_ACTIONS)
-    assert set(QUICK_ACTIONS) <= loaded_skill_names
+    # A '<skill>:<op>' key (e.g. plan-builder:apply) is valid when <skill> is a loaded skill; it is skill-free.
+    for key in QUICK_ACTIONS:
+        skill, _, op = key.partition(":")
+        assert skill in loaded_skill_names, f"quick action {key} names no loaded skill"
+        assert not op or key in SKILL_FREE_ACTIONS, f"quick action {key} must be skill-free"

@@ -1,5 +1,6 @@
 import type {
   AppliedChanges,
+  AppliedTrainingPlan,
   ChatStreamHandlers,
   ConnectTpResponse,
   MeResponse,
@@ -10,6 +11,7 @@ import type {
   ReportEnvelope,
   SessionResponse,
   StagedChanges,
+  StagedTrainingPlan,
   ToolChip,
 } from "./types";
 
@@ -286,6 +288,16 @@ function dispatchSseEvent(
     case "applied":
       if (typeof obj.staged_id === "string") {
         handlers.onApplied?.(obj as unknown as AppliedChanges);
+      }
+      break;
+    case "plan_staged":
+      if (typeof obj.staged_id === "string" && Array.isArray(obj.weeks)) {
+        handlers.onPlanStaged?.(obj as unknown as StagedTrainingPlan);
+      }
+      break;
+    case "plan_applied":
+      if (typeof obj.staged_id === "string" && Array.isArray(obj.weeks_done)) {
+        handlers.onPlanApplied?.(obj as unknown as AppliedTrainingPlan);
       }
       break;
     case "message":

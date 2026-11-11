@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 import re
 from typing import Any, Literal, Optional
 
@@ -303,6 +303,8 @@ def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] =
     active_goal = profile.get("training_goal")
     active_race_name = None
     active_date = profile.get("timeline")
+    # Start of the current or next block (Build Plan button): a single goal starts when it was set.
+    active_start_date = profile.get("goal_set_date") or None
     north_star_summary = None
 
     if goal_type == "plan":
@@ -313,6 +315,7 @@ def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] =
             "race_date": ns.get("race_date"),
         }
         chosen = None
+        last_past_race: Optional[date] = None
         for sg in profile.get("sub_goals") or []:
             if not isinstance(sg, dict):
                 continue
@@ -323,14 +326,20 @@ def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] =
             if rd >= ref:
                 chosen = sg
                 break
+            last_past_race = rd if last_past_race is None else max(last_past_race, rd)
         if chosen:
             active_goal = chosen.get("goal")
             active_race_name = chosen.get("race_name")
             active_date = chosen.get("race_date")
+            active_start_date = chosen.get("start_date") or None
         else:
             active_goal = ns.get("goal")
             active_race_name = ns.get("race_name")
             active_date = ns.get("race_date")
+            # The north-star block starts at its own start_date, else right after the last sub-goal race.
+            active_start_date = ns.get("start_date") or (
+                (last_past_race + timedelta(days=1)).isoformat() if last_past_race else None
+            )
 
     weeks_remaining: Optional[float] = None
     if active_date:
@@ -349,6 +358,7 @@ def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] =
         "active_goal": active_goal,
         "active_race_name": active_race_name,
         "active_date": active_date,
+        "active_start_date": active_start_date,
         "weeks_remaining": weeks_remaining,
         "north_star": north_star_summary,
     }

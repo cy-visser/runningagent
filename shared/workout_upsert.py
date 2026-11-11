@@ -5,11 +5,17 @@ from typing import Any
 
 from google.adk.tools import ToolContext
 
-from ....integrations.trainingpeaks import tp_calls
-from ....shared.tp_payloads import coerce_mcp_payload
-from .staged_changes import ACTION_DELETE, KIND_NOTE
+from ..integrations.trainingpeaks import tp_calls
+from .tp_payloads import coerce_mcp_payload
 
 logger = logging.getLogger(__name__)
+
+# Staged change kinds and actions (shared by the workout creator and the plan builder).
+KIND_WORKOUT = "workout"
+KIND_NOTE = "note"
+ACTION_CREATE = "create"
+ACTION_UPDATE = "update"
+ACTION_DELETE = "delete"
 
 # Per-action differences between the create and update MCP tools.
 _CREATE_SPEC = {"tool": "tp_create_workout", "duration_cast": lambda v: int(round(v)), "verb": "create"}

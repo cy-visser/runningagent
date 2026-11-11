@@ -3,6 +3,7 @@ import {
   Activity,
   ArrowRight,
   CalendarCheck,
+  CalendarRange,
   CheckCircle2,
   ClipboardCheck,
   Compass,
@@ -15,12 +16,13 @@ import {
 } from "lucide-react";
 import { formatShortDate, greetingForHour } from "../shared/format";
 import type {
+  AppliedTrainingPlan,
   ChatMessage,
   MeResponse,
   ProfileSummary,
   QuickAction,
 } from "../shared/types";
-import { ChatFeed } from "./ChatFeed";
+import { ChatFeed, type PlanApplying } from "./ChatFeed";
 
 /** Maximum audit horizon (in ISO weeks, starting Monday of the current week) when a goal race is set. */
 export const AUDIT_MAX_WEEKS = 4;
@@ -48,7 +50,7 @@ function addDays(d: Date, days: number): Date {
 }
 
 /**
- * Audit CTA config. With an upcoming goal race the audit runs from Monday of the current week
+ * Audit card config. With an upcoming goal race the audit runs from Monday of the current week
  * until race day (capped at AUDIT_MAX_WEEKS weeks); otherwise it audits the current week.
  */
 export function auditScheduleAction(
@@ -59,9 +61,9 @@ export function auditScheduleAction(
   const race = summary?.active_date?.slice(0, 10);
   if (!race || !/^\d{4}-\d{2}-\d{2}$/.test(race) || race < today) {
     return {
-      title: "Audit Schedule – Current Week",
+      title: "Audit Plan – Current Week",
       subtitle: DEFAULT_AUDIT_SUBTITLE,
-      prompt: "Audit my schedule for this week",
+      prompt: "Audit my plan for this week",
       action: { skill: "schedule-audit" },
     };
   }
@@ -77,19 +79,70 @@ export function auditScheduleAction(
 
   if (capped) {
     return {
-      title: `Audit Schedule – Next ${AUDIT_MAX_WEEKS} Weeks`,
+      title: `Audit Plan – Next ${AUDIT_MAX_WEEKS} Weeks`,
       subtitle: `${formatShortDate(start)} → ${formatShortDate(end)} · toward ${goal || "race day"} on ${formatShortDate(race)}`,
       prompt:
-        `Audit my schedule for the next ${AUDIT_MAX_WEEKS} weeks, from ${start} to ${end}, ` +
+        `Audit my plan for the next ${AUDIT_MAX_WEEKS} weeks, from ${start} to ${end}, ` +
         `building toward my race on ${race}${goalText}.`,
       action,
     };
   }
   return {
-    title: "Audit Schedule – Until Race Day",
+    title: "Audit Plan – Until Race Day",
     subtitle: `${formatShortDate(start)} → ${formatShortDate(race)}${goal ? ` · ${goal}` : ""}`,
-    prompt: `Audit my schedule from ${start} until my race on ${race}${goalText}.`,
+    prompt: `Audit my plan from ${start} until my race on ${race}${goalText}.`,
     action,
+  };
+}
+
+export interface BuildPlanConfig {
+  subtitle: string;
+  /** Unset without a future goal race: the card opens the profile instead. */
+  prompt?: string;
+  action?: QuickAction;
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** "30 Nov" */
+function dayMonth(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+}
+
+function isoToLocalDate(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/**
+ * Build Plan card config: the next block runs from its start (the active block's start date when it is
+ * still ahead, else Monday of next week) to the goal race.
+ */
+export function buildPlanAction(
+  summary: ProfileSummary | null | undefined,
+  now: Date = new Date(),
+): BuildPlanConfig {
+  const today = localIsoDate(now);
+  const race = summary?.active_date?.slice(0, 10);
+  if (!race || !ISO_DATE.test(race) || race <= today) {
+    return { subtitle: "Set a goal race in your Profile to build a periodized training plan" };
+  }
+  const blockStart = summary?.active_start_date?.slice(0, 10);
+  const nextMonday = localIsoDate(addDays(now, 7 - ((now.getDay() + 6) % 7)));
+  let start = blockStart && ISO_DATE.test(blockStart) && blockStart > today ? blockStart : nextMonday;
+  if (start > race) start = today; // race within the week: plan from today
+  const days = Math.round((isoToLocalDate(race).getTime() - isoToLocalDate(start).getTime()) / 86_400_000) + 1;
+  const weeks = Math.max(1, Math.ceil(days / 7));
+  const goal = summary?.active_goal?.trim();
+  return {
+    subtitle: `Next block: ${goal || "Goal race"} · ${dayMonth(start)} → ${dayMonth(race)} (${weeks} ${weeks === 1 ? "week" : "weeks"})`,
+    prompt: `Build my training plan for ${goal || "my goal race"} from ${start} to ${race}`,
+    action: { skill: "plan-builder", start_date: start, end_date: race, mode: "new" },
   };
 }
 
@@ -103,6 +156,10 @@ interface DashboardProps {
   appliedStagedIds?: ReadonlySet<string>;
   applyingStagedId?: string | null;
   onApplyStaged?: (stagedId: string) => void;
+  planApplied?: Readonly<Record<string, AppliedTrainingPlan>>;
+  planApplying?: PlanApplying | null;
+  planFailedIds?: ReadonlySet<string>;
+  onApplyPlan?: (stagedId: string) => void;
   /** Composer text, owned by the parent so it can be cleared on New conversation. */
   draft?: string;
   onDraftChange?: (value: string) => void;
@@ -118,6 +175,10 @@ export function Dashboard({
   appliedStagedIds,
   applyingStagedId,
   onApplyStaged,
+  planApplied,
+  planApplying,
+  planFailedIds,
+  onApplyPlan,
   draft,
   onDraftChange,
 }: DashboardProps) {
@@ -134,6 +195,14 @@ export function Dashboard({
     onSendPrompt(prompt, true, action);
   };
   const audit = auditScheduleAction(me.summary);
+  const buildPlan = buildPlanAction(me.summary);
+  const handleBuildPlan = () => {
+    if (buildPlan.prompt && buildPlan.action) {
+      startNewConversation(buildPlan.prompt, buildPlan.action);
+    } else {
+      onViewProfile();
+    }
+  };
 
   const handleComposerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -324,7 +393,7 @@ export function Dashboard({
         </section>
       ) : (
         <section aria-label="Quick actions" className="space-y-4">
-          {/* 4 White Action Cards */}
+          {/* 6 White Action Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* 1. Profile */}
             <button
@@ -432,28 +501,53 @@ export function Dashboard({
               </div>
               <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-violet-600 shrink-0 mt-1" />
             </button>
-          </div>
 
-          {/* Full-Width Sunset CTA: Audit Schedule (current week, or this week → race day, max 8 weeks) */}
-          <button
-            type="button"
-            disabled={!canSend}
-            onClick={() => startNewConversation(audit.prompt, audit.action)}
-            className="group flex w-full items-center justify-between gap-4 rounded-2xl bg-sunset bg-sunset-hover px-6 py-4 text-left text-white shadow-sunset transition disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-          >
-            <div className="flex items-center gap-4">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/20 backdrop-blur-xs">
-                <CalendarCheck className="h-5 w-5 text-white" />
-              </span>
-              <div>
-                <p className="font-display text-lg font-bold tracking-tight">
-                  {audit.title}
-                </p>
-                <p className="text-sm text-white/90 mt-0.5">{audit.subtitle}</p>
+            {/* 5. Audit Plan (current week, or this week → race day, max 4 weeks) */}
+            <button
+              type="button"
+              disabled={!canSend}
+              onClick={() => startNewConversation(audit.prompt, audit.action)}
+              className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-orange-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <div className="flex items-start gap-3.5">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-500 text-white shadow-xs transition group-hover:bg-sunset">
+                  <CalendarCheck className="h-5 w-5" />
+                </span>
+                <div>
+                  <h2 className="font-display text-lg font-bold text-slate-900">
+                    {audit.title}
+                  </h2>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                    {audit.subtitle}
+                  </p>
+                </div>
               </div>
-            </div>
-            <ArrowRight className="h-5 w-5 shrink-0 transition group-hover:translate-x-1" />
-          </button>
+              <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-orange-600 shrink-0 mt-1" />
+            </button>
+
+            {/* 6. Build Plan (next block → goal race; without a future goal it opens the profile) */}
+            <button
+              type="button"
+              disabled={buildPlan.action ? !canSend : false}
+              onClick={handleBuildPlan}
+              className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-amber-300 disabled:opacity-55 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <div className="flex items-start gap-3.5">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-500 text-white shadow-xs transition group-hover:bg-sunset">
+                  <CalendarRange className="h-5 w-5" />
+                </span>
+                <div>
+                  <h2 className="font-display text-lg font-bold text-slate-900">
+                    Build Plan
+                  </h2>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                    {buildPlan.subtitle}
+                  </p>
+                </div>
+              </div>
+              <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-amber-600 shrink-0 mt-1" />
+            </button>
+          </div>
         </section>
       )}
 
@@ -464,6 +558,10 @@ export function Dashboard({
         appliedStagedIds={appliedStagedIds}
         applyingStagedId={applyingStagedId}
         onApplyStaged={onApplyStaged}
+        planApplied={planApplied}
+        planApplying={planApplying}
+        planFailedIds={planFailedIds}
+        onApplyPlan={onApplyPlan}
       />
 
       {/* Coach Input Composer */}

@@ -19,6 +19,7 @@ SKILL_FEATURES = (
     "bike_workout_analysis",
     "schedule_audit",
     "workout_creator",
+    "plan_builder",
 )
 
 # Routing (when to load which skill, parallel data call, write-tool rules) lives in the coach

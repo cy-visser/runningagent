@@ -2,7 +2,7 @@
 
 Walks the calendar one week at a time. For every planned (not completed) Run whose builder is a quality
 session without strides, it inserts the default strides block (4x 20" / 40") right after the warm-up with
-the coach's own helpers (features/workout_creator/helpers/strides.py) and recomputes distance, duration and
+the coach's own helpers (shared/strides.py) and recomputes distance, duration and
 TSS from the new builder. Long runs are excluded. Dry run by default; `--apply` writes each one through
 tp_mcp's tp_update_workout (2.0.2+, which also keeps the planned pace consistent).
 
@@ -25,8 +25,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # workspace root: 
 from tp_mcp.tools.settings import tp_get_athlete_settings  # noqa: E402
 from tp_mcp.tools.workouts import tp_get_workout, tp_get_workouts, tp_update_workout  # noqa: E402
 
-from running_coach.features.workout_creator.helpers.strides import ADDED, ensure_strides  # noqa: E402
-from running_coach.features.workout_creator.helpers.workout_builder import (  # noqa: E402
+from running_coach.shared.strides import ADDED, ensure_strides  # noqa: E402
+from running_coach.shared.workout_builder import (  # noqa: E402
     builder_summary,
     builder_totals,
     has_builder,

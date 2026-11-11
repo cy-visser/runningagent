@@ -11,10 +11,9 @@ from typing import Any, Optional
 
 from ....shared.athlete_settings import sport_family, sport_thresholds
 from ....shared.dates import iso_date, parse_date
+from ....shared.strides import ensure_strides
 from ....shared.units import as_float
-from ....shared.workout_status import is_workout_completed
-from .strides import ensure_strides
-from .workout_builder import (
+from ....shared.workout_builder import (
     builder_summary,
     builder_totals,
     coach_structure_from,
@@ -22,17 +21,19 @@ from .workout_builder import (
     needs_builder,
     parse_coach_structure,
 )
+from ....shared.workout_status import is_workout_completed
+from ....shared.workout_upsert import (
+    ACTION_CREATE,
+    ACTION_DELETE,
+    ACTION_UPDATE,
+    KIND_NOTE,
+    KIND_WORKOUT,
+)
 
 # Persisted session state (read by apply_staged_changes and forwarded to the web card).
 STAGED_CHANGES_STATE_KEY = "staged_workout_changes"
 # Set when a staged set is applied; the web marks that card as applied.
 APPLIED_CHANGES_STATE_KEY = "applied_workout_changes"
-
-KIND_WORKOUT = "workout"
-KIND_NOTE = "note"
-ACTION_CREATE = "create"
-ACTION_UPDATE = "update"
-ACTION_DELETE = "delete"
 
 # What a Run/Bike change needs before it can be staged (internal marker, removed by finalize_builders).
 BUILDER_COACH = "coach"      # the coach sent a structure: convert it exactly

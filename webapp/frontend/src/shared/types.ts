@@ -30,6 +30,8 @@ export interface ProfileSummary {
   active_goal?: string | null;
   active_race_name?: string | null;
   active_date?: string | null;
+  /** Start of the current or next block (active sub-goal's start_date, or the single goal's goal_set_date). */
+  active_start_date?: string | null;
   weeks_remaining?: number | null;
   north_star?: NorthStarSummary | null;
 }
@@ -501,7 +503,9 @@ export type QuickAction =
   | { skill: "trend-analysis"; weeks?: number }
   | { skill: "schedule-audit"; start_date?: string; end_date?: string }
   | { skill: "workout-analysis"; date_str?: string; sport?: "run" | "bike" }
-  | { skill: "workout-creator"; staged_id: string };
+  | { skill: "workout-creator"; staged_id: string }
+  | { skill: "plan-builder"; start_date: string; end_date: string; mode?: "new" | "overhaul" }
+  | { skill: "plan-builder:apply"; staged_id: string; week: number };
 
 /** One proposed workout / note change staged by the coach (mirrors `helpers/staged_changes.py`). */
 export interface StagedChange {
@@ -551,6 +555,67 @@ export interface AppliedChanges {
   failed: number;
 }
 
+export type PlanRowAction = "create" | "update" | "delete" | "keep";
+
+/** One dated session of a staged training plan (mirrors `features/plan_builder/helpers/web_payload.py`). */
+export interface PlanSessionRow {
+  date: string;
+  day: string;
+  sport: string;
+  action: PlanRowAction;
+  title: string;
+  code?: string | null;
+  distance_km?: number | null;
+  duration_minutes?: number | null;
+  tss_planned?: number | null;
+  summary?: string | null;
+}
+
+export interface PlanWeekCounts {
+  create: number;
+  update: number;
+  delete: number;
+  keep: number;
+}
+
+export interface PlanWeek {
+  week: number;
+  start: string;
+  phase: string;
+  focus?: string | null;
+  run_km?: number | null;
+  bike_minutes?: number | null;
+  strength_sessions?: number | null;
+  tss?: number | null;
+  counts?: PlanWeekCounts | null;
+  rows: PlanSessionRow[];
+}
+
+/** Staged training plan shown with the "Apply to TrainingPeaks" button (state `staged_training_plan`). */
+export interface StagedTrainingPlan {
+  version: number;
+  staged_id: string;
+  title: string;
+  mode?: "new" | "overhaul" | string;
+  start_date: string;
+  end_date: string;
+  totals: PlanWeekCounts & { weeks: number; sessions: number };
+  weeks: PlanWeek[];
+}
+
+/** Progress of the week-by-week apply (state `applied_training_plan`, updated after every week). */
+export interface AppliedTrainingPlan {
+  staged_id: string;
+  total_weeks: number;
+  weeks_done: number[];
+  created: number;
+  updated: number;
+  deleted: number;
+  failed: number;
+  failed_weeks: number[];
+  done: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -562,6 +627,7 @@ export interface ChatMessage {
   tools?: ToolChip[];
   report?: ReportEnvelope | null;
   staged?: StagedChanges | null;
+  plan?: StagedTrainingPlan | null;
   error?: string | null;
 }
 
@@ -588,6 +654,8 @@ export interface ChatStreamHandlers {
   onReport?: (report: ReportEnvelope) => void;
   onStaged?: (staged: StagedChanges) => void;
   onApplied?: (applied: AppliedChanges) => void;
+  onPlanStaged?: (plan: StagedTrainingPlan) => void;
+  onPlanApplied?: (applied: AppliedTrainingPlan) => void;
   onMessage?: (payload: { text: string; kind: MessageKind }) => void;
   onError?: (message: string) => void;
   onDone?: (sessionId: string) => void;

@@ -4,6 +4,7 @@ import { ConnectTrainingPeaksDialog } from "../features/profile/ConnectTrainingP
 import { Dashboard } from "./Dashboard";
 import { ProfilePanel } from "../features/profile/ProfilePanel";
 import { TopBar } from "./TopBar";
+import type { PlanApplying } from "./ChatFeed";
 import {
   createNewSession,
   fetchMe,
@@ -11,6 +12,7 @@ import {
   streamChat,
 } from "../shared/api";
 import type {
+  AppliedTrainingPlan,
   ChatMessage,
   ConnectTpResponse,
   MeResponse,
@@ -38,6 +40,16 @@ export function App() {
   const [tpDialogOpen, setTpDialogOpen] = useState(false);
   const [appliedStagedIds, setAppliedStagedIds] = useState<ReadonlySet<string>>(new Set());
   const [applyingStagedId, setApplyingStagedId] = useState<string | null>(null);
+  // Staged training plan, applied week by week (latest progress per plan, loop position, stopped plans).
+  const [planApplied, setPlanApplied] = useState<Readonly<Record<string, AppliedTrainingPlan>>>({});
+  const [planApplying, setPlanApplying] = useState<PlanApplying | null>(null);
+  const [planFailedIds, setPlanFailedIds] = useState<ReadonlySet<string>>(new Set());
+  // The apply loop awaits several turns from one closure, so it reads these through refs.
+  const planAppliedRef = useRef<Record<string, AppliedTrainingPlan>>({});
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
 
   useEffect(() => {
     onSessionExpired(() => {
@@ -60,7 +72,7 @@ export function App() {
       lastActivityRef.current = 0;
       if (import.meta.env.VITE_DEMO_MODE === "true") {
         const demoView = new URLSearchParams(window.location.search).get("view");
-        if (demoView === "checkin" || demoView === "trend" || demoView === "audit" || demoView === "workout") {
+        if (demoView === "checkin" || demoView === "trend" || demoView === "audit" || demoView === "workout" || demoView === "plan") {
           const mod = await import("../demo/mockApi");
           const demoSess = await mod.demoFetchSession();
           setSessionId(demoSess.session_id);
@@ -86,7 +98,7 @@ export function App() {
   }, [loadInitialState]);
 
   const handleNewSession = async () => {
-    if (streaming) return;
+    if (streaming || planApplying) return;
     setDraft("");
     // Already on a fresh, empty session — nothing else to reset.
     if (messages.length === 0 && sessionId) return;
@@ -104,43 +116,69 @@ export function App() {
     }
   };
 
+  /**
+   * Sends one turn and resolves `true` when its stream finished without an error.
+   * `silent` (plan apply loop): no user bubble, and an assistant bubble only once reply text
+   * (or an error) arrives, so intermediate weeks leave the feed untouched.
+   */
   const handleSendPrompt = async (
     prompt: string,
     newConversation = false,
     action?: QuickAction,
-  ) => {
-    if (streaming || !me) return;
+    { silent = false }: { silent?: boolean } = {},
+  ): Promise<boolean> => {
+    if ((streaming && !silent) || !me) return false;
     const idle =
       lastActivityRef.current > 0 &&
       Date.now() - lastActivityRef.current > SESSION_IDLE_MS;
-    // Applying staged changes must stay in the session that holds them.
+    // Applying staged changes / a staged plan must stay in the session that holds them.
     const isApply = action?.skill === "workout-creator";
-    const startFresh = !isApply && (newConversation || idle) && messages.length > 0;
-    const targetSessionId = startFresh ? null : sessionId;
+    const isPlanApply = action?.skill === "plan-builder:apply";
+    const startFresh =
+      !isApply && !isPlanApply && (newConversation || idle) && messagesRef.current.length > 0;
+    const targetSessionId = startFresh ? null : sessionIdRef.current;
     if (startFresh) {
       setSessionId(null);
     }
-    const userMsgId = `u-${Date.now()}`;
-    const assistantMsgId = `a-${Date.now() + 1}`;
+    const stamp = Date.now();
+    const userMsgId = `u-${stamp}`;
+    const assistantMsgId = `a-${stamp + 1}`;
+    let failed = false;
 
-    setMessages((prev) => [
-      ...(startFresh ? [] : prev),
-      {
-        id: userMsgId,
-        role: "user",
-        text: prompt,
-        kind: "chat",
-      },
-      {
-        id: assistantMsgId,
-        role: "assistant",
-        text: "",
-        kind: "chat",
-        streaming: true,
-        thinking: true,
-        tools: [],
-      },
-    ]);
+    /** Updates the turn's assistant bubble; in silent mode it is created only when `create` is set. */
+    const patchAssistant = (patch: (m: ChatMessage) => ChatMessage, create = false) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === assistantMsgId)) {
+          return prev.map((m) => (m.id === assistantMsgId ? patch(m) : m));
+        }
+        if (!create) return prev;
+        return [
+          ...prev,
+          patch({ id: assistantMsgId, role: "assistant", text: "", kind: "chat", streaming: true, tools: [] }),
+        ];
+      });
+    };
+
+    if (!silent) {
+      setMessages((prev) => [
+        ...(startFresh ? [] : prev),
+        {
+          id: userMsgId,
+          role: "user",
+          text: prompt,
+          kind: "chat",
+        },
+        {
+          id: assistantMsgId,
+          role: "assistant",
+          text: "",
+          kind: "chat",
+          streaming: true,
+          thinking: true,
+          tools: [],
+        },
+      ]);
+    }
     setStreaming(true);
 
     try {
@@ -152,83 +190,55 @@ export function App() {
         },
         {
           onSession: (sid) => {
-            if (sid) setSessionId(sid);
+            if (sid) {
+              sessionIdRef.current = sid;
+              setSessionId(sid);
+            }
           },
           onStatus: (phase) => {
             if (phase === "thinking") {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantMsgId ? { ...m, thinking: true } : m,
-                ),
-              );
+              patchAssistant((m) => ({ ...m, thinking: true }));
             }
           },
           onTool: (chip) => {
-            setMessages((prev) =>
-              prev.map((m) => {
-                if (m.id !== assistantMsgId) return m;
-                const existing = m.tools || [];
-                const found = existing.some((t) => t.name === chip.name);
-                const updatedTools = found
-                  ? existing.map((t) => (t.name === chip.name ? chip : t))
-                  : [...existing, chip];
-                return { ...m, thinking: false, tools: updatedTools };
-              }),
-            );
+            patchAssistant((m) => {
+              const existing = m.tools || [];
+              const found = existing.some((t) => t.name === chip.name);
+              const updatedTools = found
+                ? existing.map((t) => (t.name === chip.name ? chip : t))
+                : [...existing, chip];
+              return { ...m, thinking: false, tools: updatedTools };
+            });
           },
           onDelta: (deltaText) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId
-                  ? { ...m, thinking: false, text: m.text + deltaText }
-                  : m,
-              ),
-            );
+            patchAssistant((m) => ({ ...m, thinking: false, text: m.text + deltaText }), true);
           },
           onReport: (report) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId
-                  ? { ...m, report, kind: report.kind }
-                  : m,
-              ),
-            );
+            patchAssistant((m) => ({ ...m, report, kind: report.kind }));
           },
           onStaged: (staged) => {
-            setMessages((prev) =>
-              prev.map((m) => (m.id === assistantMsgId ? { ...m, staged } : m)),
-            );
+            patchAssistant((m) => ({ ...m, staged }));
           },
           onApplied: (applied) => {
             setAppliedStagedIds((prev) => new Set(prev).add(applied.staged_id));
           },
+          onPlanStaged: (plan) => {
+            patchAssistant((m) => ({ ...m, plan }), true);
+          },
+          onPlanApplied: (applied) => {
+            planAppliedRef.current = { ...planAppliedRef.current, [applied.staged_id]: applied };
+            setPlanApplied(planAppliedRef.current);
+          },
           onMessage: ({ text, kind }) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId
-                  ? { ...m, thinking: false, text, kind }
-                  : m,
-              ),
-            );
+            patchAssistant((m) => ({ ...m, thinking: false, text, kind }), true);
           },
           onError: (errMsg) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId
-                  ? { ...m, thinking: false, streaming: false, error: errMsg }
-                  : m,
-              ),
-            );
+            failed = true;
+            patchAssistant((m) => ({ ...m, thinking: false, streaming: false, error: errMsg }), true);
           },
           onDone: () => {
             lastActivityRef.current = Date.now();
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMsgId
-                  ? { ...m, thinking: false, streaming: false }
-                  : m,
-              ),
-            );
+            patchAssistant((m) => ({ ...m, thinking: false, streaming: false }));
           },
         },
       );
@@ -243,19 +253,15 @@ export function App() {
         setMe(refreshed);
       }
     } catch (err) {
+      failed = true;
       const errMsg =
         err instanceof Error ? err.message : "Failed to reach running coach.";
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId
-            ? { ...m, thinking: false, streaming: false, error: errMsg }
-            : m,
-        ),
-      );
+      patchAssistant((m) => ({ ...m, thinking: false, streaming: false, error: errMsg }), true);
     } finally {
       setStreaming(false);
       if (isApply) setApplyingStagedId(null);
     }
+    return !failed;
   };
 
   const handleApplyStaged = (stagedId: string) => {
@@ -265,6 +271,57 @@ export function App() {
       skill: "workout-creator",
       staged_id: stagedId,
     });
+  };
+
+  /**
+   * "Apply to TrainingPeaks" / "Resume" on a staged plan: one visible user bubble, then one silent
+   * `plan-builder:apply` turn per week not yet applied, in order. Stops on a stream error or a failed
+   * week (the card then offers Resume, which re-runs this loop for the remaining weeks).
+   */
+  const handleApplyPlan = async (stagedId: string) => {
+    if (streaming || planApplying) return;
+    const plan = [...messagesRef.current].reverse().find((m) => m.plan?.staged_id === stagedId)?.plan;
+    if (!plan) return;
+    const resume = Boolean(planAppliedRef.current[stagedId] || planFailedIds.has(stagedId));
+    const doneWeeks = new Set(planAppliedRef.current[stagedId]?.weeks_done ?? []);
+    const remaining = plan.weeks.map((w) => w.week).filter((w) => !doneWeeks.has(w));
+    if (remaining.length === 0) return;
+
+    setPlanFailedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(stagedId);
+      return next;
+    });
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `u-${Date.now()}`,
+        role: "user",
+        text: resume ? "Resume applying plan to TrainingPeaks" : "Apply plan to TrainingPeaks",
+        kind: "chat",
+      },
+    ]);
+
+    let stopped = false;
+    for (const week of remaining) {
+      setPlanApplying({ stagedId, week });
+      const ok = await handleSendPrompt(
+        `Apply plan week ${week}`,
+        false,
+        { skill: "plan-builder:apply", staged_id: stagedId, week },
+        { silent: true },
+      );
+      const state = planAppliedRef.current[stagedId];
+      if (!ok || state?.failed_weeks?.includes(week)) {
+        stopped = true;
+        break;
+      }
+      if (state?.done) break;
+    }
+    if (stopped) {
+      setPlanFailedIds((prev) => new Set(prev).add(stagedId));
+    }
+    setPlanApplying(null);
   };
 
   const handleHome = () => {
@@ -298,6 +355,9 @@ export function App() {
         : prev,
     );
   };
+
+  // The plan apply loop spans several turns: keep the hub disabled between them too.
+  const busy = streaming || planApplying !== null;
 
   if (loadingBoot) {
     return (
@@ -341,7 +401,7 @@ export function App() {
 
       <TopBar
         me={me}
-        newSessionDisabled={streaming}
+        newSessionDisabled={busy}
         onHome={handleHome}
         onNewSession={handleNewSession}
         onViewProfile={() => {
@@ -358,13 +418,17 @@ export function App() {
       <Dashboard
         me={me}
         messages={messages}
-        streaming={streaming}
+        streaming={busy}
         onSendPrompt={handleSendPrompt}
         draft={draft}
         onDraftChange={setDraft}
         appliedStagedIds={appliedStagedIds}
         applyingStagedId={applyingStagedId}
         onApplyStaged={handleApplyStaged}
+        planApplied={planApplied}
+        planApplying={planApplying}
+        planFailedIds={planFailedIds}
+        onApplyPlan={(stagedId) => void handleApplyPlan(stagedId)}
         onViewProfile={() => {
           setProfileDrawerMode("view");
           setProfileDrawerOpen(true);

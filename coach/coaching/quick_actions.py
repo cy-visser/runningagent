@@ -7,7 +7,8 @@ before it is persisted and puts the action in `temp:quick_action` state for that
 keys are never persisted). On the turn's first model call `dispatch_quick_action` returns the
 `load_skill` + data-tool calls itself, so no LLM call routes the request. The report call that follows
 has tool calling disabled and omits the routing rules and skill catalog: the LLM only writes the
-recommendations.
+recommendations. Exception: `plan-builder` keeps tool calling for its follow-up call, which has to call
+`stage_training_plan` (TOOLS_ON_ACTIONS).
 
 Everything is scoped to the dispatching invocation: typed chat turns (no action) keep the full
 instruction, the skill catalog and tool calling.
@@ -26,6 +27,8 @@ from google.genai import types
 from opentelemetry import trace
 
 from ...features.check_in_report.fetch_checkin_data_tool import fetch_checkin_data_tool
+from ...features.plan_builder.apply_training_plan_tool import apply_training_plan_tool
+from ...features.plan_builder.fetch_plan_context_tool import fetch_plan_context_tool
 from ...features.schedule_audit.fetch_schedule_audit_data_tool import (
     fetch_schedule_audit_data_tool,
 )
@@ -51,9 +54,15 @@ QUICK_ACTIONS = {
     # "Update TrainingPeaks" button: applies the staged changes in code. The follow-up model call is
     # answered by `write_confirmation_reply`, so this action makes no LLM call at all.
     "workout-creator": (apply_staged_changes_tool, frozenset({"staged_id"})),
+    # Build Plan button: plan context in code; the one LLM call that follows plans and stages the plan.
+    "plan-builder": (fetch_plan_context_tool, frozenset({"start_date", "end_date", "mode"})),
+    # Apply to TrainingPeaks on a staged plan: one silent action per week, written in code (zero LLM calls).
+    "plan-builder:apply": (apply_training_plan_tool, frozenset({"staged_id", "week"})),
 }
 # Actions that only execute code: no skill instructions are loaded for them.
-SKILL_FREE_ACTIONS = frozenset({"workout-creator"})
+SKILL_FREE_ACTIONS = frozenset({"workout-creator", "plan-builder:apply"})
+# Actions whose follow-up model call keeps tool calling (it must call a write tool, not write a report).
+TOOLS_ON_ACTIONS = frozenset({"plan-builder"})
 
 LOAD_SKILL = "load_skill"
 # Gemini 3 validates thought signatures on the current turn's function calls; calls that were not
@@ -77,6 +86,15 @@ def _is_turn_start(llm_request: LlmRequest) -> bool:
     last = llm_request.contents[-1]
     parts = last.parts or []
     return last.role == "user" and any(p.text for p in parts) and not any(p.function_response for p in parts)
+
+
+def _no_model_step_yet(callback_context: CallbackContext) -> bool:
+    """No event of this agent in this invocation yet: covers silent actions whose message has no text
+    (e.g. the per-week plan apply), which leave no runner content in the request."""
+    session = getattr(callback_context, "session", None)
+    invocation_id, agent = callback_context.invocation_id, callback_context.agent_name
+    return session is not None and not any(
+        e.invocation_id == invocation_id and e.author == agent for e in session.events or [])
 
 
 def quick_action_calls(action: Any, llm_request: LlmRequest) -> list[types.Part]:
@@ -106,7 +124,8 @@ def dispatch_quick_action(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
     """before_model_callback: runs a web quick action's skill + data tool without a routing LLM call,
-    then disables tool calling for that turn's report call. No-op for typed chat turns."""
+    then disables tool calling for that turn's report call (except TOOLS_ON_ACTIONS). No-op for typed
+    chat turns."""
     state = callback_context.state
     invocation_id = callback_context.invocation_id
     if is_quick_action_report(state, invocation_id):
@@ -114,13 +133,14 @@ def dispatch_quick_action(
         llm_request.config.tool_config = NO_TOOL_CALLS
         return None
     action = state.get(QUICK_ACTION_STATE_KEY)
-    if not action or not _is_turn_start(llm_request):
+    if not action or not (_is_turn_start(llm_request) or _no_model_step_yet(callback_context)):
         return None
     state[QUICK_ACTION_STATE_KEY] = None  # consumed: never dispatched twice
     parts = quick_action_calls(action, llm_request)
     if not parts:
         return None  # unknown action: fall back to normal LLM routing of the message
-    state[DISPATCHED_STATE_KEY] = invocation_id
+    if action["skill"] not in TOOLS_ON_ACTIONS:
+        state[DISPATCHED_STATE_KEY] = invocation_id
     return LlmResponse(content=types.Content(role="model", parts=parts))
 
 

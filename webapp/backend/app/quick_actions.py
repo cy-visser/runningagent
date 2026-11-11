@@ -14,7 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field
 QUICK_ACTION_STATE_KEY = "temp:quick_action"
 # Message part carrying the action (Agent Runtime's /api/run_sse drops state_delta): prefix + JSON.
 QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
-QUICK_ACTION_SKILLS = ("check-in-report", "trend-analysis", "schedule-audit", "workout-analysis", "workout-creator")
+QUICK_ACTION_SKILLS = (
+    "check-in-report", "trend-analysis", "schedule-audit", "workout-analysis", "workout-creator",
+    "plan-builder", "plan-builder:apply",
+)
 
 IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 
@@ -56,7 +59,24 @@ class ApplyStagedAction(_Action):
     staged_id: str = Field(..., pattern=r"^[0-9a-f-]{36}$")
 
 
+class PlanBuildAction(_Action):
+    """'Build Plan' button: plan context in code, then one planning call that stages the plan."""
+
+    skill: Literal["plan-builder"]
+    start_date: IsoDate
+    end_date: IsoDate
+    mode: Literal["new", "overhaul"] = "new"
+
+
+class PlanApplyAction(_Action):
+    """One week of the staged plan written to TrainingPeaks in code (silent per-week apply loop, no LLM)."""
+
+    skill: Literal["plan-builder:apply"]
+    staged_id: str = Field(..., pattern=r"^[0-9a-f-]{36}$")
+    week: int = Field(..., ge=1, le=52)
+
+
 QuickAction = Annotated[
-    Union[CheckinAction, TrendAction, AuditAction, WorkoutAction, ApplyStagedAction],
+    Union[CheckinAction, TrendAction, AuditAction, WorkoutAction, ApplyStagedAction, PlanBuildAction, PlanApplyAction],
     Field(discriminator="skill"),
 ]

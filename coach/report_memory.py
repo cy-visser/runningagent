@@ -15,7 +15,9 @@ its [workout_id]s) or a workout analysis's numbers used to be lost after compact
   too, call and response, so only the current staged set is verbatim. What the app already settled
   is compacted: an apply result becomes one line per change (with ids) and the staged set it applied
   a stub (its `message` kept). Skill instructions from completed turns become a stub (the coach
-  reloads a skill with its data tool). The stored session (and so the UI) is never changed.
+  reloads a skill with its data tool). An applied training plan's spec becomes a stub (its `message`
+  kept) and its per-week apply events collapse into one summary line. The stored session (and so the
+  UI) is never changed.
 """
 
 import json
@@ -47,6 +49,9 @@ REPLACED_STAGE_RESULT = {"result": "[replaced: the current staged set is further
 APPLIED_STAGE_CHANGES = "[applied: see the apply_staged_changes result below]"
 APPLIED_STAGE_RESULT = {"result": "[applied: see the apply_staged_changes result below]"}
 STALE_SKILL_STUB = "[skill instructions from an earlier turn: call load_skill again before following this skill]"
+PLAN_STAGE = "stage_training_plan"
+PLAN_APPLY = "apply_training_plan"
+APPLIED_PLAN_STUB = "[applied plan: {weeks} weeks, {sessions} sessions, see the apply summary]"
 
 _REPORT_BLOCK_RE = re.compile(r'\n*<report tool="(?P<tool>[^"]+)"[^>]*>.*?</report>', re.DOTALL)
 REPORT_MEMORY_HEADER = (
@@ -245,13 +250,18 @@ def keep_latest_reports_and_skills(
 
     # Pass 2: drop or point away from every older copy; compact what the app already settled.
     replaced, applied = staging_status(contents)
+    plans = plan_status(contents)
     turn_start = _last_runner_message(contents)
     out: list[types.Content] = []
     for ci, content in enumerate(contents):
         parts, changed = [], False
         for pi, part in enumerate(content.parts or []):
+            if _is_collapsed_apply(part, plans):
+                changed = True  # an earlier week of a plan apply: the latest one carries the summary
+                continue
             new = (
-                _without_replaced_staging(part, replaced)
+                _compact_plan(part, plans)
+                or _without_replaced_staging(part, replaced)
                 or _compact_applied(part, applied)
                 or _stale_skill_stub(part, ci, turn_start, call_skills)
                 or _keep_latest_in_part(part, ci, pi, latest, call_skills)
@@ -259,11 +269,89 @@ def keep_latest_reports_and_skills(
             changed = changed or new is not part
             if new is not None:
                 parts.append(new)
+        if changed and not parts:
+            continue  # only collapsed apply events were in this content
         if changed:
             content = content.model_copy(update={"parts": parts})
         out.append(content)
     llm_request.contents = out
     return None  # never short-circuits the model call
+
+
+# ------------------------------------------------------------------------------
+# Training plans: applied spec stubbed, per-week apply events collapsed
+# ------------------------------------------------------------------------------
+
+def plan_status(contents: list[types.Content]) -> dict:
+    """Applied plans in the request: {"stubs": {stage call id: stub}, "drop": apply call ids of earlier
+    weeks, "summaries": {latest apply call id per plan: summary line}}."""
+    calls: dict[str, list[str]] = {}       # staged_id -> apply call ids, in order
+    call_plan: dict[str, str] = {}         # apply call id -> staged_id
+    responses: dict[str, dict] = {}        # apply call id -> result JSON
+    stages: dict[str, tuple[str, dict]] = {}  # stage call id -> (staged_id, result JSON)
+    for content in contents:
+        for part in content.parts or []:
+            call, response = part.function_call, part.function_response
+            if call and call.name == PLAN_APPLY and call.id:
+                staged_id = str((call.args or {}).get("staged_id") or "")
+                calls.setdefault(staged_id, []).append(call.id)
+                call_plan[call.id] = staged_id
+            elif response and response.id and response.name == PLAN_APPLY:
+                responses[response.id] = _result_json(response)
+            elif response and response.id and response.name == PLAN_STAGE:
+                result = _result_json(response)
+                if result.get("staged_id"):
+                    stages[response.id] = (result["staged_id"], result)
+    stubs = {cid: APPLIED_PLAN_STUB.format(weeks=r.get("total_weeks", "?"), sessions=r.get("sessions", "?"))
+             for cid, (sid, r) in stages.items() if sid in calls}
+    drop = {cid for ids in calls.values() for cid in ids[:-1]}
+    summaries = {ids[-1]: applied_plan_summary(sid, responses.get(ids[-1]) or {}) for sid, ids in calls.items()}
+    return {"stubs": stubs, "drop": drop, "summaries": summaries}
+
+
+def _week_ranges(weeks: list[int]) -> str:
+    """[1, 2, 3, 5] -> '1-3, 5'."""
+    ranges: list[list[int]] = []
+    for w in sorted(weeks):
+        if ranges and w == ranges[-1][1] + 1:
+            ranges[-1][1] = w
+        else:
+            ranges.append([w, w])
+    return ", ".join(f"{a}-{b}" if a != b else str(a) for a, b in ranges) or "none"
+
+
+def applied_plan_summary(staged_id: str, result: dict) -> str:
+    """One line for every apply event of a plan (the latest state); the runner saw the progress and confirmation."""
+    state = result.get("applied_training_plan") or {}
+    if not state:
+        return f"Training plan {staged_id}: apply result: {json.dumps(result)[:200]}"
+    line = (f"Training plan {staged_id} applied to TrainingPeaks (the app confirmed this to the runner): weeks "
+            f"{_week_ranges(state.get('weeks_done') or [])} of {state.get('total_weeks')} done · "
+            f"{state.get('created', 0)} created, {state.get('updated', 0)} updated, {state.get('deleted', 0)} removed, "
+            f"{state.get('failed', 0)} failed")
+    if state.get("failed_weeks"):
+        line += f"; not saved: weeks {_week_ranges(state['failed_weeks'])}"
+    return line
+
+
+def _is_collapsed_apply(part: types.Part, plans: dict) -> bool:
+    call, response = part.function_call, part.function_response
+    return bool((call and call.name == PLAN_APPLY and call.id in plans["drop"])
+                or (response and response.name == PLAN_APPLY and response.id in plans["drop"]))
+
+
+def _compact_plan(part: types.Part, plans: dict) -> Optional[types.Part]:
+    """The applied plan's stage call as a stub (message kept) and the latest apply response as one line."""
+    call, response = part.function_call, part.function_response
+    if call and call.name == PLAN_STAGE and call.id in plans["stubs"]:
+        args = {"plan": plans["stubs"][call.id]}
+        if (call.args or {}).get("message"):
+            args["message"] = call.args["message"]
+        return part.model_copy(update={"function_call": call.model_copy(update={"args": args})})
+    if response and response.name == PLAN_APPLY and response.id in plans["summaries"]:
+        compact = {"result": plans["summaries"][response.id]}
+        return part.model_copy(update={"function_response": response.model_copy(update={"response": compact})})
+    return None
 
 
 def _without_replaced_staging(part: types.Part, replaced: set[str]) -> Optional[types.Part]:

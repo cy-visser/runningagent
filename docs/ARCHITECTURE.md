@@ -42,6 +42,7 @@ Each coaching capability lives in its own vertical slice under `features/<featur
 
 1. **Co-located Skills** (`features/<feature>/SKILL.md`, next to the feature's `*_tool.py`) hold the coaching protocol and output template for each task, loaded on demand via `load_skill`.
 2. **Feature Tools & Private Helpers** (`features/<feature>/<tool_name>_tool.py` + `helpers/`): each feature tool runs MCP calls, Open-Meteo lookups, and Firestore reads in parallel, computes physiological metrics in deterministic Python using its private `helpers/` and `shared/`, and returns a compact summary.
+   - **Plan builder** (`features/plan_builder/`): for a new plan / block, or an overhaul spanning ≥ 3 ISO weeks or > 10 sessions, the coach writes the whole plan in one `stage_training_plan` call as compact session codes (`E 10`, `T 2x15' r2'`, `L 28 +8@M`, `B 4x8' @SS r4'`, `S 45' heavy-lower`, `REST`). Code expands every code with the runner's pace / FTP zones into exact builders (`shared/workout_builder`, `shared/strides`), diffs it per day and sport (Run, Strength, Bike) against the calendar, and stores `staged_training_plan` (spec + zones + card rows, no builders). The web app applies it with one silent `plan-builder:apply` quick action per week (`apply_training_plan`: re-expand, re-diff, ≤ 3 parallel writes with 429 backoff, idempotent per week; `applied_training_plan` tracks progress), with zero LLM calls. `stage_workout_changes` refuses larger sets and points the coach to plan-builder.
    - `fetch_checkin_data`, `fetch_trend_data`, and `fetch_schedule_audit_data` also write structured JSON payloads (`checkin_report_data`, `trend_report_data`, and `audit_report_data`, `version: 1`) into `tool_context.state`. The Cloud Run Web App BFF extracts these whitelisted `stateDelta` keys from `/run_sse` and streams `event: report` frames so interactive charts render from the exact numbers used in the prose.
 
 <img src="diagrams/04_tool_call_sequence.svg" alt="Tool call sequence" style="border: 1px solid #dadce0; border-radius: 8px; max-width: 100%;" />
@@ -64,13 +65,15 @@ running_coach/
 │   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
 │   ├── schedule_audit/              # SKILL.md, fetch_schedule_audit_data_tool.py, helpers/
 │   ├── nutrition_planner/           # SKILL.md, fetch_nutrition_context_tool.py, helpers/
-│   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes, workout_builder: exact TP builder + totals, workout_upsert)
+│   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes); <= 10 changes within <= 2 ISO weeks, bigger sets redirect to plan_builder
+│   ├── plan_builder/                # SKILL.md, fetch_plan_context_tool.py, stage_training_plan_tool.py, apply_training_plan_tool.py, helpers/ (session_codes, strength_templates, pace_zones, plan_expand, plan_diff, plan_context_text, plan_summary_text, web_payload)
 │   └── weather_lookup/              # get_weather_tool.py
 ├── shared/                          # domain helpers used by 2+ features/coach
 │   ├── dates  units  sports  session_state  runner_identity  parallel_fetch  tp_payloads
 │   ├── goal_plan  goal_distance  race_equivalents  goal_plan_summary  progress_verdicts
 │   ├── weekly_buckets  calendar_notes  long_run_facts  north_star_targets  health_metrics  athlete_settings  hr_pace_fit
-│   ├── analysis_summary  workout_status  workout_structure  runner_weather  web_report_payload
+│   ├── analysis_summary  workout_status  workout_structure  runner_weather  web_report_payload  ui_channel
+│   ├── workout_builder  strides  workout_upsert   # exact TP builder + totals, strides rule, TP writes (workout_creator + plan_builder)
 │   └── training_log/                # record_builder, record_writer, telemetry_file
 ├── integrations/                    # external I/O only
 │   ├── config  package_paths  firestore  session_service  open_meteo

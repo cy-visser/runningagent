@@ -8,7 +8,7 @@ from google.adk.tools import FunctionTool, ToolContext
 
 from ...shared.ui_channel import reply
 from .helpers.staged_changes import APPLIED_CHANGES_STATE_KEY, STAGED_CHANGES_STATE_KEY, confirmation_text
-from .helpers.workout_upsert import write_change
+from ...shared.workout_upsert import write_change
 
 NOTHING_STAGED_TEXT = "There are no staged changes to apply. Ask me to plan the changes first."
 REPLACED_TEXT = (

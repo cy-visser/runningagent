@@ -4,14 +4,14 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Optional
 
 from google.adk.tools import FunctionTool, ToolContext
 from opentelemetry import trace
 
 from ...integrations.trainingpeaks import tp_calls
-from ...shared.dates import iso_date
+from ...shared.dates import iso_date, monday_of
 from ...shared.sports import RUN_SPORTS
 from ...shared.tp_payloads import coerce_mcp_payload
 from ...shared.ui_channel import reply
@@ -25,7 +25,7 @@ from .helpers.staged_changes import (
     resolve_changes,
     staged_dates,
 )
-from .helpers.workout_builder import needs_builder
+from ...shared.workout_builder import needs_builder
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +45,29 @@ _NEEDS_STRUCTURE_MESSAGE = (
     "given, start from it and change only what the runner asked; keep everything else as is), then stage the full "
     "set again. Do not ask the runner."
 )
+# Above either limit the change is a plan overhaul: plan-builder stages it in one compact call.
+MAX_WORKOUT_CHANGES = 10
+MAX_ISO_WEEKS = 2
 # Rejected (needs_structure) staging attempts allowed in one turn before the app stops the retries.
 MAX_NEEDS_STRUCTURE_ATTEMPTS = 3
 _ATTEMPTS_STATE_KEY = "temp:needs_structure_attempts"
+
+
+def plan_builder_redirect(workout_changes: int, days: list[date]) -> Optional[dict]:
+    """The redirect result when the set is too big for workout-creator (> MAX_WORKOUT_CHANGES workout changes
+    or spanning more than MAX_ISO_WEEKS ISO weeks), else None. Nothing is staged then."""
+    weeks = (monday_of(max(days)) - monday_of(min(days))).days // 7 + 1 if days else 0
+    if workout_changes <= MAX_WORKOUT_CHANGES and weeks <= MAX_ISO_WEEKS:
+        return None
+    window = ""
+    if days:
+        start, end = monday_of(min(days)), monday_of(max(days)) + timedelta(days=6)
+        window = f'start_date="{iso_date(start)}", end_date="{iso_date(end)}", '
+    return {"staged": 0, "use_plan_builder": True, "message": (
+        f"Nothing was staged: {workout_changes} workout changes across {weeks} ISO weeks is a plan overhaul "
+        f"(workout-creator: <= {MAX_WORKOUT_CHANGES} changes within <= {MAX_ISO_WEEKS} ISO weeks). Use plan-builder: "
+        f'call load_skill("plan-builder") and fetch_plan_context({window}mode="overhaul") in the same step, then '
+        "stage the plan with ONE stage_training_plan call.")}
 
 
 def staged_text(staged: int) -> str:
@@ -166,7 +186,8 @@ async def stage_workout_changes(
     - Delete: delete=true with workout_id, or date_str + sport (+ title); a note: kind='note', date_str (+ title).
       To remove a session or note always stage a delete. Completed workouts are never deleted (`refused`).
 
-    Returns the number staged, any `ambiguous` changes (several planned workouts of that sport on the
+    At most 10 workout changes within 2 ISO weeks: a bigger set is a plan overhaul (plan-builder) and is
+    not staged. Returns the number staged, any `ambiguous` changes (several planned workouts of that sport on the
     date: ask the runner which one), any `not_found` workout_ids, and any `needs_structure` changes
     (nothing is staged: send the exact builder, starting from `current_structure` when given, and stage
     again without asking the runner).
@@ -175,6 +196,9 @@ async def stage_workout_changes(
     workout_raw = [c for c in raw if str(c.get("kind") or KIND_WORKOUT).lower() != "note"]
     note_deletes = [c for c in raw if c not in workout_raw and c.get("delete")]
     days = staged_dates(workout_raw)
+    redirect = plan_builder_redirect(len(workout_raw), days)
+    if redirect:
+        return json.dumps(redirect)
     wants_settings = any((needs_builder(c.get("sport")) or c.get("structure")) and not c.get("delete") for c in workout_raw)
     # Explicit ids are read with the calendar (one parallel round): a move to another date still
     # knows the session it moves, and the card shows its builder.

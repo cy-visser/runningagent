@@ -16,10 +16,14 @@ WHITELISTED_REPORT_KEYS: dict[str, Literal["checkin", "trend", "audit", "workout
 
 # Staged workout changes (web card with the "Update TrainingPeaks" button) and their application.
 # Separate from reports so one coach message can carry both a report and a staged-changes card.
-CHANGE_EVENT_KEYS: dict[str, Literal["staged", "applied"]] = {
+# A staged training plan (plan-builder card, applied week by week) follows the same pattern.
+CHANGE_EVENT_KEYS: dict[str, Literal["staged", "applied", "plan_staged", "plan_applied"]] = {
     "staged_workout_changes": "staged",
     "applied_workout_changes": "applied",
+    "staged_training_plan": "plan_staged",
+    "applied_training_plan": "plan_applied",
 }
+PLAN_BACKEND_ONLY_KEYS = ("spec", "zones")
 
 TOOL_LABELS: dict[str, str] = {
     "fetch_checkin_data": "Pulling 14 days of TrainingPeaks data",
@@ -29,6 +33,9 @@ TOOL_LABELS: dict[str, str] = {
     "fetch_nutrition_context": "Loading fueling & weather forecast",
     "stage_workout_changes": "Staging plan changes",
     "apply_staged_changes": "Updating TrainingPeaks",
+    "fetch_plan_context": "Reading your training history",
+    "stage_training_plan": "Building your plan",
+    "apply_training_plan": "Updating TrainingPeaks",
     "get_weather": "Checking local weather forecast",
     "request_new_goal": "Starting goal setup",
     "load_skill": "Loading coaching protocol",
@@ -115,6 +122,9 @@ class TurnEventTranslator:
         for state_key, ev_name in CHANGE_EVENT_KEYS.items():
             payload = state_delta.get(state_key)
             if isinstance(payload, dict):
+                if ev_name == "plan_staged":
+                    # The plan spec and zones are backend-only (re-expanded at apply time).
+                    payload = {k: v for k, v in payload.items() if k not in PLAN_BACKEND_ONLY_KEYS}
                 out.append((ev_name, payload))
 
         author = str(adk_event.get("author") or "")

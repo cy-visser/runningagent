@@ -174,3 +174,40 @@ def test_skill_instructions_of_completed_turns_become_a_stub_and_the_current_tur
               for c in request.contents for p in c.parts
               if p.function_response and p.function_response.name == "load_skill"}
     assert skills == {"schedule-audit": STALE_SKILL_STUB, "workout-creator": SKILL_TEXT}
+
+
+def test_an_applied_plan_is_stubbed_and_its_week_applies_collapse_into_one_line():
+    from google.adk.models.llm_request import LlmRequest
+
+    from running_coach.coach.report_memory import APPLIED_PLAN_STUB
+
+    sid = "0f8fad5b-d9cb-469f-a165-70867728950e"
+    spec = {"start_date": "2026-11-02", "weeks": [{"week": n, "days": {"Tue": "I 6x1k r2'"}} for n in range(1, 25)]}
+    staged = {"staged_id": sid, "total_weeks": 24, "sessions": 148, "weeks": ["W1 ...", "W2 ..."]}
+
+    def apply(call_id: str, week: int) -> list[types.Content]:
+        state = {"staged_id": sid, "total_weeks": 24, "weeks_done": list(range(1, week + 1)), "created": 5 * week,
+                 "updated": week, "deleted": 0, "failed": 0, "failed_weeks": [], "done": week == 24}
+        return [types.Content(role="user", parts=[types.Part(text="")]),
+                types.Content(role="model", parts=[_call("apply_training_plan", call_id, staged_id=sid, week=week)]),
+                types.Content(role="user", parts=[_resp("apply_training_plan", call_id, {"result": json.dumps(
+                    {"success": True, "week": week, "applied_training_plan": state})})])]
+
+    request = LlmRequest(contents=[
+        types.Content(role="user", parts=[types.Part(text="Build my marathon plan")]),
+        types.Content(role="model", parts=[_call("stage_training_plan", "p1", plan=spec, message="Base, build, taper.")]),
+        types.Content(role="user", parts=[_resp("stage_training_plan", "p1", {"result": json.dumps(staged)})]),
+        *apply("a1", 1), *apply("a2", 2), *apply("a3", 3),
+    ])
+    original = list(request.contents)
+    keep_latest_reports_and_skills(None, request)
+
+    calls = {p.function_call.id: p.function_call.args for c in request.contents for p in c.parts if p.function_call}
+    assert calls["p1"] == {"plan": APPLIED_PLAN_STUB.format(weeks=24, sessions=148), "message": "Base, build, taper."}
+    assert [cid for cid in calls if cid.startswith("a")] == ["a3"]           # earlier weeks collapsed
+    (summary,) = [p.function_response.response["result"] for c in request.contents for p in c.parts
+                  if p.function_response and p.function_response.name == "apply_training_plan"]
+    assert summary == (f"Training plan {sid} applied to TrainingPeaks (the app confirmed this to the runner): weeks "
+                       "1-3 of 24 done · 15 created, 3 updated, 0 removed, 0 failed")
+    # Only the request changes: the session's contents keep the full spec and every apply event.
+    assert original[1].parts[0].function_call.args["plan"] == spec and len(original) == 12

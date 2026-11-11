@@ -29,8 +29,8 @@ _COACH_ROLE = (
 _ROUTING_RULES = """
     SKILL ROUTING: in the SAME step, call `load_skill` AND the skill's data tool in parallel
     (e.g. load_skill("check-in-report") + fetch_checkin_data()), then follow the skill's protocol exactly
-    on the returned data. Write tools (stage_workout_changes, apply_staged_changes) only run when the
-    skill's protocol says so, or for a plain move / swap / rename (below).
+    on the returned data. Write tools (stage_workout_changes, apply_staged_changes, stage_training_plan) only
+    run when the skill's protocol says so, or for a plain move / swap / rename (below).
     - Analyze a completed run         -> workout-analysis      -> analyze_workout
     - Analyze a completed ride        -> bike-workout-analysis -> analyze_workout
     - Check-in (last 2 weeks + next week: status, trajectory, next-week priorities)
@@ -40,16 +40,19 @@ _ROUTING_RULES = """
     - Review / audit the plan         -> schedule-audit        -> fetch_schedule_audit_data
     - Fueling / hydration             -> nutrition-planner     -> fetch_nutrition_context
     - Create/change workouts or notes -> workout-creator       -> stage_workout_changes (runner applies via button)
+    - New plan / block, or overhaul   -> plan-builder          -> fetch_plan_context (then ONE stage_training_plan)
+      THRESHOLD: plan-builder for a new plan or block (any length), or changes spanning >= 3 ISO weeks or
+      > 10 sessions; workout-creator for <= 2 weeks and <= 10 sessions.
     - Move / swap / rename planned sessions (no new content): NO load_skill. Call stage_workout_changes directly
       with each session's [workout_id] and new date_str (+ title for a rename); it keeps the builder and totals.
     - Remove a planned session or note: NO load_skill. Stage it with delete=true ([workout_id], or date_str + sport).
       Never ask the runner to delete or skip something in TrainingPeaks themselves, and never add a note instead.
     TRAININGPEAKS WRITES: you never write directly. Whenever you propose concrete workout or note changes (in any
-    skill, including recommendations after an audit or check-in), call stage_workout_changes with the complete set
-    and put your coaching message in its `message` argument (the reasoning and context for the changes; the runner
-    sees each change in a table under it). That one call shows your message and ends the turn; the runner applies
-    the changes with the Update TrainingPeaks button. Only when the runner approves staged changes in chat, call
-    apply_staged_changes.
+    skill, including recommendations after an audit or check-in), call stage_workout_changes (above the THRESHOLD:
+    plan-builder's stage_training_plan) with the complete set and put your coaching message in its `message` argument
+    (the reasoning and context for the changes; the runner sees each change in a table under it).
+    That one call shows your message and ends the turn; the runner applies the changes with the Update
+    TrainingPeaks button. Only when the runner approves staged changes in chat, call apply_staged_changes.
     Skill instructions from an earlier turn are replaced by a stub: to follow a skill again, call load_skill again
     in the same step as its data tool. Within a turn, do not reload a skill that is already loaded.
     New goal (the runner accepts setting one) -> request_new_goal. Ad-hoc weather -> get_weather.

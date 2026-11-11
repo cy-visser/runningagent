@@ -14,6 +14,8 @@ import {
   DEMO_CHECKIN_MARKDOWN,
   DEMO_ME_ONBOARDING,
   DEMO_ME_READY,
+  DEMO_PLAN,
+  DEMO_PLAN_MARKDOWN,
   DEMO_PROFILE_RESPONSE,
   DEMO_TREND_DATA,
   DEMO_TREND_MARKDOWN,
@@ -196,6 +198,22 @@ export async function demoFetchSession(): Promise<SessionResponse> {
         report: { kind: "workout", data: DEMO_WORKOUT_DATA },
       },
     );
+  } else if (preset === "plan") {
+    messages.push(
+      {
+        id: "u-5",
+        role: "user",
+        text: "Build my training plan for Sub-1:26 Half Marathon from 2026-11-23 to 2027-03-14",
+        kind: "chat",
+      },
+      {
+        id: "a-5",
+        role: "assistant",
+        text: DEMO_PLAN_MARKDOWN,
+        kind: "chat",
+        plan: DEMO_PLAN,
+      },
+    );
   }
   return {
     session_id: "demo-session-1",
@@ -210,17 +228,61 @@ export async function demoCreateNewSession(): Promise<SessionResponse> {
   };
 }
 
+let demoPlanWeeksDone: number[] = [];
+
 export async function demoStreamChat(
   params: { message: string; sessionId?: string | null; action?: unknown },
   handlers: ChatStreamHandlers,
 ): Promise<void> {
   const sid = params.sessionId || "demo-session-1";
   handlers.onSession?.(sid);
+  const action = (params.action ?? null) as { skill?: string; week?: number } | null;
+
+  // Plan apply: one silent turn per week (progress only; the last week confirms).
+  if (action?.skill === "plan-builder:apply" && typeof action.week === "number") {
+    await new Promise((r) => setTimeout(r, 250));
+    if (!demoPlanWeeksDone.includes(action.week)) demoPlanWeeksDone = [...demoPlanWeeksDone, action.week];
+    const total = DEMO_PLAN.weeks.length;
+    const done = demoPlanWeeksDone.length === total;
+    const t = DEMO_PLAN.totals;
+    handlers.onPlanApplied?.({
+      staged_id: DEMO_PLAN.staged_id,
+      total_weeks: total,
+      weeks_done: [...demoPlanWeeksDone].sort((a, b) => a - b),
+      created: done ? t.create : 0,
+      updated: done ? t.update : 0,
+      deleted: done ? t.delete : 0,
+      failed: 0,
+      failed_weeks: [],
+      done,
+    });
+    if (done) {
+      handlers.onMessage?.({
+        kind: "chat",
+        text: `✅ **TrainingPeaks updated:** ${total} weeks · ${t.sessions} sessions (${t.create} created, ${t.update} updated, ${t.delete} removed).`,
+      });
+    }
+    handlers.onDone?.(sid);
+    return;
+  }
+
   handlers.onStatus?.("thinking");
   await new Promise((r) => setTimeout(r, 180));
 
   const lower = params.message.toLowerCase();
-  if (lower.includes("check") && lower.includes("in")) {
+  if (action?.skill === "plan-builder") {
+    demoPlanWeeksDone = [];
+    for (const [name, label] of [
+      ["fetch_plan_context", "Reading your training history"],
+      ["stage_training_plan", "Building your plan"],
+    ]) {
+      handlers.onTool?.({ name, label, state: "start" });
+      await new Promise((r) => setTimeout(r, 260));
+      handlers.onTool?.({ name, label, state: "done" });
+    }
+    handlers.onPlanStaged?.(DEMO_PLAN);
+    handlers.onMessage?.({ kind: "chat", text: DEMO_PLAN_MARKDOWN });
+  } else if (lower.includes("check") && lower.includes("in")) {
     handlers.onTool?.({
       name: "fetch_checkin_data",
       label: "Pulling 14 days of TrainingPeaks data",
