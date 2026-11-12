@@ -22,11 +22,16 @@ from ..model_config import build_coach_model
 from ..onboarding.request_new_goal_tool import request_new_goal_tool
 from ..report_memory import keep_latest_reports_and_skills
 from .instruction import build_coach_instruction
-from .model_callbacks import apply_thinking_policy, strip_stale_thoughts
+from .model_callbacks import (
+    after_coach_model,
+    apply_thinking_policy,
+    hide_internal_tools,
+    strip_stale_thoughts,
+)
 from .profile_context import ensure_profile_context
 from .record_key_event_tool import record_key_event_tool
-from .quick_actions import dispatch_quick_action, drop_disabled_tool_calls
-from .report_tool_guard import guard_report_tools, track_turn_calls
+from .quick_actions import dispatch_quick_action
+from .report_tool_guard import guard_report_tools
 from .skill_toolset import skill_toolset
 
 coaching_agent_tools = [
@@ -52,20 +57,20 @@ coaching_agent = Agent(
     description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
     instruction=build_coach_instruction,
     tools=coaching_agent_tools,
-    # Runner profile once per call; quick actions without a routing LLM call; per-call thinking; no
-    # signatures of completed turns; only the latest reports, skills and staged set. (Coded replies
-    # after staging / applying / no workout end the turn in the tools: shared/ui_channel.py.)
+    # Runner profile once per call; quick actions without a routing LLM call; per-call thinking; hide
+    # internal plan-builder tools from LLM declarations; drop signatures of completed turns; keep only
+    # the latest reports, skills and staged set.
     before_model_callback=[
         ensure_profile_context,
         dispatch_quick_action,
         apply_thinking_policy,
+        hide_internal_tools,
         strip_stale_thoughts,
         keep_latest_reports_and_skills,
     ],
-    # Report data tools render a report card: they only run as the turn's report, never as a data
-    # lookup after another skill or tool in the same turn. A tools-off report call never runs a tool,
-    # even when the model returns a function call anyway.
-    after_model_callback=[track_turn_calls, drop_disabled_tool_calls],
+    # Single composed after-model callback: drops calls on tools-off report turns, auto-appends
+    # fetch_plan_context when plan-builder is loaded, and records turn calls for guard_report_tools.
+    after_model_callback=[after_coach_model],
     before_tool_callback=[guard_report_tools],
     mode="chat",
 )

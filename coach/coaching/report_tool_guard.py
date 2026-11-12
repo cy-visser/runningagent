@@ -87,6 +87,23 @@ def is_turn_report(tool_name: str, steps: list[list[dict]]) -> bool:
     return True
 
 
+from .quick_actions import is_plan_intake
+
+FETCH_PLAN_CONTEXT = "fetch_plan_context"
+PLAN_BUILDER_SKILL = "plan-builder"
+
+
+def is_plan_builder_turn(tool_context: ToolContext) -> bool:
+    """True when `fetch_plan_context` was dispatched by `plan-builder:intake` or `load_skill('plan-builder')`."""
+    if is_plan_intake(tool_context.state, tool_context.invocation_id):
+        return True
+    return any(
+        call["name"] == LOAD_SKILL and call.get("skill") == PLAN_BUILDER_SKILL
+        for step in _turn_steps(tool_context)
+        for call in step
+    )
+
+
 def blocked_message(tool_name: str) -> str:
     return (
         f"{tool_name} was not run: it renders the {_REPORT_NAMES[tool_name]} for the runner and is only for "
@@ -99,7 +116,16 @@ def blocked_message(tool_name: str) -> str:
 def guard_report_tools(
     tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
 ) -> Optional[dict]:
-    """before_tool_callback: skips a report tool used as a lookup (no report state, no report card)."""
+    """before_tool_callback: skips report tools or internal `fetch_plan_context` used as ad-hoc lookups."""
+    if tool.name == FETCH_PLAN_CONTEXT:
+        if is_plan_builder_turn(tool_context):
+            return None
+        return {
+            "result": (
+                "fetch_plan_context is internal to plan-builder and was not run. Answer directly from "
+                "the profile block and the data already in this conversation."
+            )
+        }
     if tool.name not in REPORT_TOOL_SKILLS:
         return None
     if is_turn_report(tool.name, _turn_steps(tool_context)):

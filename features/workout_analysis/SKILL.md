@@ -1,77 +1,32 @@
 ---
 name: workout-analysis
-description: Performs a deep, structured physiological analysis of a single completed workout/run.
+description: Deep physiological and telemetry analysis of a single completed running workout.
 ---
 
 # Workout Analysis Skill
 
-You are now equipped with the Workout Analysis skill. Use this skill when the runner asks to analyze a specific **run** or **running workout**.
+## Protocol
 
-## Protocol:
+1. **Gather & Classify**:
+   - Call `analyze_workout(date_str="today", sport="run")` or `analyze_workout(workout_id="<id>")` in the same step as `load_skill`. If multiple sessions exist on that day and the runner meant another listed `[id]`, re-call with `workout_id`; otherwise note same-day sessions briefly.
+   - Classify the run (selects step 3 format unless the runner asks for more/less detail):
+     - **Easy / Recovery Run**: easy, recovery, aerobic, shakeout (strides included; a single steady easy-pace builder block stays Easy).
+     - **Long Run**: titled long run or >= ~90 min, even when fully easy.
+     - **Structured Workout**: intervals, tempo, threshold, race, progressive, MP blocks, reps. **Planned structure & execution** + **Planned session notes** define intended targets (`Δ vs target`: `0` = in range, negative pace = faster).
 
-1. **Gather Data**:
-   - Call `analyze_workout` (e.g. `analyze_workout(date_str="today", sport="run")` or `analyze_workout(workout_id="<id>")`). This tool automatically retrieves the completed workout telemetry, interval/lap data, morning physiological recovery metrics (Sleep, HRV, RHR), and run-time environmental weather in a single call.
-   - **Multiple sessions that day**: by date, the tool analyses the day's primary run (highest load) and lists any other completed sessions with their ids at the top. If the runner clearly meant a different session, re-call `analyze_workout(workout_id="<id>")`; otherwise briefly acknowledge the other sessions as context.
-   - **Classify Workout** (this also selects the output format in step 3):
-     - **Easy / Recovery Run**: easy, recovery, aerobic or shakeout runs (strides included).
-     - **Long Run**: the title names it a long run, or it lasts ~90 minutes or more, even when fully easy.
-     - **Structured Workout**: intervals, tempo, threshold, race, progressive, push, MP block, reps.
-     - A **Planned structure & execution** section means the session was built in the TrainingPeaks workout builder: that plan is the source of truth for what was intended. A builder plan alone does not make a run structured: a single steady easy-pace target is still an Easy Run. **Planned session notes** carry the coach's intent for any session.
+2. **Physiological Synthesis**:
+   - **Easy / Recovery**: check Zone 1/2 HR compliance, gray-zone (Zone 3/4) creep, split surges, and cardiac drift.
+   - **Structured / Long**: judge execution from **Repeated blocks** and per-block decoupling (`[highest target intensity]`), or **Laps Breakdown** (split consistency, HR recovery drops, cadence); on race-pace long runs, separate the quality block from easy km.
+   - **Terrain & `NGP`**: evaluate elevation (`+Xm / -Ym`), grade, VAM, and `NGP` vs raw pace (steady `NGP`/HR on climbs = disciplined effort, not fade) plus cadence/stride changes.
+   - **Decoupling (`Pa:Hr`) & Readiness**: use the tool's windowed `Pa:Hr` as-is (never recompute whole-session drift). Judge contextually against session design (continuous/Canova vs full-recovery reps), intensity, window length, weather (temp, feels-like, humidity, wind), and morning Sleep/HRV/RHR.
+   - **Goals & Races**: connect to `GOAL REASONING`. On a **Sub-goal race**, congratulate, frame via north-star equivalent/gap, and note in one sentence if the result was saved. On a non-goal race (parkrun/tune-up) when tools are enabled, call `record_key_event(event_type="race", ...)` alongside your summary.
 
-2. **Perform Differential Physiological Synthesis**:
-   - Analyze every session fully, whatever its type; the step 3 format only controls how much of the analysis is reported.
-   - **For Easy & Recovery Runs**:
-     - Evaluate low-intensity compliance (holding heart rate in Zone 1/2), overall pace/HR stability, and cardiac drift across the duration.
-     - Look for 'gray zone' (Zone 3/4) creep where recovery runs are executed too fast, compromising metabolic recovery.
-     - Reference lap data if pacing surges or significant cardiac drift are present across splits.
-   - **For Structured Workouts (Intervals, Tempo, Threshold, Race, Progressive, MP Blocks, Reps)**:
-     - If a **Planned structure & execution** section is present, the `Δ vs target` column gives each step's signed distance to its planned range (0 = inside; negative pace = faster than the range). Judge execution against the session's intent yourself: rep-to-rep consistency and HR drift from the **Repeated blocks** facts, and the quality block's own **Decoupling per work block** value (`[highest target intensity]` identifies the hardest block) rather than the whole session.
-     - Otherwise analyze the **Laps Breakdown**: evaluate individual work intervals vs. recovery laps for pacing consistency (even/negative splits vs. fading), heart rate response, recovery lap HR drop, and cadence stability.
-     - Long runs with embedded race-pace blocks: evaluate that block's pace discipline and decoupling separately from the easy kilometres.
-   - **Elevation & Terrain Impact**:
-     - Evaluate total elevation gain/loss (+Xm / -Ym), route gradient, and climbing rate (VAM).
-     - Compare **Normalized Graded Pace (NGP)** against raw pace: understand that slower raw pace on uphill segments with steady NGP/HR indicates consistent effort and good pacing discipline rather than fatigue or aerobic decoupling.
-     - Assess biomechanical adaptations to grade (cadence adjustments, stride length changes on climbs vs. descents).
-   - **Aerobic Decoupling & Weather Context**:
-     - Synthesize `Pa:Hr` (pace vs. heart rate drift) contextually with run-time environmental conditions (temperature, feels-like, humidity, wind). Distinguish expected thermoregulatory cardiac drift in high heat/humidity from poor pacing or cardiovascular fatigue in moderate conditions.
-     - **Reason about drift; don't apply fixed cut-offs.** The tool excludes the first 5 minutes of every session (and the planned warm-up/cool-down for builder workouts); each value's label states its window and duration. Do not recompute or quote a whole-session value. Weigh the value against:
-       - **Session design**: continuous efforts (steady runs, long-run race-pace blocks, alternations without full recovery such as Canova) naturally accumulate HR creep; separate reps with full recovery should show little rep-to-rep drift.
-       - **Intensity relative to threshold** (drift grows with intensity), and the **window duration** (short windows are noisier).
-       - **Conditions** (heat, humidity, wind, terrain) and **readiness** (sleep, HRV, RHR trend; fueling/hydration if mentioned).
-       - Literature reference points (e.g. Friel's ~5% for steady aerobic efforts, ~3.5% in aerobic-threshold tests) can inform the reasoning but are not verdicts.
-   - **Physiological Recovery & Readiness Context**:
-     - Cross-reference run execution against morning recovery metrics from `analyze_workout` (Sleep duration, HRV baseline stability, and Resting Heart Rate trends) to assess readiness and strain.
-   - **Goal Alignment** (see GOAL REASONING in your instructions): say what this run means for the current goal (if set) and, with a north star, for the north star too (e.g. a threshold session's value for a 10K block and what it adds or costs for the marathon's aerobic base and durability).
-     - **Goal plans** (the tool output contains a **Goal plan** or **Sub-goal race** line): judge the run on both levels, the current sub-goal block and the north star.
-     - **Sub-goal race day**: congratulate the runner, then frame the finish time as progress toward the north star using the north-star equivalent and gap provided (not pass/fail). When the line says the result was saved, mention it in one short sentence. Riegel equivalents are optimistic for the marathon without marathon-specific volume: say so. Never offer onboarding for a sub-goal race.
-     - **Other races** (not on a goal race date, but the title, athlete feedback or the runner says it was a race, e.g. a tune-up or parkrun): if you can call tools in this turn, call `record_key_event` (type `race`, the race date, name and finish time) in the same step as your summary. Goal-race results are recorded automatically.
-
-3. **Deliver Workout Summary**:
-   - Deliver an objective, data-backed assessment in clean standard Markdown:
-     - Plain-Text Metrics & Progressions: Follow the coach's standard plain-text formatting rules — plain metric names (`Pa:Hr`, `NGP`, `HR 155 bpm`, `4:30/km`) and text arrows (`->` or `→`), never LaTeX.
-   - **Pick the format from the step 1 classification.** If the runner explicitly asks for more or less detail, follow that instead.
-   - **Structured Workouts & Long Runs → Full format:**
-     1. **Session Overview**: Date, sport, title, distance, duration, and environmental conditions.
-     2. **🎯 Execution & Physiological Assessment**: Honest, data-backed critique of what was executed well vs. breakdowns (e.g. pacing control, Zone 1/2 discipline, Pa:Hr drift context, terrain management, and recovery state). For structured sessions, summarize interval/lap execution in prose here.
-     3. **🚀 Key Takeaways & Adjustments**: Specific, actionable coaching directives for upcoming workouts and recovery.
-   - **Easy & Recovery Runs → Concise format** (short and to the point: Execution + Key Takeaways together under ~120 words):
-     1. **Session Overview**: four bullets, omitting unavailable items: **Date & Title** (plus other same-day sessions, if any); **Volume** (distance | duration | pace (NGP)); **Physiological Load** (HR avg (max) | cadence | Pa:Hr | rTSS); **Environment** (location | temperature (feels like), humidity, wind, terrain +gain / -loss).
-     2. **🎯 Execution**: three one-line bullets, each opening with ✅ (on target), ⚠️ (watch) or ❌ (missed), then the verdict with its key number:
-        - **Intensity**: HR zone discipline vs. the plan (pace/HR target, if any), judged against the session's intent.
-        - **Aerobic stability**: Pa:Hr with a few words of context (conditions, terrain).
-        - **Readiness**: the morning HRV / RHR / sleep signal (omit if no recovery data).
-        - Add a **Mechanics** or **Terrain** bullet only when the data shows something notable (e.g. cadence fade, ground-contact spike, hilly route). Address athlete feedback (RPE/comment) in the relevant bullet.
-        - No physiology explanations, and don't restate Session Overview numbers unless they carry the verdict.
-     3. **🚀 Key Takeaways**: at most 2 numbered one-line directives about what should change in the coming days. Skip generic reminders (e.g. injury prevention, strength work) unless today's data or athlete feedback points to them.
-     - Example of the expected length and tone (illustrative values):
-       ```
-       ### 🎯 Execution
-       * ✅ **Intensity:** HR 131 bpm (76% LTHR), Zone 2 throughout; 6:05/km inside the 5:55–6:15/km plan.
-       * ⚠️ **Aerobic stability:** Pa:Hr 6.1%, high for a cool, flat run: likely residual fatigue.
-       * ✅ **Readiness:** HRV 48 ms and RHR 51 bpm at baseline; 7.9 h sleep.
-
-       ### 🚀 Key Takeaways
-       1. Keep tomorrow's recovery run under HR 135 bpm so the drift can settle.
-       2. Re-check Pa:Hr on Thursday's easy run before the long run.
-       ```
-
+3. **Output Format**:
+   - **Structured Workouts & Long Runs (Full)**:
+     1. **Session Overview**: date, sport, title, distance, duration, conditions.
+     2. **🎯 Execution & Physiological Assessment**: pacing/zone discipline, interval/block execution in prose, `Pa:Hr` + weather/terrain (`NGP`) + readiness synthesis, goal impact.
+     3. **🚀 Key Takeaways & Adjustments**: concrete next-session and recovery directives.
+   - **Easy & Recovery Runs (Concise — Execution + Takeaways <= ~120 words, no physiology lectures or repeated overview stats)**:
+     1. **Session Overview**: up to 4 bullets (omit missing): **Date & Title** (+ same-day sessions); **Volume** (distance | duration | pace (NGP)); **Physiological Load** (HR avg (max) | cadence | Pa:Hr | rTSS); **Environment** (location | temp (feels like), humidity, wind, +gain / -loss).
+     2. `### 🎯 Execution`: 3 one-line bullets starting with `✅` / `⚠️` / `❌` + key metric: **Intensity** (zone/plan compliance), **Aerobic stability** (`Pa:Hr` in context), **Readiness** (HRV/RHR/sleep, omit if absent), plus optional **Mechanics** / **Terrain** only when notable; weave RPE/comments into the relevant bullet.
+     3. `### 🚀 Key Takeaways`: 1-2 numbered one-line directives for upcoming days (no generic reminders).

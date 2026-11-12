@@ -22,11 +22,12 @@ from ...shared.runner_identity import profile_user_id
 logger = logging.getLogger(__name__)
 
 CREDENTIAL_DOC_ID = "trainingpeaks"
-DOC_CACHE_TTL_S = 60.0
+DOC_CACHE_TTL_S = 300.0
 
 _kms_client: Optional[kms.KeyManagementServiceClient] = None
 _doc_cache: dict[str, tuple[float, Optional[bytes]]] = {}
 _decrypt_cache: dict[str, str] = {}
+_runner_locks: dict[str, asyncio.Lock] = {}
 
 
 class TrainingPeaksNotConnected(RuntimeError):
@@ -49,6 +50,7 @@ def clear_tp_credential_cache() -> None:
     """Clears in-memory document and plaintext caches (used in tests and after errors)."""
     _doc_cache.clear()
     _decrypt_cache.clear()
+    _runner_locks.clear()
 
 
 def _coerce_ciphertext(raw: Any) -> Optional[bytes]:
@@ -94,19 +96,21 @@ async def get_runner_tp_cookie(runner_id: Optional[str]) -> Optional[str]:
     """Reads and KMS-decrypts `users/{runner_id}/private/trainingpeaks`, or returns None."""
     if not runner_id:
         return None
-    ciphertext = await _load_ciphertext(runner_id)
-    if not ciphertext:
-        return None
+    lock = _runner_locks.setdefault(runner_id, asyncio.Lock())
+    async with lock:
+        ciphertext = await _load_ciphertext(runner_id)
+        if not ciphertext:
+            return None
 
-    digest = hashlib.sha256(credential_aad(runner_id) + b":" + ciphertext).hexdigest()
-    if digest in _decrypt_cache:
-        return _decrypt_cache[digest]
+        digest = hashlib.sha256(credential_aad(runner_id) + b":" + ciphertext).hexdigest()
+        if digest in _decrypt_cache:
+            return _decrypt_cache[digest]
 
-    cookie = await asyncio.to_thread(_decrypt_ciphertext_sync, runner_id, ciphertext)
-    if not cookie:
-        return None
-    _decrypt_cache[digest] = cookie
-    return cookie
+        cookie = await asyncio.to_thread(_decrypt_ciphertext_sync, runner_id, ciphertext)
+        if not cookie:
+            return None
+        _decrypt_cache[digest] = cookie
+        return cookie
 
 
 async def has_tp_credential(runner_id: Optional[str]) -> bool:

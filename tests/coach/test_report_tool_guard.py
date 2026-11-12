@@ -74,3 +74,40 @@ def test_follow_up_lookup_opens_no_checkin_report(runner, monkeypatch):
     assert not _report_deltas(events)
     assert s.state.get(CHECKIN_REPORT_STATE_KEY) is None
     assert not any(name == "tp_get_fitness" for name, _ in runner.tp_calls)  # tool body never ran
+
+
+def test_direct_fetch_plan_context_is_blocked_outside_plan_builder(runner, monkeypatch):
+    events, _ = _run_turn(monkeypatch, [
+        [_call("fetch_plan_context", start_date="2026-11-12", end_date="2026-12-06")],
+    ])
+    (resp,) = _responses(events, "fetch_plan_context")
+    assert "internal to plan-builder" in resp["result"]
+    assert runner.tp_calls == []
+
+
+def test_load_skill_plan_builder_auto_runs_fetch_plan_context_and_hides_it_from_declarations(runner, monkeypatch):
+    llm = ScriptedLlm(model="fake")
+    llm.script = [
+        [_call("load_skill", skill_name="plan-builder", start_date="2026-11-02", end_date="2026-11-29", mode="overhaul")],
+        [types.Part(text="Plan ready")],
+    ]
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        events = []
+        async for ev in r.run_async(
+            user_id="web_runner", session_id=session.id, state_delta={AUTH_EMAIL_STATE_KEY: EMAIL},
+            new_message=types.Content(role="user", parts=[types.Part(text="Overhaul my November schedule")]),
+        ):
+            events.append(ev)
+        return events
+
+    events = asyncio.run(scenario())
+    for req in llm.requests:
+        declared = {d.name for t in (req.config.tools or []) for d in getattr(t, "function_declarations", None) or []}
+        assert "fetch_plan_context" not in declared and "apply_training_plan" not in declared
+    (resp,) = _responses(events, "fetch_plan_context")
+    assert "PLAN CONTEXT (overhaul): 2026-11-02 → 2026-11-29" in resp["result"]

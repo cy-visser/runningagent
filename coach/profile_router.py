@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, AsyncGenerator, Optional
 
@@ -5,8 +6,8 @@ from google.adk import Context, Event
 from google.adk.workflow import node
 
 from ..integrations import config
-from ..integrations.trainingpeaks import credentials
-from ..shared.runner_identity import normalize_email
+from ..integrations.trainingpeaks import credentials, tp_calls
+from ..shared.runner_identity import normalize_email, profile_user_id
 from ..shared.session_state import AUTH_EMAIL_STATE_KEY
 from .onboarding.profile_creation import onboarding_prefill
 from .profile_lookup import (
@@ -18,6 +19,7 @@ from .profile_lookup import (
 )
 
 logger = logging.getLogger(__name__)
+_warmup_tasks: set[asyncio.Task[None]] = set()
 
 ROUTE_ONBOARDING = "ONBOARDING"
 ROUTE_COACHING = "COACHING"
@@ -50,15 +52,24 @@ def _tp_not_connected_message() -> str:
     )
 
 
+def _schedule_tp_warmup(runner_id: Optional[str]) -> None:
+    if not runner_id:
+        return
+    task = asyncio.create_task(tp_calls.warm_runner_tp(runner_id))
+    _warmup_tasks.add(task)
+    task.add_done_callback(_warmup_tasks.discard)
+
+
 @node(name="profile_router", rerun_on_resume=True)
 async def profile_router(ctx: Context, node_input: Any = None) -> None:
-    """Identifies the runner by email and routes. No TrainingPeaks call, no shared credential.
+    """Identifies the runner by email and routes. No blocking TrainingPeaks call, no shared credential.
 
     Web turns set `user:auth_email` and always reload Firestore so profile edits apply immediately.
     Evals and local runs reuse a session-cached `user_profile` when already present.
     """
     auth_email = normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY))
     profile = None if auth_email else ctx.state.get("user_profile")
+    runner_id: Optional[str] = None
     if not profile:
         email = _caller_email(ctx)
         if not email:
@@ -77,13 +88,17 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
         if not connected:
             ctx.route = ROUTE_TP_NOT_CONNECTED
             return
+        runner_id = found[0]
         profile = await activate_profile(ctx, *found)
+    elif isinstance(profile, dict):
+        runner_id = profile_user_id(profile)
 
     if needs_onboarding(profile) or ctx.state.get("reonboard_requested"):
         ctx.state["temp_onboarding_data"] = onboarding_prefill(profile)
         ctx.route = ROUTE_ONBOARDING
         return
 
+    _schedule_tp_warmup(runner_id)
     ctx.route = ROUTE_COACHING
 
 

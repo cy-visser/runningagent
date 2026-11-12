@@ -66,7 +66,7 @@ def plan_builder_redirect(workout_changes: int, days: list[date]) -> Optional[di
     return {"staged": 0, "use_plan_builder": True, "message": (
         f"Nothing was staged: {workout_changes} workout changes across {weeks} ISO weeks is a plan overhaul "
         f"(workout-creator: <= {MAX_WORKOUT_CHANGES} changes within <= {MAX_ISO_WEEKS} ISO weeks). Use plan-builder: "
-        f'call load_skill("plan-builder") and fetch_plan_context({window}mode="overhaul") in the same step, then '
+        f'call load_skill(skill_name="plan-builder", {window}mode="overhaul"), then '
         "stage the plan with ONE stage_training_plan call.")}
 
 
@@ -164,33 +164,20 @@ async def _current_workouts(tool_context: ToolContext, workout_ids: list[str]) -
 async def stage_workout_changes(
     tool_context: ToolContext, changes: list[dict[str, Any]], message: str = ""
 ) -> str:
-    """Stages workout and calendar-note changes; the runner applies them with the Update TrainingPeaks button.
+    """Stages <= 10 workout/note changes within <= 2 ISO weeks for the Update TrainingPeaks button.
 
-    Nothing is written to TrainingPeaks. `message` is your coaching message to the runner (Markdown,
-    2-4 sentences: why these changes, tied to their data, goal and north star, and any risk with its
-    numbers; never list the changes: the runner sees them in a table under it). It is shown as your
-    reply and ends the turn, so write it here, not as separate text. A plain move / rename needs no
-    message. Stage the complete set: a new call replaces the previously staged set.
-
-    Each change is an object:
-    - Workout: date_str (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS), sport ('Run' default, 'Bike', 'Swim',
-      'Strength', 'Walk', 'Crosstrain', 'Race'), title, duration_minutes, distance_km, tss_planned,
-      description (warm-up, main set, cool-down, pacing cues), structure (the exact workout builder;
-      required for Run/Bike creates and distance/duration changes), workout_id (the workout to change)
-      or create=true (add a session to a day). Without either, it updates the single planned workout
-      of the same sport on that date, or creates one if none. A move or rename needs only workout_id +
-      date_str (+ title): the session keeps its title, builder and totals unless you change them.
-      Strides are kept when you rewrite a run that has them, and added after the warm-up of tempo /
-      threshold / interval runs (`strides_added`); strides=false only when the runner asks to drop them.
-    - Note: kind='note', date_str, title, description.
-    - Delete: delete=true with workout_id, or date_str + sport (+ title); a note: kind='note', date_str (+ title).
-      To remove a session or note always stage a delete. Completed workouts are never deleted (`refused`).
-
-    At most 10 workout changes within 2 ISO weeks: a bigger set is a plan overhaul (plan-builder) and is
-    not staged. Returns the number staged, any `ambiguous` changes (several planned workouts of that sport on the
-    date: ask the runner which one), any `not_found` workout_ids, and any `needs_structure` changes
-    (nothing is staged: send the exact builder, starting from `current_structure` when given, and stage
-    again without asking the runner).
+    `message`: 2-4 sentence coaching rationale + numeric risks (never list changes; shown above the table
+    and ends the turn; omit for plain moves/renames). Replaces any prior staged set.
+    Each item in `changes`:
+    - Workout: `date_str` (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS), `sport` ('Run'|'Bike'|'Swim'|'Strength'|
+      'Walk'|'Crosstrain'|'Race'), `title`, `duration_minutes`, `distance_km`, `tss_planned`, compact
+      `description`, `structure` (required for Run/Bike creates and distance/duration edits), `workout_id`
+      or `create=true` (move/rename needs only `workout_id` + `date_str` [+ `title`]; `strides=false` only
+      when asked to drop strides).
+    - Note: `kind='note'`, `date_str`, `title`, `description`.
+    - Delete: `delete=true` + `workout_id` or `date_str` + `sport` (note: `kind='note'`, `date_str`, `title`).
+    If `needs_structure` is returned, supply complete `structure` (preserving untouched blocks from
+    `current_structure`) and re-stage without asking the runner.
     """
     raw = [c for c in (changes or []) if isinstance(c, dict)]
     workout_raw = [c for c in raw if str(c.get("kind") or KIND_WORKOUT).lower() != "note"]

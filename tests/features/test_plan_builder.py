@@ -428,7 +428,8 @@ def test_stage_workout_changes_redirects_big_sets_to_plan_builder(runner):
     ctx = runner.ctx()
     result = json.loads(asyncio.run(stage_workout_changes(ctx, eleven)))
     assert result["staged"] == 0 and result["use_plan_builder"] is True
-    assert 'load_skill("plan-builder")' in result["message"] and 'start_date="2026-11-02"' in result["message"]
+    assert 'load_skill(skill_name="plan-builder"' in result["message"]
+    assert 'start_date="2026-11-02"' in result["message"] and "fetch_plan_context" not in result["message"]
     assert runner.tp_calls == [] and "staged_workout_changes" not in ctx.state
 
     spread = [{"date_str": "2026-11-03", "workout_id": "w1", "delete": True},

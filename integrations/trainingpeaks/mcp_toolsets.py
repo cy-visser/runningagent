@@ -68,8 +68,7 @@ def reset_tp_tool_cache() -> None:
     _toolsets_by_key.clear()
 
 
-async def get_tp_tool(name: str, cookie: str) -> Any:
-    """Returns the named TrainingPeaks MCP tool from that cookie's own tp-mcp subprocess."""
+async def _ensure_entry(cookie: str) -> _ToolsetEntry:
     clean_cookie = (cookie or "").strip()
     if not clean_cookie:
         raise ValueError("A TrainingPeaks auth cookie is required to resolve MCP tools.")
@@ -91,16 +90,31 @@ async def get_tp_tool(name: str, cookie: str) -> Any:
         await _close_entry(old)
 
     async with entry.lock:
-        if name not in entry.tools_by_name:
+        if not entry.tools_by_name:
             try:
                 tools = await entry.toolset.get_tools()
             except Exception:
                 _toolsets_by_key.pop(key, None)
                 await _close_entry(entry)
                 raise
-            entry.tools_by_name.clear()
             entry.tools_by_name.update({t.name: t for t in tools})
+    return entry
 
+
+async def warm_tp_toolset(cookie: str) -> None:
+    """Pre-starts and initializes the runner's tp-mcp subprocess if not already warm."""
+    await _ensure_entry(cookie)
+
+
+async def get_tp_tool(name: str, cookie: str) -> Any:
+    """Returns the named TrainingPeaks MCP tool from that cookie's own tp-mcp subprocess."""
+    entry = await _ensure_entry(cookie)
+    if name not in entry.tools_by_name:
+        async with entry.lock:
+            if name not in entry.tools_by_name:
+                tools = await entry.toolset.get_tools()
+                entry.tools_by_name.clear()
+                entry.tools_by_name.update({t.name: t for t in tools})
     try:
         return entry.tools_by_name[name]
     except KeyError:

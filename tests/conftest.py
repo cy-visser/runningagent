@@ -112,7 +112,11 @@ def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
     monkeypatch.setattr(open_meteo, "get_conditions_at", fake_conditions_at)
     monkeypatch.setattr(open_meteo, "geocode_location", fake_geocode)
 
+    async def fake_warm_tp(runner_id: str | None) -> None:
+        return None
+
     monkeypatch.setattr(credentials, "has_tp_credential", fake_has_credential)
     monkeypatch.setattr(tp_calls, "run_tp_tool", env.run_tp_tool)
+    monkeypatch.setattr(tp_calls, "warm_runner_tp", fake_warm_tp)
 
     return env

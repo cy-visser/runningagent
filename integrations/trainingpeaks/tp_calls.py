@@ -2,21 +2,36 @@
 
 import asyncio
 from datetime import timedelta
-from typing import Any
+import logging
+from typing import Any, Optional
 
 from google.adk.tools import ToolContext
 
-from .credentials import resolve_tp_cookie
-from .mcp_toolsets import get_tp_tool
+from .credentials import get_runner_tp_cookie, resolve_tp_cookie
+from .mcp_toolsets import get_tp_tool, warm_tp_toolset
 from ...shared.dates import ISO_DATE_FMT, parse_date
 from ...shared.health_metrics import extract_health_metrics_dated
 from ...shared.tp_payloads import coerce_mcp_payload
+
+logger = logging.getLogger(__name__)
 
 TP_MAX_RANGE_DAYS = 89  # TP list endpoints reject ranges > 90 days
 
 
 class TPFetchError(RuntimeError):
     """A TrainingPeaks list call answered with an error envelope instead of data."""
+
+
+async def warm_runner_tp(runner_id: Optional[str]) -> None:
+    """Best-effort background pre-warm of KMS cookie decryption and the runner's tp-mcp subprocess."""
+    if not runner_id:
+        return
+    try:
+        cookie = await get_runner_tp_cookie(runner_id)
+        if cookie:
+            await warm_tp_toolset(cookie)
+    except Exception as exc:
+        logger.debug("Ignoring background tp-mcp warm-up error for %s: %s", runner_id, exc)
 
 
 async def run_tp_tool(tool_context: ToolContext, tool_name: str, **node_input: Any) -> Any:
