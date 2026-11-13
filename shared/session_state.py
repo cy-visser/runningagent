@@ -4,6 +4,10 @@ from typing import Any
 
 # ADK user-scoped state key set by the Cloud Run web backend on every turn with the IAP-verified email.
 AUTH_EMAIL_STATE_KEY = "user:auth_email"
+# Cached plan-builder window, mode and resolved zones (cleared only when workouts are applied to TrainingPeaks).
+PLAN_CONTEXT_STATE_KEY = "plan_context_cache"
+STAGED_PLAN_STATE_KEY = "staged_training_plan"
+APPLIED_PLAN_STATE_KEY = "applied_training_plan"
 
 
 def sync_profile_to_state(ctx: Any, profile: dict) -> None:

@@ -266,7 +266,7 @@ def test_a_24_week_plan_is_staged_compactly_with_one_line_per_week(runner):
     assert (totals["weeks"], totals["sessions"]) == (24, 24 * 8)            # 8 sessions a week
     assert ctx.actions.skip_summarization is True
     assert ctx.reply_text() == (
-        f"{message}\n\n📋 24-week plan staged: {totals['sessions']} sessions ({totals['create']} new · "
+        f"{message}\n\n- **24-week plan staged:** {totals['sessions']} sessions ({totals['create']} new · "
         f"{totals['update']} updated · {totals['delete']} removed). Review the weeks below and press "
         "**Apply to TrainingPeaks**.")
     w1 = staged["weeks"][0]
@@ -285,11 +285,38 @@ def test_a_24_week_plan_is_staged_compactly_with_one_line_per_week(runner):
     assert thu["Strength"]["exercises"][0] == "Dead bug 3x10/side" and thu["Strength"]["load"]
 
 
+def test_compact_week_string_dsl_parses_identically_and_flags_bad_codes(runner):
+    ctx = runner.ctx()
+    res = _stage(ctx, {
+        "start_date": "2026-11-02",
+        "mode": "new",
+        "weeks": [
+            "W1 | base | Aerobic base; 2x strength | Mon: B 45' Z2; S 40' heavy-lower | Tue: I 6x1k r2' | Thu: T 2x15' r2'; S 30' core-hips | Fri: REST | Sun: L 24 +6@M",
+            "W2 | build | 3:1 cutback: adaptation | Tu: T 3x10' r2' | Weds: E 8 | Th: E 10 +strides | Sun: L 26",
+            "W3 | taper | Race week: Schoorl 10K | Tue: P 2x1k@10K r2' | Wed: E 6 | Thu: E 5 +strides | Sat: R 4 | Sun: RACE",
+        ],
+    })
+    assert res["total_weeks"] == 3
+    w1, w2, w3 = ctx.state["staged_training_plan"]["weeks"]
+    assert (w1["phase"], w1["focus"], w1["strength_sessions"], w1["bike_minutes"]) == (
+        "base", "Aerobic base; 2x strength", 2, 45
+    )
+    assert (w2["phase"], w2["focus"], w2["sessions"]) == ("build", "3:1 cutback: adaptation", 4)
+    assert (w3["phase"], w3["focus"], w3["sessions"]) == ("taper", "Race week: Schoorl 10K", 5)
+
+    bad_ctx = runner.ctx()
+    bad = _stage(bad_ctx, {"start_date": "2026-11-02", "weeks": ["W1 | base | Focus | Funday: E 8"]})
+    assert bad["staged"] == 0 and bad["errors"][0]["day"] == "Funday"
+
+    bad_no_focus = _stage(runner.ctx(), {"start_date": "2026-11-02", "weeks": ["W1 | base | Funday: E 8"]})
+    assert bad_no_focus["staged"] == 0 and bad_no_focus["errors"][0]["day"] == "Funday"
+
+
 def test_base_staged_id_replaces_only_the_given_weeks(runner):
     ctx = runner.ctx()
     first = _stage(ctx, _plan(6))
     before = ctx.state["staged_training_plan"]
-    easier = {"week": 5, "phase": "recovery", "days": {"Tue": "E 8", "Thu": "E 8", "Sun": "L 16"}}
+    easier = "W5 | recovery | Down week | Tue: E 8 | Thu: E 8 | Sun: L 16"
     second = _stage(ctx, {"weeks": [easier]}, "Week 5 becomes a down week.", base_staged_id=first["staged_id"])
     after = ctx.state["staged_training_plan"]
     assert second["staged_id"] != first["staged_id"] and after["staged_id"] == second["staged_id"]
@@ -298,6 +325,8 @@ def test_base_staged_id_replaces_only_the_given_weeks(runner):
     assert week5["phase"] == "recovery" and week5["sessions"] == 3
     stale = _stage(ctx, {"weeks": [easier]}, base_staged_id=first["staged_id"])
     assert stale["staged"] == 0 and "not the current staged plan" in stale["message"]
+    via_alias = _stage(ctx, {"weeks": ["W4 | recovery | Cutback | Tue: E 7 | Sun: L 14"]}, base_staged_id="current")
+    assert via_alias["total_weeks"] == 6 and ctx.state["staged_training_plan"]["weeks"][3]["phase"] == "recovery"
 
 
 def test_bad_codes_stage_nothing_and_the_second_failure_stops_the_retries(runner):
@@ -319,13 +348,57 @@ def test_fetch_plan_context_is_compact_and_feeds_the_plan_window(runner):
     assert "Bike (FTP 260 W)" in text and "strength" in text and "Long runs, last 6 weeks" in text
     assert "Training times: run morning · strength evening" in text and "Cross-training / strength" not in text
     assert "W1 2026-11-02: Mon Run 'Easy Aerobic Run' 10 km [w" in text      # ids in overhaul mode
+    assert "W5–W24 (2026-11-30 → 2027-04-12): nothing planned" in text        # consecutive empty full weeks collapsed
     assert len(text) < 8000                                                   # ~1-2k tokens for 24 weeks
-    assert ctx.state["temp:plan_context"] == {"start_date": "2026-11-02", "end_date": "2027-04-18", "mode": "overhaul"}
-    # The plan may then leave start_date / mode out.
+    cached = ctx.state["plan_context_cache"]
+    assert (cached["start_date"], cached["end_date"], cached["mode"]) == ("2026-11-02", "2027-04-18", "overhaul")
+    assert isinstance(cached["zones"], dict)
+    # Staging in the same turn reuses both cached zones and temp:plan_workouts (zero extra TP MCP calls),
+    # and keeps plan_context_cache active for iterative Turn 3+ revisions until workouts are applied!
+    runner.tp_calls.clear()
     result = _stage(ctx, {"weeks": [_week(1, "base")]})
+    assert runner.tp_calls == []
     assert result["total_weeks"] == 1 and ctx.state["staged_training_plan"]["mode"] == "overhaul"
+    assert ctx.state["staged_training_plan"]["end_date"] == "2026-11-08"
+    assert ctx.state["plan_context_cache"]["start_date"] == "2026-11-02"
+    by_title = {r["title"]: r["category"] for r in ctx.state["staged_training_plan"]["weeks"][0]["rows"]}
+    assert by_title["Intervals 6x1km"] == "quality" and by_title["Easy Run 10 km"] == "easy"
+    assert by_title["Endurance Ride 45'"] == "bike" and by_title["Long Run 24 km (last 6 km @M)"] == "quality"
+    # Applying the week writes to TrainingPeaks and clears plan_context_cache.
+    _apply(ctx, result["staged_id"], 1)
+    assert ctx.state["plan_context_cache"] is None
     new_text = asyncio.run(fetch_plan_context(runner.ctx(), "2026-11-02", "2026-11-29"))
     assert "[w" not in new_text.split("CALENDAR IN WINDOW")[1]               # no ids in new mode
+
+
+def test_sunday_aug_1_new_plan_snaps_to_monday_aug_2_and_midweek_partial_weeks_clip_cleanly(runner):
+    # 2027-08-01 is Sunday, 2027-10-31 is Sunday: new plan snaps start to Monday 2027-08-02 (13 full weeks, never 26 Jul).
+    ctx = runner.ctx()
+    text = asyncio.run(fetch_plan_context(ctx, "2027-08-01", "2027-10-31", "new"))
+    assert "PLAN CONTEXT (new): 2027-08-02 → 2027-10-31 · 13 weeks (W1 = week of 2027-08-02)" in text
+    assert "W1–W13 (2027-08-02 → 2027-10-25): nothing planned" in text
+    assert "2027-07-26" not in text
+    staged_res = _stage(ctx, {"start_date": "2027-08-01", "mode": "new", "weeks": [
+        {"week": 1, "phase": "base", "days": {"Tue": "E 8", "Thu": "T 2x15' r2'", "Sun": "L 18"}},
+    ]})
+    assert staged_res["total_weeks"] == 1
+    w1 = ctx.state["staged_training_plan"]["weeks"][0]
+    assert w1["start"] == "2027-08-02"
+    assert [r["date"] for r in w1["rows"]] == ["2027-08-03", "2027-08-05", "2027-08-08"]
+
+    # Mid-week start (Wed 2026-11-04) + mid-week end (Fri 2026-11-13): partial W1 labelled, Sat/Sun of W2 clipped.
+    mid_ctx = runner.ctx()
+    mid_text = asyncio.run(fetch_plan_context(mid_ctx, "2026-11-04", "2026-11-13", "new"))
+    assert "W1 partial: Wed 2026-11-04 → Sun 2026-11-08" in mid_text
+    assert "W1 2026-11-04 (partial, Wed–Sun):" in mid_text
+    _stage(mid_ctx, {"weeks": [
+        {"week": 1, "phase": "base", "days": {"Mon": "E 8", "Wed": "E 8", "Sun": "L 16"}},
+        {"week": 2, "phase": "base", "days": {"Tue": "E 8", "Fri": "RACE", "Sun": "E 6"}},
+    ]})
+    staged_mid = mid_ctx.state["staged_training_plan"]
+    assert staged_mid["start_date"] == "2026-11-04" and staged_mid["end_date"] == "2026-11-13"
+    assert [r["date"] for r in staged_mid["weeks"][0]["rows"] if r["action"] != "delete"] == ["2026-11-04", "2026-11-08"]
+    assert [r["date"] for r in staged_mid["weeks"][1]["rows"] if r["action"] != "delete"] == ["2026-11-10", "2026-11-13"]
 
 
 # ------------------------------------------------------------------------------
@@ -432,7 +505,11 @@ def test_stage_workout_changes_redirects_big_sets_to_plan_builder(runner):
     assert 'start_date="2026-11-02"' in result["message"] and "fetch_plan_context" not in result["message"]
     assert runner.tp_calls == [] and "staged_workout_changes" not in ctx.state
 
-    spread = [{"date_str": "2026-11-03", "workout_id": "w1", "delete": True},
-              {"date_str": "2026-11-17", "workout_id": "w2", "delete": True}]           # spans 3 ISO weeks
-    result = json.loads(asyncio.run(stage_workout_changes(ctx, spread)))
-    assert result["use_plan_builder"] is True and "3 ISO weeks" in result["message"]
+    # Workout count (<= 10) governs, so 2 workout changes spanning 3 ISO weeks stage directly.
+    spread = [{"date_str": "2026-11-03", "title": "Easy 1", "create": True,
+               "structure": {"steps": [{"name": "Easy", "distance_m": 5000, "pace": "6:00-6:20"}]}},
+              {"date_str": "2026-11-17", "title": "Easy 2", "create": True,
+               "structure": {"steps": [{"name": "Easy", "distance_m": 6000, "pace": "6:00-6:20"}]}}]
+    result = json.loads(asyncio.run(stage_workout_changes(ctx, spread, message="Moved both runs two weeks out.")))
+    assert result.get("use_plan_builder") is not True and result["staged"] == 2
+    assert len(ctx.state["staged_workout_changes"]["changes"]) == 2

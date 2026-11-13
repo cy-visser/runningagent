@@ -29,6 +29,7 @@ from ..profile_lookup import (
     find_profile_by_email,
 )
 from .instruction import PROFILE_CONTEXT_END, PROFILE_CONTEXT_START, build_profile_context
+from .skill_toolset import SKILL_CATALOG_END
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ _PROFILE_BLOCK_RE = re.compile(
 
 
 def inject_profile_context(llm_request: LlmRequest, block: str) -> None:
-    """Puts `block` in the system instruction exactly once (replacing any earlier copy)."""
+    """Puts `block` in the system instruction exactly once (before conditional protocols for prefix caching)."""
     llm_request.config = llm_request.config or types.GenerateContentConfig()
     current = llm_request.config.system_instruction
     if current is not None and not isinstance(current, str):
@@ -47,6 +48,12 @@ def inject_profile_context(llm_request: LlmRequest, block: str) -> None:
         llm_request.append_instructions([block])
         return
     base = _PROFILE_BLOCK_RE.sub("", current or "").rstrip()
+    if SKILL_CATALOG_END in base:
+        head, tail = base.split(SKILL_CATALOG_END, 1)
+        tail = tail.strip()
+        prefix = f"{head}{SKILL_CATALOG_END}\n\n{block}"
+        llm_request.config.system_instruction = f"{prefix}\n\n{tail}" if tail else prefix
+        return
     llm_request.config.system_instruction = f"{base}\n\n{block}" if base else block
 
 

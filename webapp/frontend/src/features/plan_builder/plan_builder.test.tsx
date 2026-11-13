@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { RichMarkdown } from "../../shared/RichMarkdown";
 import type { AppliedTrainingPlan, PlanWeek, StagedTrainingPlan } from "../../shared/types";
-import { PlanStagedCard, weekHeadline } from "./PlanStagedCard";
+import { PlanStagedCard, effectiveWeekStart, weekHeadline } from "./PlanStagedCard";
 
 const STAGED_ID = "6b1e7c2a-4f0d-4a7e-9a35-2f1d8c9e0b11";
 
@@ -19,11 +20,11 @@ function week(n: number): PlanWeek {
     tss: 290,
     counts: { create: 2, update: 1, delete: 1, keep: 1 },
     rows: [
-      { date: start, day: "Mon", sport: "Strength", action: "create", title: `Strength W${n}`, duration_minutes: 45 },
-      { date: start, day: "Tue", sport: "Run", action: "update", title: `Intervals W${n}`, distance_km: 11.04 },
-      { date: start, day: "Wed", sport: "Bike", action: "delete", title: `Spin W${n}`, duration_minutes: 60 },
-      { date: start, day: "Thu", sport: "Run", action: "keep", title: `Easy W${n}`, distance_km: 8 },
-      { date: start, day: "Sun", sport: "Run", action: "create", title: `Long W${n}`, distance_km: 16 },
+      { date: start, day: "Mon", sport: "Strength", category: "strength", action: "create", title: `Strength W${n}`, duration_minutes: 45 },
+      { date: start, day: "Tue", sport: "Run", category: "quality", action: "update", title: `Intervals W${n}`, distance_km: 11.04 },
+      { date: start, day: "Wed", sport: "Bike", category: "bike", action: "delete", title: `Spin W${n}`, duration_minutes: 60 },
+      { date: start, day: "Thu", sport: "Run", category: "easy", action: "keep", title: `Easy W${n}`, distance_km: 8 },
+      { date: start, day: "Sun", sport: "Run", category: "easy", action: "create", title: `Long W${n}`, distance_km: 16 },
     ],
   };
 }
@@ -48,10 +49,11 @@ function applied(weeksDone: number[], extra: Partial<AppliedTrainingPlan> = {}):
   };
 }
 
-const shownWeeks = () => screen.getAllByTestId("plan-week").map((w) => w.textContent?.match(/^W(\d+)/)?.[1]);
+const shownWeeks = () =>
+  screen.getAllByTestId("plan-week").map((w) => within(w).getByRole("rowheader").textContent?.match(/^W(\d+)/)?.[1]);
 
-describe("plan builder feature", () => {
-  it("shows a 4-week window of compact week rows and pages with the arrows", () => {
+describe("plan builder agenda UI", () => {
+  it("renders a Plan Audit-style 7-column Mon–Sun agenda grid with 4-week paging (no Show all button)", () => {
     const onApply = vi.fn();
     render(<PlanStagedCard plan={plan()} status="pending" onApply={onApply} />);
 
@@ -61,34 +63,130 @@ describe("plan builder feature", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Weeks 1–4 of 24")).toBeInTheDocument();
     expect(shownWeeks()).toEqual(["1", "2", "3", "4"]);
-    // Never one long table: 4 weeks x 5 session chips.
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("plan-toggle-all")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Show all/i)).not.toBeInTheDocument();
+
+    // 7-day Mon–Sun agenda table (header row + 4 visible week rows).
+    expect(screen.getByRole("table", { name: "Proposed weekly schedule" })).toBeInTheDocument();
+    for (const d of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Total"]) {
+      expect(screen.getByRole("columnheader", { name: d })).toBeInTheDocument();
+    }
+    expect(screen.getAllByRole("row")).toHaveLength(5);
     expect(screen.getAllByTestId("plan-session")).toHaveLength(20);
+    // Rest days (Fri & Sat) show "Rest" just like Plan Audit.
+    expect(screen.getAllByText("Rest")).toHaveLength(8);
 
     const [w1] = screen.getAllByTestId("plan-week");
-    expect(w1).toHaveTextContent("W1 · 30 Nov · Base · 43 km · TSS 290");
-    const chips = within(w1).getAllByTestId("plan-session");
-    expect(chips[0]).toHaveTextContent("MonNewStrength W145 min");
-    expect(within(chips[0]).getByRole("img", { name: "Strength" })).toBeInTheDocument();
-    expect(chips[1]).toHaveTextContent("TueUpdatedIntervals W111 km");
-    expect(chips[2]).toHaveTextContent("Removed");
-    expect(within(chips[2]).getByText("Spin W1")).toHaveClass("line-through");
-    expect(chips[3]).toHaveTextContent("Kept");
+    expect(within(w1).getByRole("rowheader")).toHaveTextContent("W1 · 30 NovBase");
+    expect(w1).toHaveTextContent("43.0 km");
+    expect(w1).toHaveTextContent("TSS 290");
 
+    const cards = within(w1).getAllByTestId("plan-session");
+    expect(cards[0]).toHaveAttribute("data-category", "strength");
+    expect(within(cards[0]).getByRole("img", { name: "Strength" })).toBeInTheDocument();
+    expect(cards[0]).toHaveTextContent("Strength W1");
+    expect(cards[0]).toHaveTextContent("45 min");
+    expect(cards[0]).toHaveTextContent("New");
+
+    expect(cards[1]).toHaveAttribute("data-category", "quality");
+    expect(cards[1]).toHaveTextContent("Intervals W1");
+    expect(cards[1]).toHaveTextContent("11 km");
+    expect(cards[1]).toHaveTextContent("Updated");
+
+    expect(cards[2]).toHaveTextContent("Removed");
+    expect(within(cards[2]).getByText("Spin W1")).toHaveClass("line-through");
+    expect(cards[3]).toHaveTextContent("Kept");
+    // Longest run of the week gets the LR badge.
+    expect(cards[4]).toHaveTextContent("LR");
+
+    // Pager navigation
     const prev = screen.getByRole("button", { name: "Previous 4 weeks" });
     const next = screen.getByRole("button", { name: "Next 4 weeks" });
     expect(prev).toBeDisabled();
     fireEvent.click(next);
     expect(screen.getByText("Weeks 5–8 of 24")).toBeInTheDocument();
     expect(shownWeeks()).toEqual(["5", "6", "7", "8"]);
-    for (let i = 0; i < 4; i++) fireEvent.click(next);
-    expect(screen.getByText("Weeks 21–24 of 24")).toBeInTheDocument();
-    expect(next).toBeDisabled();
-    fireEvent.click(prev);
-    expect(shownWeeks()).toEqual(["17", "18", "19", "20"]);
 
     fireEvent.click(screen.getByRole("button", { name: /Apply to TrainingPeaks/ }));
     expect(onApply).toHaveBeenCalledWith(STAGED_ID);
+  });
+
+  it("renders concise Block Strategy and delta-only Plan Update messages with plain-chat pills (no status chips)", () => {
+    const coachMessage = `### Block Strategy
+
+13-week marathon build with a 3:1 load-to-recovery rhythm.
+
+1. **Volume & Long Runs:** Ramps from **52 km** to **76 km/week** (W10) with a **32 km** long run, then a 2-week taper.
+2. **Intensity & Rhythm:** Tuesday VO2max/threshold and Friday tempo stay separated by >= 48 h easy running (Monday rest).
+3. **Strength & Cross-Training:** Heavy lower-body lifting pairs with Tuesday/Friday quality days so easy days stay easy.
+4. **Watchpoints:**
+   - Cap single-week volume jumps at <= 10% off your 48 km baseline.
+   - Keep Wednesday recovery runs conversational below LT1.
+
+- **13-week plan staged:** 96 sessions (96 new). Review the weeks below and press **Apply to TrainingPeaks**.`;
+
+    const { unmount } = render(<RichMarkdown content={coachMessage} />);
+
+    expect(screen.getByRole("heading", { name: "Block Strategy" })).toBeInTheDocument();
+    expect(screen.getAllByTestId("number-badge").map((el) => el.textContent)).toEqual(["1", "2", "3", "4"]);
+    expect(screen.getAllByTestId("bullet-icon")).toHaveLength(3);
+    expect(screen.queryByTestId("status-badge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("status-chip")).not.toBeInTheDocument();
+    unmount();
+
+    const updateMessage = `### Plan Update
+
+Added Tilburg 10 Miles (W7) and Dam tot Damloop (W8) and moved @HM/@M work into Sunday long runs, capping quality at 12 km.
+
+1. **Long-Run Quality Cap:** 15–16 km hard inside 25 km pushes weekly hard load past 25–30%; staged up to \`+12@HM\` in W10 instead (say the word if you still want 15–16 km).
+2. **Weekly Rebalance:** Friday shifts to easy km (\`E 10–12\`) with lighter strength for >= 48 h recovery before Sunday.
+3. **Back-to-Back Races:** Race Tilburg all-out (\`P 16k@HM\`), run W8 Tuesday easy, and treat Dam tot Dam as \`L 20 +10@M\`.
+
+- **13-week plan staged:** 95 sessions (95 new). Review the weeks below and press **Apply to TrainingPeaks**.`;
+
+    render(<RichMarkdown content={updateMessage} />);
+    expect(screen.getByRole("heading", { name: "Plan Update" })).toBeInTheDocument();
+    expect(screen.getAllByTestId("number-badge").map((el) => el.textContent)).toEqual(["1", "2", "3"]);
+    expect(screen.getAllByTestId("bullet-icon")).toHaveLength(1);
+    expect(screen.queryByTestId("status-chip")).not.toBeInTheDocument();
+  });
+
+  it("clamps W1 start label to plan.start_date and marks pre-start / post-end days outside window", () => {
+    // Even if an older or mid-week plan has week.start on Monday (e.g. 2027-07-26) and start_date later (2027-07-28),
+    // W1 displays 28 Jul (never 26 Jul) and Mon–Tue render as out-of-window '–'.
+    const partialWeek: PlanWeek = {
+      week: 1,
+      start: "2027-07-26",
+      phase: "base",
+      focus: "opener",
+      run_km: 26,
+      tss: 150,
+      rows: [
+        { date: "2027-07-28", day: "Wed", sport: "Run", action: "create", title: "Easy Run 8 km", distance_km: 8 },
+        { date: "2027-08-01", day: "Sun", sport: "Run", action: "create", title: "Long Run 18 km", distance_km: 18 },
+      ],
+    };
+    expect(effectiveWeekStart(partialWeek, "2027-07-28")).toBe("2027-07-28");
+    expect(weekHeadline(partialWeek, "2027-07-28")).toBe("W1 · 28 Jul · Base · 26 km · TSS 150");
+
+    render(
+      <PlanStagedCard
+        plan={{
+          ...plan(1),
+          start_date: "2027-07-28",
+          end_date: "2027-07-31",
+          weeks: [partialWeek],
+        }}
+        status="pending"
+        onApply={vi.fn()}
+      />,
+    );
+    const header = screen.getByRole("rowheader");
+    expect(header).toHaveTextContent("W1 · 28 JulBase");
+    expect(header).not.toHaveTextContent("26 Jul");
+    // Mon & Tue (< 28 Jul) are out-of-window ('–'); Thu–Sat are Rest.
+    expect(document.querySelectorAll('[data-out-of-window="true"]')).toHaveLength(3); // Mon, Tue, and Sun > 31 Jul
+    expect(screen.getAllByText("–")).toHaveLength(2); // Mon & Tue empty out-of-window cells
   });
 
   it("follows the week being applied with a progress bar, then shows applied", () => {
@@ -156,9 +254,12 @@ describe("plan builder: strength exercises and training times", () => {
     };
     render(<PlanStagedCard plan={{ ...plan(1), weeks: [doubleDay] }} status="pending" onApply={vi.fn()} />);
 
-    const chips = screen.getAllByTestId("plan-session");
-    expect(chips[0]).toHaveTextContent("Tue07:00NewThreshold 2x15'12 km");
-    expect(chips[1]).toHaveTextContent("Tue18:00New");
+    const cards = screen.getAllByTestId("plan-session");
+    expect(cards[0]).toHaveTextContent("Threshold 2x15'");
+    expect(cards[0]).toHaveTextContent("07:00");
+    expect(cards[0]).toHaveTextContent("12 km");
+    expect(cards[1]).toHaveTextContent("18:00");
+    expect(cards[1]).toHaveTextContent("New");
 
     const section = screen.getByTestId("strength-exercises");
     expect(within(section).getByText("Strength exercises (1)")).toBeInTheDocument();

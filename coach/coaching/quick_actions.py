@@ -136,6 +136,7 @@ def dispatch_quick_action(
     if is_quick_action_report(state, invocation_id):
         llm_request.config = llm_request.config or types.GenerateContentConfig()
         llm_request.config.tool_config = NO_TOOL_CALLS
+        llm_request.config.tools = []
         return None
     action = state.get(QUICK_ACTION_STATE_KEY)
     if not action or not (_is_turn_start(llm_request) or _no_model_step_yet(callback_context)):

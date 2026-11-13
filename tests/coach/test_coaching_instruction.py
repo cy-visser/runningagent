@@ -91,6 +91,7 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
 
     # Typed chat always gets the routing rules; only a dispatched quick action's report call drops them.
     assert "SKILL ROUTING" in plan_instr
+    assert "⚠️ (caution/watch) or 🔴 (high risk/conflict)" in plan_instr
     # Report tools render a report: never a data lookup for a follow-up or another skill.
     assert "REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data)" in plan_instr
     assert "Never use one as a data lookup" in plan_instr

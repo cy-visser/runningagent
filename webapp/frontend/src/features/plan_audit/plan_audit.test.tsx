@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { DEMO_AUDIT_DATA, DEMO_AUDIT_MARKDOWN } from "../../demo/fixtures";
-import { AuditReport, splitRecommendations } from "./AuditReport";
+import { AuditReport } from "./AuditReport";
 
 vi.mock("./AuditCharts", () => ({
   default: () => <div data-testid="audit-charts" />,
@@ -19,33 +19,46 @@ describe("plan audit feature", () => {
     expect(screen.getByText("Recommendations")).toBeInTheDocument();
   });
 
-  it("uses status chips for the assessment and goal icons for recommendations", () => {
-    render(
+  it("uses generic chat sparkles/number pills for normal items and highlights ⚠️/🔴 issues", () => {
+    const { unmount } = render(
       <AuditReport data={DEMO_AUDIT_DATA} markdown={DEMO_AUDIT_MARKDOWN} />,
     );
-    expect(screen.getAllByTestId("status-chip")).toHaveLength(3);
-    const icons = screen.getAllByTestId("recommendation-icon");
-    expect(icons.map((i) => i.dataset.icon)).toEqual(["subgoal", "northstar"]);
-    for (const icon of icons) {
-      expect(icon.closest("li")).not.toHaveTextContent("Polarisation");
-    }
-  });
+    const sparkles = screen.getAllByTestId("bullet-icon");
+    // 2 positive Assessment bullets (depth 0) + Sub goal (0) + 2 sub-bullets (1, 1) + North star (0) + 1 sub-bullet (1)
+    expect(sparkles.map((s) => s.dataset.depth)).toEqual([
+      "0",
+      "0",
+      "0",
+      "1",
+      "1",
+      "0",
+      "1",
+    ]);
+    // The ⚠️ Travel & Achilles Watch bullet stands out as an amber issue callout row
+    const issue = screen.getByTestId("issue-item");
+    expect(issue).toHaveAttribute("data-tone", "amber");
+    expect(issue).toHaveTextContent("Travel & Achilles Watch");
+    expect(document.querySelector("[data-spacing=relaxed]")).not.toBeNull();
+    expect(screen.queryByTestId("status-chip")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-icon")).not.toBeInTheDocument();
+    unmount();
 
-  it("splitRecommendations keeps everything in assessment without the heading", () => {
-    expect(splitRecommendations("### Assessment\n- 🟢 ok")).toEqual({
-      assessment: "### Assessment\n- 🟢 ok",
-      recommendations: "",
-    });
-    const { assessment, recommendations } = splitRecommendations(
-      "### Assessment\n- a\n\n### 💡 Recommendations\n- b",
+    render(
+      <AuditReport
+        data={DEMO_AUDIT_DATA}
+        markdown={"### Assessment\n- 🟢 Spacing solid\n- 🔴 **Spacing conflict:** < 14 h gap\n\n### Recommendations\n1. Cap tempo\n2. Hold 24 km"}
+      />,
     );
-    expect(assessment).toBe("### Assessment\n- a");
-    expect(recommendations).toBe("### 💡 Recommendations\n- b");
+    expect(screen.getAllByTestId("bullet-icon")).toHaveLength(1);
+    expect(screen.getByTestId("issue-item")).toHaveAttribute("data-tone", "rose");
+    expect(screen.getAllByTestId("number-badge").map((n) => n.textContent)).toEqual(["1", "2"]);
+    expect(screen.queryByTestId("status-chip")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-icon")).not.toBeInTheDocument();
   });
 });
 
 describe("AuditCharts calendar", () => {
-  it("renders a week × weekday calendar with session cards and week totals", async () => {
+  it("renders a week × weekday calendar with session cards and week totals (no pager for <= 4 weeks)", async () => {
     const { default: AuditCharts } =
       await vi.importActual<typeof import("./AuditCharts")>("./AuditCharts");
     render(<AuditCharts weeks={DEMO_AUDIT_DATA.weeks} today="2026-11-06" />);
@@ -53,7 +66,8 @@ describe("AuditCharts calendar", () => {
     for (const d of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]) {
       expect(screen.getByRole("columnheader", { name: d })).toBeInTheDocument();
     }
-    // One header row + one row per week
+    // <= 4 weeks: no pager buttons, one header row + 4 week rows
+    expect(screen.queryByTestId("agenda-pager")).not.toBeInTheDocument();
     expect(screen.getAllByRole("row")).toHaveLength(
       DEMO_AUDIT_DATA.weeks.length + 1,
     );
@@ -95,6 +109,62 @@ describe("AuditCharts calendar", () => {
     expect(screen.queryByText(/🏃/)).not.toBeInTheDocument();
     expect(screen.queryByText(/📝/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Lisbon work trip/)).not.toBeInTheDocument();
+  });
+
+  it("pages by 4 weeks with Previous/Next arrows when auditing more than 4 weeks", async () => {
+    const { default: AuditCharts } =
+      await vi.importActual<typeof import("./AuditCharts")>("./AuditCharts");
+    const tenWeeks = Array.from({ length: 10 }, (_, i) => {
+      const start = new Date(Date.UTC(2026, 10, 30 + i * 7)).toISOString().slice(0, 10);
+      return {
+        ...DEMO_AUDIT_DATA.weeks[0],
+        week: start,
+        date_range: `Week ${i + 1}`,
+        km: 50 + i * 2,
+        sessions: [
+          {
+            date: start,
+            sport: "Run",
+            title: `Block Run W${i + 1}`,
+            category: "easy" as const,
+            km: 10,
+            minutes: 50,
+            tss: 55,
+            completed: false,
+          },
+        ],
+      };
+    });
+
+    render(<AuditCharts weeks={tenWeeks} today="2026-11-13" />);
+
+    expect(screen.getByTestId("agenda-pager")).toBeInTheDocument();
+    expect(screen.getByText("Weeks 1–4 of 10")).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(5); // 1 header + 4 week rows
+    expect(screen.getByText("Block Run W1")).toBeInTheDocument();
+    expect(screen.getByText("Block Run W4")).toBeInTheDocument();
+    expect(screen.queryByText("Block Run W5")).not.toBeInTheDocument();
+
+    const prev = screen.getByRole("button", { name: "Previous 4 weeks" });
+    const next = screen.getByRole("button", { name: "Next 4 weeks" });
+    expect(prev).toBeDisabled();
+    expect(next).not.toBeDisabled();
+
+    fireEvent.click(next);
+    expect(screen.getByText("Weeks 5–8 of 10")).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(5);
+    expect(screen.getByText("Block Run W5")).toBeInTheDocument();
+    expect(screen.getByText("Block Run W8")).toBeInTheDocument();
+
+    fireEvent.click(next);
+    expect(screen.getByText("Weeks 9–10 of 10")).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(3); // 1 header + 2 remaining week rows
+    expect(screen.getByText("Block Run W9")).toBeInTheDocument();
+    expect(screen.getByText("Block Run W10")).toBeInTheDocument();
+    expect(next).toBeDisabled();
+
+    fireEvent.click(prev);
+    expect(screen.getByText("Weeks 5–8 of 10")).toBeInTheDocument();
   });
 
   it("explains the weekly km targets in a caption and badges recovery weeks", async () => {

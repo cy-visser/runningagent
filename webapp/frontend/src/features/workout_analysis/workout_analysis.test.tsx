@@ -55,16 +55,19 @@ describe("workout analysis feature", () => {
     expect(screen.getByRole("heading", { level: 3, name: "🚀 Key Takeaways & Adjustments" })).toBeInTheDocument();
     // The "---" rules sit at the edges of the assessment / takeaways parts, so they are trimmed.
     expect(container.querySelectorAll("hr")).toHaveLength(0);
-    expect(screen.getAllByTestId("status-chip")).toHaveLength(3);
-    // Plain Execution bullets get the gradient sparkle; Key Takeaways keep their goal icons.
-    expect(screen.getByText("Rep splits:").closest("li")?.querySelector("[data-testid=bullet-icon]")).not.toBeNull();
-    const icons = screen.getAllByTestId("recommendation-icon");
-    expect(icons.map((i) => i.dataset.icon)).toEqual(["subgoal", "northstar"]);
+    // Normal execution bullets get gradient sparkles, ⚠️ recovery issue gets an amber callout, and Key Takeaways get number badges.
+    expect(screen.queryByTestId("status-chip")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("recommendation-icon")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("bullet-icon")).toHaveLength(3);
+    const issue = screen.getByTestId("issue-item");
+    expect(issue).toHaveAttribute("data-tone", "amber");
+    expect(issue).toHaveTextContent("Recoveries:");
+    expect(screen.getAllByTestId("number-badge").map((b) => b.textContent)).toEqual(["1", "2"]);
     // Key Takeaways sit in their own block, separated from the assessment.
     expect(screen.getByTestId("workout-takeaways")).toHaveClass("mt-8", "border-t", "pt-6");
   });
 
-  it("renders a bike banner without missing sections", () => {
+  it("renders a bike banner without missing sections and strips Ride Overview", () => {
     const bike: WorkoutReportData = {
       version: 1,
       workout_id: "b1",
@@ -82,7 +85,13 @@ describe("workout analysis feature", () => {
       weather: null,
       readiness: null,
     };
-    render(<WorkoutReport data={bike} markdown="### 🎯 Execution\n* ✅ **Intensity:** steady." />);
+    render(
+      <WorkoutReport
+        data={bike}
+        markdown={"### Ride Overview\n* **Volume:** 30 km\n\n### 🎯 Execution\n* ✅ **Intensity:** steady."}
+      />,
+    );
+    expect(screen.queryByText("Ride Overview")).not.toBeInTheDocument();
     expect(screen.getAllByTestId("workout-tile").map((t) => t.dataset.key)).toEqual(["distance", "power", "if"]);
     expect(screen.queryByTestId("elevation")).not.toBeInTheDocument();
     expect(screen.queryByTestId("hr-zones")).not.toBeInTheDocument();

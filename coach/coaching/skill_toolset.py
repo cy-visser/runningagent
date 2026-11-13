@@ -8,6 +8,7 @@ from google.adk.tools.skill_toolset import LoadSkillTool, SkillToolset
 from google.genai import types
 
 from ...integrations import package_paths
+from ...shared.session_state import APPLIED_PLAN_STATE_KEY, STAGED_PLAN_STATE_KEY
 from .quick_actions import is_quick_action_report
 
 # Feature folders that ship a SKILL.md, in catalog order (order is part of the prompt).
@@ -25,11 +26,70 @@ SKILL_FEATURES = (
 PLAN_BUILDER_SKILL = "plan-builder"
 PLAN_BUILDER_CONTEXT_ARGS = ("start_date", "end_date", "mode")
 
+SKILL_CATALOG_END = "</available_skills>"
+
 # Routing (when to load which skill, parallel data call, write-tool rules) lives in the coach
 # instruction's SKILL ROUTING section; this line only introduces the catalog.
 _SKILL_INSTRUCTION = (
     "Available skills (load with `load_skill` per SKILL ROUTING; follow the loaded protocol):"
 )
+_PRELOADED_PLAN_BUILDER_NOTE = (
+    "PLAN CONTEXT and the `plan-builder` protocol are already loaded for this conversation. "
+    "Stage or revise the plan with `stage_training_plan` directly (when revising an unapplied staged plan, "
+    "pass its `staged_id` as `base_staged_id` with ONLY the changed weeks and a brief delta-only `### Plan Update` "
+    "`message`) — do NOT call `load_skill(\"plan-builder\")` unless the runner asked for a different `start_date`, "
+    "`end_date`, or `mode`."
+)
+
+
+def has_active_plan_context(contents: list[types.Content] | None) -> bool:
+    """True when `contents` has a usable `fetch_plan_context` result with no calendar apply after it."""
+    active = False
+    for content in contents or []:
+        for part in content.parts or []:
+            resp = part.function_response
+            if not resp:
+                continue
+            payload = resp.response if isinstance(resp.response, dict) else {}
+            result = payload.get("result", payload)
+            text = result if isinstance(result, str) else ""
+            if resp.name == "fetch_plan_context":
+                active = text.lstrip().startswith("PLAN CONTEXT")
+            elif resp.name in ("apply_training_plan", "apply_staged_changes"):
+                active = False
+    return active
+
+
+has_unconsumed_plan_context = has_active_plan_context
+
+
+def unapplied_staged_plan_id(state: Any) -> str | None:
+    """`staged_id` of an unapplied `staged_training_plan` in session state, or None."""
+    if not state:
+        return None
+    staged = state.get(STAGED_PLAN_STATE_KEY)
+    staged_id = staged.get("staged_id") if isinstance(staged, dict) else None
+    if not staged_id:
+        return None
+    applied = state.get(APPLIED_PLAN_STATE_KEY)
+    if isinstance(applied, dict) and applied.get("staged_id") == staged_id and applied.get("done"):
+        return None
+    return staged_id
+
+
+def _loaded_plan_builder_this_turn(contents: list[types.Content] | None) -> bool:
+    items = contents or []
+    cut = max(
+        (i for i, c in enumerate(items) if c.role == "user" and any(not p.function_response for p in c.parts or [])),
+        default=0,
+    )
+    return any(
+        p.function_call
+        and p.function_call.name == "load_skill"
+        and (p.function_call.args or {}).get("skill_name") == PLAN_BUILDER_SKILL
+        for c in items[cut:]
+        for p in c.parts or []
+    )
 
 
 def load_feature_skill(feature: str) -> Skill:
@@ -84,6 +144,17 @@ class CoachLoadSkillTool(LoadSkillTool):
         return result
 
 
+def _staged_id_in_contents(contents: list[types.Content] | None, staged_id: str) -> bool:
+    for content in contents or []:
+        for part in content.parts or []:
+            if part.text and staged_id in part.text:
+                return True
+            resp = part.function_response
+            if resp and staged_id in str(resp.response or ""):
+                return True
+    return False
+
+
 class CompactSkillToolset(SkillToolset):
     """Exposes only `load_skill`, with a compact one-line-per-skill catalog."""
 
@@ -95,9 +166,22 @@ class CompactSkillToolset(SkillToolset):
         # A web quick action's report call already holds its skill and cannot call tools.
         if is_quick_action_report(tool_context.state, tool_context.invocation_id):
             return
-        llm_request.append_instructions(
-            [_SKILL_INSTRUCTION, format_skill_catalog(self._list_skills())]
-        )
+        skills = self._list_skills()
+        extra = [_SKILL_INSTRUCTION, format_skill_catalog(skills)]
+        contents = getattr(llm_request, "contents", None)
+        staged_id = unapplied_staged_plan_id(tool_context.state)
+        if (has_active_plan_context(contents) or staged_id) and not _loaded_plan_builder_this_turn(contents):
+            pb = next((s for s in skills if s.name == PLAN_BUILDER_SKILL), None)
+            if pb:
+                extra.append(
+                    f"{_PRELOADED_PLAN_BUILDER_NOTE}\n<plan_builder_protocol>\n{pb.instructions}\n</plan_builder_protocol>"
+                )
+                if staged_id and not _staged_id_in_contents(contents, staged_id):
+                    insert = getattr(llm_request, "_insert_transient_user_content", None)
+                    note = f'[Active unapplied staged plan: staged_id="{staged_id}"]'
+                    if callable(insert):
+                        insert([types.Content(role="user", parts=[types.Part.from_text(text=note)])])
+        llm_request.append_instructions(extra)
 
 
 skill_toolset = CompactSkillToolset(

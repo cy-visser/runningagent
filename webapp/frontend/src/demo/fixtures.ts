@@ -230,20 +230,16 @@ export const DEMO_CHECKIN_DATA: CheckinReportData = {
 
 export const DEMO_CHECKIN_MARKDOWN = `### 🎯 Goal Trajectory Status
 
-🟢 On Track. Chronic Training Load has climbed to **61.4 CTL**, requiring only **+0.78 CTL/wk** over the next 18.4 weeks, well inside the safe ramp. The projected **1:25:24** leaves a 36 s buffer at target CTL.
+**On Track** — Chronic Training Load has climbed to **61.4 CTL**, requiring only **+0.78 CTL/wk** over the next 18.4 weeks, well inside the safe ramp. The projected **1:25:24** leaves a 36 s buffer at target CTL.
 
 ### 🔍 Training Load & Adaptation Analysis
 
-The 80/20 balance held at 4 easy / 2 quality sessions and easy runs stayed cleanly below LT1 (141 bpm). HRV (**68 ms** ↑) and RHR (**46 bpm** →) confirm you are absorbing the 70+ km/wk tier.
-
-| Pillar | Metric | Status | Coach Takeaway |
-| :--- | :--- | :--- | :--- |
-| **Load & Ramp** | 73.5 km · +0.78 CTL/wk needed | 🟢 Safe ramp | Productive stimulus with TSB at **-4.8** |
-| **Achilles Watch** | Eccentric protocol active | 🟡 Monitor | Keep Friday strides on flat tarmac only |
+- **Intensity & Load:** 80/20 split held at **4 easy / 2 quality** (**73.5 km**, TSB **-4.8**) with easy runs cleanly below LT1 (141 bpm).
+- **Recovery & Tendon Watch:** HRV (**68 ms** ↑) and RHR (**46 bpm** →) confirm absorption; keep Friday strides on flat tarmac while on eccentric calf work.
 
 ### 🚀 Top 2 Priorities for the Upcoming Week
 1. **Hold Sunday's progressive long run at 22 km** with the final 5 km at 4:08–4:12/km (marathon-to-HM bridge effort).
-2. **Protect recovery ceiling**: keep easy days below 141 bpm so HRV stays at or above 66 ms.`;
+2. **Protect recovery ceiling:** keep easy days below 141 bpm so HRV stays at or above 66 ms.`;
 
 // Implied finish times from weekly LT2 pace (same math as the backend): km * pace / threshold->race ratio.
 const HM_FACTOR = 21.0975 / 0.97;
@@ -538,13 +534,17 @@ export const DEMO_AUDIT_DATA: AuditReportData = {
 
 export const DEMO_AUDIT_MARKDOWN = `### Assessment
 
-- **🟢 Polarisation & Spacing:** Every build week holds a clean **2 quality / 3–4 easy** split with at least 48h between Tuesday VO2/reps and Thursday threshold work, plus one bike flush and one strength session.
-- **🟢 Progression & Cutback:** Volume stays within a safe **+6% ramp** into Nov 9–15 (**76.0 km**) followed by a well-timed **-24% absorption week** (58.0 km) aligned with the Lisbon work trip.
-- **🟡 Travel & Achilles Watch (Nov 16–22):** Lisbon hills increase Achilles tendon load — stick to the flat Tagus riverfront path for the Nov 18 easy run.
+- **Polarisation & Spacing:** Build weeks hold a clean **2 quality / 3–4 easy** split with >= 48 h between Tuesday reps and Thursday threshold.
+- **Progression & Cutback:** Volume steps **+6%** into Nov 9–15 (**76.0 km**) before a well-timed **-24% cutback** (**58.0 km**) during the Lisbon trip.
+- ⚠️ **Travel & Achilles Watch (Nov 16–22):** Lisbon hills increase left Achilles load alongside Tuesday LT2 work.
 
 ### Recommendations
-- **Sub goal (Sub-1:26 HM):** Keep Nov 12's 15 km HM-pace alternations capped at LTHR (168 bpm); do not chase pace if windy.
-- **North star (Sub-2:58 Marathon):** Long runs have built steadily from 18 to 24 km; hold 24 km with one step to 26 km before the cutback, protecting aerobic durability ahead of the January marathon block.`;
+
+- **Sub goal (Sub-1:26 HM):**
+  - Cap Nov 12's 15 km HM-pace alternations at LTHR (**168 bpm**) rather than forcing pace in wind.
+  - Keep the Nov 18 Lisbon easy run on the flat Tagus riverfront path.
+- **North star (Sub-2:58 Marathon):**
+  - Progress long runs \`Nov 01 24 km -> Nov 08 22 km -> Nov 15 24 km -> Nov 22 18 km (cutback)\` to protect durability ahead of January.`;
 
 
 /** Rolling 14.2 km elevation profile for the workout banner demo. */
@@ -602,18 +602,18 @@ export const DEMO_WORKOUT_MARKDOWN = `## Tempo 3x10' @ Threshold
 ### 🎯 Execution & Physiological Assessment
 
 #### Pacing & Quality Execution
-* ✅ **Threshold blocks:** all three reps landed at 4:12–4:15/km against the 4:10–4:20/km target.
-* **Rep splits:** 4:12 → 4:14 → 4:15/km, HR 164 → 167 → 169 bpm.
-* ⚠️ **Recoveries:** HR only dropped to 148 bpm in the 2' floats; take them truly easy next time.
+* **Threshold blocks:** All three 10' reps landed cleanly at **4:12, 4:14, and 4:15/km** (3 s/km spread, 3/3 inside the 4:10–4:20/km target) with crisp 178 spm cadence over +86 m rolling park terrain.
+* **Rep HR progression:** Work-bout HR climbed steadily from **164 → 167 → 169 bpm**, capping just below your 170 bpm LTHR without spilling into Zone 5 until a brief final-minute crest.
+* ⚠️ **Recoveries:** Between-rep HR only dropped to **148 bpm** during the 2' floats (~5:35/km), narrowing cardiac recovery margin before rep 3.
 
 #### Heart Rate Dynamics & Aerobic Stability
-* ✅ **Aerobic stability:** Pa:Hr 3.1% across the quality block in cool, breezy conditions: well controlled, HR settling at 166–169 bpm (just under LTHR 170).
+* **Aerobic stability & readiness:** Windowed **Pa:Hr of 3.1%** in cool 11°C (14 km/h wind) conditions alongside rising morning HRV (**52 ms** ↑, 7.6 h sleep) confirms strong lactate clearance for **Sub-1:26 HM** while preserving **Sub-2:58 Marathon** base durability.
 
 ---
 
 ### 🚀 Key Takeaways & Adjustments
-1. **Sub goal (Sub-1:26 HM):** Progress to 3x12' next week at the same pace band.
-2. **North star (Sub-2:58 Marathon):** Keep Saturday's long run fully Zone 2 to bank aerobic volume.`;
+1. **Sub goal (Sub-1:26 HM):** Progress to **3x12' @ 4:10–4:18/km** next week, slowing the 2' float recoveries to **5:55–6:10/km** so HR drops below 140 bpm between reps.
+2. **North star (Sub-2:58 Marathon):** Keep Saturday's 24 km long run strictly Zone 2 (< 141 bpm) on flat tarmac to protect left Achilles recovery after today's 92 rTSS load.`;
 
 /** "2026-11-23" + n days (UTC, so the demo is timezone-independent). */
 function demoAddDays(iso: string, days: number): string {
@@ -646,22 +646,22 @@ function demoPlanWeek(week: number): PlanWeek {
   const isRaceWeek = week === DEMO_PLAN_WEEKS;
   const taper = phase === "taper";
   const rows: PlanSessionRow[] = [
-    { date: start, day: "Mon", sport: "Strength", action: action(0), title: taper ? "Strength: activation" : "Strength: heavy lower body", code: "S 40' heavy-lower", distance_km: null, duration_minutes: taper ? 20 : 40, tss_planned: 30,
+    { date: start, day: "Mon", sport: "Strength", category: "strength", action: action(0), title: taper ? "Strength: activation" : "Strength: heavy lower body", code: "S 40' heavy-lower", distance_km: null, duration_minutes: taper ? 20 : 40, tss_planned: 30,
       exercises: taper ? ["Activation: bodyweight squat 2x10", "Glute bridge 2x12", "Calf raise 2x12"] : ["Back squat 4x5", "Deadlift 3x5", "Bulgarian split squat 3x6/leg", "Single-leg calf raise 3x10"],
       load: taper ? "RPE 5, no soreness · rest 60\"" : "RPE 8 (2 reps in reserve) · rest 2-3'" },
-    { date: demoAddDays(start, 1), day: "Tue", sport: "Run", action: action(1), title: phase === "base" ? "Hills 8x60\"" : "VO2max 6x1 km", code: "I 6x1k r2'", distance_km: Math.round(11 * scale), duration_minutes: 58, tss_planned: 78 },
-    { date: demoAddDays(start, 2), day: "Wed", sport: "Run", action: action(2), title: "Easy run", code: "E 10", distance_km: Math.round(9 * scale), duration_minutes: 52, tss_planned: 45 },
-    { date: demoAddDays(start, 3), day: "Thu", sport: "Run", action: action(3), title: "Threshold 2x15'", code: "T 2x15' r2'", distance_km: Math.round(12 * scale), duration_minutes: 62, tss_planned: 82,
+    { date: demoAddDays(start, 1), day: "Tue", sport: "Run", category: "quality", action: action(1), title: phase === "base" ? "Hills 8x60\"" : "VO2max 6x1 km", code: "I 6x1k r2'", distance_km: Math.round(11 * scale), duration_minutes: 58, tss_planned: 78 },
+    { date: demoAddDays(start, 2), day: "Wed", sport: "Run", category: "easy", action: action(2), title: "Easy run", code: "E 10", distance_km: Math.round(9 * scale), duration_minutes: 52, tss_planned: 45 },
+    { date: demoAddDays(start, 3), day: "Thu", sport: "Run", category: "quality", action: action(3), title: "Threshold 2x15'", code: "T 2x15' r2'", distance_km: Math.round(12 * scale), duration_minutes: 62, tss_planned: 82,
       time: phase === "base" || phase === "build" ? "07:00" : null },
     ...(phase === "base" || phase === "build"
-      ? [{ date: demoAddDays(start, 3), day: "Thu", sport: "Strength", action: action(4), title: "Strength: core & hips", code: "S 30' core-hips", distance_km: null, duration_minutes: 30, tss_planned: 20, time: "18:00",
+      ? [{ date: demoAddDays(start, 3), day: "Thu", sport: "Strength", category: "strength" as const, action: action(4), title: "Strength: core & hips", code: "S 30' core-hips", distance_km: null, duration_minutes: 30, tss_planned: 20, time: "18:00",
           exercises: ["Single-leg glute bridge 3x12/leg", "Copenhagen plank 3x25\"/side", "Pallof press 3x12/side", "Hip airplane 3x6/leg"],
           load: "Controlled tempo, add load where easy · rest 45\"" }]
       : []),
-    { date: demoAddDays(start, 4), day: "Fri", sport: "Bike", action: action(5), title: "Recovery spin Z1", code: "B 45' Z1", distance_km: null, duration_minutes: 45, tss_planned: 25 },
+    { date: demoAddDays(start, 4), day: "Fri", sport: "Bike", category: "bike", action: action(5), title: "Recovery spin Z1", code: "B 45' Z1", distance_km: null, duration_minutes: 45, tss_planned: 25 },
     isRaceWeek
-      ? { date: demoAddDays(start, 6), day: "Sun", sport: "Race", action: "create", title: "CPC Loop Den Haag — Sub-1:26 HM", code: "RACE", distance_km: 21.1, duration_minutes: 86, tss_planned: 140 }
-      : { date: demoAddDays(start, 6), day: "Sun", sport: "Run", action: action(6), title: week >= 9 && !down ? `Long run ${longKm} km +6@HM` : `Long run ${longKm} km`, code: `L ${longKm}`, distance_km: longKm, duration_minutes: Math.round(longKm * 5.4), tss_planned: Math.round(longKm * 6.5) },
+      ? { date: demoAddDays(start, 6), day: "Sun", sport: "Race", category: "quality", action: "create", title: "CPC Loop Den Haag — Sub-1:26 HM", code: "RACE", distance_km: 21.1, duration_minutes: 86, tss_planned: 140 }
+      : { date: demoAddDays(start, 6), day: "Sun", sport: "Run", category: week >= 9 && !down ? "quality" : "easy", action: action(6), title: week >= 9 && !down ? `Long run ${longKm} km +6@HM` : `Long run ${longKm} km`, code: week >= 9 && !down ? `L ${longKm} +6@HM` : `L ${longKm}`, distance_km: longKm, duration_minutes: Math.round(longKm * 5.4), tss_planned: Math.round(longKm * 6.5) },
   ] as PlanSessionRow[];
   const counts = { create: 0, update: 0, delete: 0, keep: 0 };
   for (const r of rows) counts[r.action] += 1;
@@ -717,6 +717,15 @@ Before I put it together, a few things only you can tell me:
 2. Any holidays, travel or work peaks between now and March?
 3. How's the body feeling right now — any niggles I should plan around?`;
 
-export const DEMO_PLAN_MARKDOWN = `Your block builds from an aerobic base into HM-pace endurance, with a down week every fourth week and a two-week taper into CPC. Heavy lower-body strength sits on your hard-run days (after the run) so easy days stay easy, dropping to maintenance in the peak and activation only in the taper. The Friday spin adds low-impact aerobic volume without extra running load.
+export const DEMO_PLAN_MARKDOWN = `### Block Strategy
 
-📋 ${DEMO_PLAN_WEEKS}-week plan staged: ${DEMO_PLAN.totals.sessions} sessions (${DEMO_PLAN.totals.create} new · ${DEMO_PLAN.totals.update} updated · ${DEMO_PLAN.totals.delete} removed). Review the weeks below and press **Apply to TrainingPeaks**.`;
+16-week build from aerobic base into HM-specific endurance for **CPC Loop Den Haag** (3:1 cycle, 2-week taper).
+
+1. **Volume & Long Runs:** Ramps from ~45 km to **60 km/week** (W11–W13), peaking at a **23 km** (\`+6@HM\`) long run before taper.
+2. **Intensity & Rhythm:** Tuesday VO2max/hills and Thursday threshold stay separated by easy Wednesday km and Saturday rest (~80/20 split).
+3. **Strength & Cross-Training:** Monday heavy lower and Thursday PM core/hips taper to 1x in peak; Friday's Z1 spin adds low-impact load.
+4. **Watchpoints:**
+   - Keep Wednesday easy runs below LT1 (141 bpm) once HM-pace long runs start in W9.
+   - Maintain single-leg calf raises to protect Achilles resilience before 6x1 km work.
+
+- **${DEMO_PLAN_WEEKS}-week plan staged:** ${DEMO_PLAN.totals.sessions} sessions (${DEMO_PLAN.totals.create} new · ${DEMO_PLAN.totals.update} updated · ${DEMO_PLAN.totals.delete} removed). Review the weeks below and press **Apply to TrainingPeaks**.`;

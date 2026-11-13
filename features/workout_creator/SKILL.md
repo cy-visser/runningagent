@@ -1,6 +1,6 @@
 ---
 name: workout-creator
-description: Creates or updates planned workouts and calendar notes (<= 2 ISO weeks, <= 10 changes), staged for Update TrainingPeaks.
+description: Creates or updates planned workouts and calendar notes (<= 10 changes), staged for Update TrainingPeaks.
 ---
 
 # Workout & Calendar Note Creator Skill
@@ -10,7 +10,7 @@ description: Creates or updates planned workouts and calendar notes (<= 2 ISO we
 1. **Resolve Target Sessions**:
    - Format dates as `YYYY-MM-DD` (or `YYYY-MM-DDTHH:MM:SS` when a specific time is requested).
    - Reuse `[workout_id]`s already in this conversation; otherwise `stage_workout_changes` resolves by `date_str` + `sport` (`create: true` adds a session, e.g. strength on a run day). Never call a report tool to look sessions up.
-   - Changes > 10 workouts or spanning >= 3 ISO weeks belong to `plan-builder`: call `load_skill(skill_name="plan-builder", start_date=..., end_date=..., mode="overhaul")`.
+   - Changes > 10 workouts belong to `plan-builder`: call `load_skill(skill_name="plan-builder", start_date=..., end_date=..., mode="overhaul")`.
 
 2. **Coaching & Prescription Rules**:
    - **Easy / Recovery**: Zone 1/2 HR discipline, conversational pace.
@@ -22,7 +22,7 @@ description: Creates or updates planned workouts and calendar notes (<= 2 ISO we
 
 3. **Weigh the Week & Stage Once**:
    - Check intensity spacing, quality load, volume step, taper, and notes; state any real risk with numbers in `message`.
-   - Call `stage_workout_changes(changes=[...], message="...")` once with the complete set (`message` ends the turn—never write duplicate prose or list changes, and never ask "shall I update TrainingPeaks?").
+   - Call `stage_workout_changes(changes=[...], message="...")` once with the complete set (`message` <= 80 words: 1-2 short sentences, or a 1-line lead + 1-3 concise bullets—prefixing real load/spacing risks or pushbacks with `⚠️` or `🔴`; ends the turn—never write duplicate prose, never list staged changes shown on the card, and never ask "shall I update TrainingPeaks?").
    - Removals use `delete: true` (`workout_id`, or `date_str` + `sport`; notes: `kind: "note"`, `date_str`, `title`).
    - If `ambiguous` is returned, ask which candidate to edit, then re-stage the full set. If the runner later approves in chat, call `apply_staged_changes()`.
 

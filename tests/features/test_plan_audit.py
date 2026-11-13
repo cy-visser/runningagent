@@ -12,35 +12,33 @@ from running_coach.features.trend_analysis.fetch_trend_data_tool import fetch_tr
 
 
 def test_plan_audit_surfaces_goal_context_long_run_facts_and_web_payload(runner):
+    # Add a Rest Day placeholder note (must be skipped) alongside real notes.
+    runner.notes.append({"id": "n_rest", "date": "2026-11-16", "title": "Rest Day", "description": ""})
     ctx = runner.ctx()
     out = asyncio.run(fetch_plan_audit_data(ctx, weeks_forward=4, weeks_back=1))
 
-    assert "**Goal Plan Context**" in out
-    assert "London Marathon 2028" in out
-    assert "transition week (outside the 10K block)" in out
+    assert "**Audit Context:**" in out
+    assert "transition week, outside 10K block" in out
     # Long run: facts only (distance, duration, share of the week, block position) and the recent
     # history; the coach reasons the distance. No computed target, floor, cap or flag.
-    assert "🏃 Long run: 14 km (" in out and "% of the week's running km) | 12 wk to 10K" in out
-    assert "- Long-run history (longest completed run of each of the last 6 complete weeks" in out
-    assert "- Long run: no computed target." in out
+    assert "12 wk to 10K" in out and "LR 14 km (" in out
+    assert "- Last 6 complete weeks (oldest first): weekly km `" in out and "| longest runs `" in out
     for computed in ("north-star floor", "Long-run rule", "cap 1", "target 24", "below target"):
         assert computed not in out
     assert "Work trip to Berlin" in out
-    # Session lines carry the TrainingPeaks workout id (same format as the check-in), so the coach can
-    # stage changes after an audit without calling a report tool as a lookup.
-    session_lines = [ln for ln in out.splitlines() if ln.lstrip().startswith("- [Run] '")]
-    assert session_lines and all(re.search(r"'\s\[[^\]]+\] on ", ln) for ln in session_lines)
+    assert "Rest Day" not in out
+    # Single-sport-per-day sessions omit 10-digit [workout_id]s (stage_workout_changes resolves by date + sport).
+    session_lines = [ln for ln in out.splitlines() if ln.startswith("  Sessions: ")]
+    assert session_lines and not any(re.search(r"\[w_\w+\]", ln) for ln in session_lines)
 
     # Weekly volume: 10K block target = 72% of the 100 km/week north-star peak; completed and
-    # transition weeks have no path; planned weeks report facts only (vs prior week, vs path), never a
+    # transition weeks have no path; planned weeks report facts only (vs prior, vs path), never a
     # coded ramp verdict.
-    assert "- Weekly-volume reference (10K block): block target 72 km/week (72% of the 100 km/week" in out
-    assert "- Weekly ramp: no coded limit." in out
-    assert "- Recent weekly running km (last 6 complete weeks, oldest first): " in out
-    assert "📈 Volume: 44.5 km (" in out and "vs prior week" in out
-    assert "| path 55 km (build, 12 wk to 10K; block target 72 km by 2027-01-25), -19% vs path" in out
-    volume_lines = [ln for ln in out.splitlines() if "📈 Volume" in ln or "Weekly-volume reference" in ln]
-    assert volume_lines and not any("⚠" in ln or "10%" in ln or "%/week" in ln for ln in volume_lines)
+    assert "- Volume reference (10K block): block target 72 km/week (72% of the 100 km/week" in out
+    assert "44.5 km (" in out and "vs prior" in out
+    assert "path 55 km, -19% vs path" in out
+    header_lines = [ln for ln in out.splitlines() if ln.startswith("* **") or "Volume reference" in ln]
+    assert header_lines and not any("⚠" in ln or "10%" in ln or "%/week" in ln for ln in header_lines)
 
     report = json.loads(json.dumps(ctx.state.get("audit_report_data")))
     assert report["version"] == 1
@@ -61,10 +59,10 @@ def test_plan_audit_surfaces_goal_context_long_run_facts_and_web_payload(runner)
 
     # Late in the block: taper week at 75% of the block target; nothing planned is a fact, not a verdict.
     late = asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2027-01-25", end_date="2027-02-07"))
-    assert "path 72 km (build, 2 wk to 10K" in late
-    assert "path 54 km (taper, 1 wk to 10K; 75% of the 72 km block target), no runs planned" in late
+    assert "(build, 2 wk to 10K): 0.0 km (path 72 km, no runs planned)" in late
+    assert "(taper, 1 wk to 10K): 0.0 km (path 54 km [75% of 72 km], no runs planned)" in late
     recovery = asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2026-12-07", end_date="2026-12-13"))
-    assert "(recovery week, 9 wk to 10K; 80% of this week's" in recovery
+    assert "(recovery week, 9 wk to 10K):" in recovery and "[80% of " in recovery
 
     # Same per-week targets as the trend report (one shared rule and baseline).
     trend_ctx = runner.ctx()
@@ -81,18 +79,27 @@ def _span_days(kw: dict) -> int:
 def test_plan_audit_over_90_days_is_chunked_and_populated(runner):
     # Regression: "audit from today until 7 Feb 2027" (> 90 days) came back as an empty schedule because
     # TrainingPeaks rejects list ranges > 90 days and the error was coerced to [].
-    runner.workouts.append({
-        "id": "w_far", "date": "2027-02-03", "start_time": "2027-02-03T07:30:00", "title": "Far Tempo Run",
-        "sport": "Run", "type": "planned", "distance_planned_km": 11.0, "duration_planned": 0.9,
-        "tss_planned": 70.0,
-    })
+    # Also verify same-day same-sport planned sessions include [workout_id] + @HH:MM for disambiguation.
+    runner.workouts.extend([
+        {
+            "id": "w_far_am", "date": "2027-02-03", "start_time": "2027-02-03T07:30:00", "title": "Far Tempo Run",
+            "sport": "Run", "type": "planned", "distance_planned_km": 11.0, "duration_planned": 0.9,
+            "tss_planned": 70.0,
+        },
+        {
+            "id": "w_far_pm", "date": "2027-02-03", "start_time": "2027-02-03T18:00:00", "title": "Shakeout Double",
+            "sport": "Run", "type": "planned", "distance_planned_km": 5.0, "duration_planned": 0.45,
+            "tss_planned": 28.0,
+        },
+    ])
     runner.notes.append({"id": "n_far", "date": "2027-02-01", "title": "Taper starts", "description": ""})
     ctx = runner.ctx()
     out = asyncio.run(fetch_plan_audit_data(ctx, start_date="2026-10-27", end_date="2027-02-07"))
 
     list_calls = [kw for name, kw in runner.tp_calls if name in ("tp_get_workouts", "tp_list_notes")]
     assert list_calls and all(_span_days(kw) <= 90 for kw in list_calls)
-    assert "Far Tempo Run" in out and "[w_far]" in out
+    assert "Run@07:30 'Far Tempo Run' 11km TSS 70 [w_far_am]" in out
+    assert "Run@18:00 'Shakeout Double' 5km TSS 28 [w_far_pm]" in out
     assert "Taper starts" in out
     assert "Threshold 2 x 15'" in out           # planned sessions near the start of the window too
     assert "unavailable" not in out.lower()

@@ -5,8 +5,6 @@ import {
   Bike,
   CalendarPlus,
   Check,
-  ChevronLeft,
-  ChevronRight,
   Dumbbell,
   Footprints,
   Loader2,
@@ -15,17 +13,29 @@ import {
   RotateCw,
   Trophy,
   Waves,
+  Zap,
 } from "lucide-react";
+import {
+  AGENDA_WINDOW_WEEKS,
+  AgendaPager,
+  CATEGORY_META,
+  VolumeBar,
+  WEEKDAYS,
+  parseIso,
+  toIso,
+  weekdayIndex,
+} from "../../shared/agenda";
 import type {
   AppliedTrainingPlan,
+  AuditSessionCategory,
   PlanRowAction,
   PlanSessionRow,
   PlanWeek,
   StagedTrainingPlan,
 } from "../../shared/types";
 
-/** Weeks shown at a time; the arrows page by this many. */
-export const PLAN_WINDOW_WEEKS = 4;
+/** Weeks shown at a time in paged mode; the arrows page by this many. */
+export const PLAN_WINDOW_WEEKS = AGENDA_WINDOW_WEEKS;
 
 export type PlanStatus = "pending" | "applying" | "applied" | "partial" | "replaced";
 
@@ -41,6 +51,13 @@ interface PlanStagedCardProps {
   /** Apply (or resume) the remaining weeks. */
   onApply: (stagedId: string) => void;
 }
+
+const AGENDA_GRID_COLS =
+  "grid grid-cols-[4.75rem_repeat(7,minmax(5.5rem,1fr))_6.25rem] gap-1.5";
+
+const QUALITY_TITLE_RE =
+  /(interval|tempo|threshold|speed|reps|\bmp\b|marathon pace|race pace|canova|progression|hills?\b|fartlek|vo2|\bpush\b|\d+\s*x\s*\d+)/i;
+const QUALITY_CODE_RE = /^(T|I|Rp|RP|M|P|H|RACE)\b/;
 
 function dayMonth(iso: string): string {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
@@ -60,12 +77,37 @@ function round(value: number, digits = 1): number {
   return Number(value.toFixed(digits));
 }
 
+/** Effective display start date of a week (clamped to `planStartDate` so W1 never shows a pre-plan date). */
+export function effectiveWeekStart(week: PlanWeek, planStartDate?: string | null): string {
+  if (planStartDate && week.start < planStartDate) {
+    return planStartDate;
+  }
+  return week.start;
+}
+
+/** Category of a staged row (uses backend `row.category`, falling back for older persisted plans). */
+export function inferPlanCategory(row: PlanSessionRow): AuditSessionCategory {
+  if (row.category) return row.category;
+  const sport = row.sport.toLowerCase();
+  if (sport === "bike" || sport === "cycling") return "bike";
+  if (sport === "strength" || sport === "gym") return "strength";
+  if (sport === "race") return "quality";
+  if (sport === "run" || sport === "running") {
+    const code = (row.code ?? "").trim();
+    if (QUALITY_CODE_RE.test(code) || code.includes("@") || QUALITY_TITLE_RE.test(row.title)) {
+      return "quality";
+    }
+    return "easy";
+  }
+  return "other";
+}
+
 /** Badge labels/styles consistent with StagedChangesCard (create emerald, update sky, delete rose). */
 const BADGE: Record<PlanRowAction, { label: string; className: string }> = {
   create: { label: "New", className: "bg-emerald-50 text-emerald-800 border-emerald-200" },
   update: { label: "Updated", className: "bg-sky-50 text-sky-800 border-sky-200" },
-  delete: { label: "Removed", className: "bg-rose-50 text-rose-800 border-rose-200" },
-  keep: { label: "Kept", className: "bg-slate-50 text-slate-600 border-slate-200" },
+  delete: { label: "Removed", className: "bg-rose-100 text-rose-800 border-rose-200" },
+  keep: { label: "Kept", className: "bg-white/90 text-slate-600 border-slate-200" },
 };
 
 const SPORT_ICON: Record<string, typeof Activity> = {
@@ -77,9 +119,13 @@ const SPORT_ICON: Record<string, typeof Activity> = {
   race: Trophy,
 };
 
-function SportIcon({ sport }: { sport: string }) {
-  const Icon = SPORT_ICON[sport.toLowerCase()] ?? Activity;
-  return <Icon className="h-3.5 w-3.5 shrink-0 text-slate-500" aria-label={sport} role="img" />;
+function SportIcon({ sport, category }: { sport: string; category: AuditSessionCategory }) {
+  const low = sport.toLowerCase();
+  const Icon =
+    low === "run" && category === "quality"
+      ? Zap
+      : SPORT_ICON[low] ?? CATEGORY_META[category]?.icon ?? Activity;
+  return <Icon className="mt-[1px] h-3 w-3 shrink-0 opacity-80" aria-label={sport} role="img" />;
 }
 
 /** "12 km" for distance sessions, else "45 min". */
@@ -89,26 +135,70 @@ function sessionSize(row: PlanSessionRow): string | null {
   return null;
 }
 
-function SessionChip({ row }: { row: PlanSessionRow }) {
+function PlanSessionCard({
+  row,
+  isLongRun,
+}: {
+  row: PlanSessionRow;
+  isLongRun: boolean;
+}) {
+  const cat = inferPlanCategory(row);
+  const meta = CATEGORY_META[cat] ?? CATEGORY_META.other;
   const badge = BADGE[row.action] ?? BADGE.create;
   const size = sessionSize(row);
+  const isDeleted = row.action === "delete";
+  const tooltip = [
+    row.day,
+    row.time,
+    row.title,
+    size,
+    row.tss_planned != null ? `TSS ${Math.round(row.tss_planned)}` : null,
+    row.summary || row.code,
+    badge.label,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <li
+    <div
       data-testid="plan-session"
-      title={row.summary || row.code || undefined}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50/60 px-2 py-1 text-xs"
+      data-category={cat}
+      title={tooltip || undefined}
+      className={`rounded-lg border px-1.5 py-1 shadow-2xs ${
+        isDeleted ? "bg-rose-50/70 border-rose-200 text-rose-900" : meta.planned
+      }`}
     >
-      <span className="font-semibold text-slate-700">{row.day}</span>
-      {row.time && <span className="tabular-nums text-slate-500">{row.time}</span>}
-      <span className={`rounded-full border px-1.5 py-px text-[11px] font-semibold ${badge.className}`}>
-        {badge.label}
-      </span>
-      <SportIcon sport={row.sport} />
-      <span className={`text-slate-900 ${row.action === "delete" ? "line-through text-slate-500" : ""}`}>
-        {row.title}
-      </span>
-      {size && <span className="tabular-nums text-slate-500">{size}</span>}
-    </li>
+      <div className="flex items-start gap-1">
+        <SportIcon sport={row.sport} category={cat} />
+        <span
+          className={`line-clamp-3 text-xs font-semibold leading-tight ${
+            isDeleted ? "line-through text-slate-500" : ""
+          }`}
+        >
+          {row.title}
+        </span>
+      </div>
+
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-1 text-[11px] tabular-nums">
+        <span className="inline-flex flex-wrap items-center gap-1 opacity-90">
+          {row.time && <span className="text-slate-500">{row.time}</span>}
+          {size && <span>{size}</span>}
+        </span>
+
+        <span className="inline-flex items-center gap-1">
+          {isLongRun && (
+            <span className="rounded bg-white px-1 text-[0.65rem] font-bold text-sky-700 border border-sky-200">
+              LR
+            </span>
+          )}
+          <span
+            className={`rounded-full border px-1.5 py-px text-[10px] font-semibold leading-tight ${badge.className}`}
+          >
+            {badge.label}
+          </span>
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -124,11 +214,11 @@ function StrengthExercises({ rows }: { rows: PlanSessionRow[] }) {
   if (rows.length === 0) return null;
   return (
     <details data-testid="strength-exercises" className="group rounded-lg border border-slate-200 bg-white text-xs">
-      <summary className="flex cursor-pointer items-center gap-1.5 px-2 py-1.5 font-semibold text-slate-700 select-none">
-        <Dumbbell className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+      <summary className="flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-semibold text-slate-700 select-none">
+        <Dumbbell className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
         Strength exercises ({rows.length})
       </summary>
-      <ul className="space-y-2 border-t border-slate-100 px-2 py-2">
+      <ul className="space-y-2 border-t border-slate-100 px-2.5 py-2">
         {rows.map((row, i) => {
           const size = sessionSize(row);
           return (
@@ -148,50 +238,164 @@ function StrengthExercises({ rows }: { rows: PlanSessionRow[] }) {
   );
 }
 
-/** "W1 · 30 Nov · Base · 42 km · TSS 290" */
-export function weekHeadline(week: PlanWeek): string {
-  const parts = [`W${week.week}`, dayMonth(week.start), capitalize(week.phase)];
+/** "W1 · 30 Nov · Base · 42 km · TSS 290" (clamped to `planStartDate` when W1 starts mid-week). */
+export function weekHeadline(week: PlanWeek, planStartDate?: string | null): string {
+  const startIso = effectiveWeekStart(week, planStartDate);
+  const parts = [`W${week.week}`, dayMonth(startIso), capitalize(week.phase)];
   if (week.run_km) parts.push(`${round(week.run_km)} km`);
   if (week.bike_minutes) parts.push(`Bike ${Math.round(week.bike_minutes)} min`);
   if (week.tss != null) parts.push(`TSS ${Math.round(week.tss)}`);
   return parts.join(" · ");
 }
 
+function weekMonday(week: PlanWeek): Date | null {
+  const dt = parseIso(week.start);
+  if (!dt) return null;
+  return new Date(dt.getTime() - weekdayIndex(dt) * 86_400_000);
+}
+
+function dayIndexForRow(row: PlanSessionRow): number {
+  const byLabel = WEEKDAYS.indexOf(row.day as (typeof WEEKDAYS)[number]);
+  if (byLabel >= 0) return byLabel;
+  const dt = parseIso(row.date);
+  return dt ? weekdayIndex(dt) : 0;
+}
+
 type WeekState = "done" | "failed" | "applying" | null;
 
-function WeekRow({ week, state }: { week: PlanWeek; state: WeekState }) {
+function AgendaWeekRow({
+  week,
+  state,
+  maxKm,
+  planStartDate,
+  planEndDate,
+}: {
+  week: PlanWeek;
+  state: WeekState;
+  maxKm: number;
+  planStartDate?: string | null;
+  planEndDate?: string | null;
+}) {
+  const monday = weekMonday(week);
+  const byDay: PlanSessionRow[][] = WEEKDAYS.map(() => []);
+  for (const r of week.rows) {
+    byDay[dayIndexForRow(r)].push(r);
+  }
+
+  const runCandidates = week.rows.filter(
+    (r) => r.sport.toLowerCase() === "run" && r.action !== "delete" && (r.distance_km ?? 0) > 0,
+  );
+  const explicitLong = runCandidates.filter(
+    (r) => /^L\b/i.test((r.code ?? "").trim()) || /^long\b/i.test(r.title),
+  );
+  const longPool =
+    explicitLong.length > 0 ? explicitLong : runCandidates.filter((r) => inferPlanCategory(r) === "easy");
+  const longRun = longPool.reduce<PlanSessionRow | null>(
+    (best, r) => (!best || (r.distance_km ?? 0) > (best.distance_km ?? 0) ? r : best),
+    null,
+  );
+
+  const displayStart = effectiveWeekStart(week, planStartDate);
+  const sRows = strengthRows(week);
+  const km = week.run_km ?? 0;
+
   return (
-    <li data-testid="plan-week" className="rounded-xl border border-slate-200 p-3 space-y-2">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="font-display text-sm font-bold text-slate-900 tabular-nums">{weekHeadline(week)}</span>
-        {state === "done" && (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
-            <Check className="h-3.5 w-3.5" /> Applied
+    <div data-testid="plan-week" className="space-y-1.5">
+      <div className={AGENDA_GRID_COLS} role="row" aria-label={weekHeadline(week, planStartDate)}>
+        {/* Week header column */}
+        <div
+          role="rowheader"
+          title={week.focus || undefined}
+          className="flex flex-col justify-center gap-0.5 px-1"
+        >
+          <span className="font-display text-sm font-bold text-slate-900 tabular-nums">
+            W{week.week}
           </span>
-        )}
-        {state === "failed" && (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-rose-700">
-            <AlertTriangle className="h-3.5 w-3.5" /> Failed
+          <span className="text-xs font-medium text-slate-600 tabular-nums">
+            {" "}· {dayMonth(displayStart)}
           </span>
-        )}
-        {state === "applying" && (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-700">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Applying
+          {week.phase && (
+            <span className="w-fit rounded bg-slate-100 px-1.5 py-px text-[0.6875rem] font-semibold text-slate-700">
+              {capitalize(week.phase)}
+            </span>
+          )}
+          {week.focus && (
+            <span className="line-clamp-2 text-[11px] leading-tight text-slate-500">
+              {week.focus}
+            </span>
+          )}
+          {state === "done" && (
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-emerald-700">
+              <Check className="h-3 w-3" /> Applied
+            </span>
+          )}
+          {state === "failed" && (
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-rose-700">
+              <AlertTriangle className="h-3 w-3" /> Failed
+            </span>
+          )}
+          {state === "applying" && (
+            <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-orange-700">
+              <Loader2 className="h-3 w-3 animate-spin" /> Applying
+            </span>
+          )}
+        </div>
+
+        {/* Mon – Sun day cells */}
+        {WEEKDAYS.map((_, dIdx) => {
+          const dayIso = monday ? toIso(new Date(monday.getTime() + dIdx * 86_400_000)) : null;
+          const outOfWindow =
+            dayIso != null &&
+            ((Boolean(planStartDate) && dayIso < planStartDate!) ||
+              (Boolean(planEndDate) && dayIso > planEndDate!));
+          const sessions = byDay[dIdx];
+          return (
+            <div
+              key={dIdx}
+              role="cell"
+              data-out-of-window={outOfWindow || undefined}
+              className={`flex min-h-16 flex-col gap-1 rounded-xl p-1 ${
+                outOfWindow && sessions.length === 0 ? "bg-slate-100/60" : "bg-slate-50/70"
+              }`}
+            >
+              {sessions.length === 0 ? (
+                <span className="m-auto text-xs font-medium text-slate-300">
+                  {outOfWindow ? "–" : "Rest"}
+                </span>
+              ) : (
+                sessions.map((row, sIdx) => (
+                  <PlanSessionCard
+                    key={`${row.date}-${row.sport}-${sIdx}`}
+                    row={row}
+                    isLongRun={row === longRun}
+                  />
+                ))
+              )}
+            </div>
+          );
+        })}
+
+        {/* Weekly totals column */}
+        <div role="cell" className="flex flex-col justify-center gap-1 px-1">
+          <span className="font-display text-base font-bold tabular-nums text-slate-900">
+            {km.toFixed(1)} km
           </span>
-        )}
-        {week.focus && <span className="text-xs text-slate-500">{week.focus}</span>}
+          <VolumeBar km={km} maxKm={maxKm} />
+          {week.tss != null && (
+            <span className="text-xs tabular-nums text-slate-500">
+              TSS {Math.round(week.tss)}
+            </span>
+          )}
+          {Boolean(week.bike_minutes) && (
+            <span className="text-xs tabular-nums text-slate-500">
+              Bike {Math.round(week.bike_minutes!)} min
+            </span>
+          )}
+        </div>
       </div>
-      {week.rows.length > 0 ? (
-        <ul className="flex flex-wrap gap-1.5">
-          {week.rows.map((row, i) => (
-            <SessionChip key={`${row.date}-${row.sport}-${i}`} row={row} />
-          ))}
-        </ul>
-      ) : (
-        <p className="text-xs italic text-slate-500">Rest week</p>
-      )}
-      <StrengthExercises rows={strengthRows(week)} />
-    </li>
+
+      <StrengthExercises rows={sRows} />
+    </div>
   );
 }
 
@@ -239,13 +443,13 @@ function ApplyButton({
   );
 }
 
-/** Staged multi-week training plan: 4-week pager, compact week rows, week-by-week apply progress. */
+/** Staged multi-week training plan rendered in Plan Audit's 7-day Mon–Sun agenda grid. */
 export function PlanStagedCard({ plan, status, applied, applyingWeek, busy, onApply }: PlanStagedCardProps) {
   const weeks = plan.weeks;
   const total = weeks.length;
   const [start, setStart] = useState(0);
 
-  // While applying, the window follows the week being written.
+  // While applying, the 4-week window follows the week being written.
   useEffect(() => {
     if (applyingWeek == null) return;
     const idx = weeks.findIndex((w) => w.week === applyingWeek);
@@ -254,6 +458,7 @@ export function PlanStagedCard({ plan, status, applied, applyingWeek, busy, onAp
 
   const end = Math.min(start + PLAN_WINDOW_WEEKS, total);
   const visible = weeks.slice(start, end);
+  const maxKm = Math.max(1, ...weeks.map((w) => w.run_km ?? 0));
   const done = new Set(applied?.weeks_done ?? []);
   const failed = new Set(applied?.failed_weeks ?? []);
   const weekState = (w: PlanWeek): WeekState => {
@@ -279,7 +484,7 @@ export function PlanStagedCard({ plan, status, applied, applyingWeek, busy, onAp
   return (
     <div
       data-testid="plan-staged"
-      className="rounded-2xl border border-amber-200/80 bg-white p-5 shadow-card space-y-3"
+      className="rounded-2xl border border-amber-200/80 bg-white p-5 shadow-card space-y-4"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -316,35 +521,69 @@ export function PlanStagedCard({ plan, status, applied, applyingWeek, busy, onAp
         </p>
       )}
 
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          aria-label="Previous 4 weeks"
-          disabled={start === 0}
-          onClick={() => setStart(Math.max(0, start - PLAN_WINDOW_WEEKS))}
-          className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <span className="text-sm font-semibold text-slate-700 tabular-nums">
-          Weeks {total ? start + 1 : 0}–{end} of {total}
-        </span>
-        <button
-          type="button"
-          aria-label="Next 4 weeks"
-          disabled={end >= total}
-          onClick={() => setStart(start + PLAN_WINDOW_WEEKS)}
-          className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:border-slate-400 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
+      {/* Pager & category legend */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <AgendaPager
+          start={start}
+          end={end}
+          total={total}
+          onPrev={() => setStart(Math.max(0, start - PLAN_WINDOW_WEEKS))}
+          onNext={() => setStart(start + PLAN_WINDOW_WEEKS)}
+        />
+
+        <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-600">
+          {(["easy", "quality", "bike", "strength"] as const).map((cat) => (
+            <span key={cat} className="inline-flex items-center gap-1.5">
+              <span className={`h-2.5 w-2.5 rounded-xs ${CATEGORY_META[cat].swatch}`} />
+              {CATEGORY_META[cat].label}
+            </span>
+          ))}
+        </div>
       </div>
 
-      <ul className="space-y-2">
-        {visible.map((w) => (
-          <WeekRow key={w.week} week={w} state={weekState(w)} />
-        ))}
-      </ul>
+      {/* 7-column Mon–Sun Agenda Grid */}
+      <div className="overflow-x-auto -mx-1 px-1">
+        <div
+          className="min-w-[49.5rem] space-y-2"
+          role="table"
+          aria-label="Proposed weekly schedule"
+        >
+          <div className={AGENDA_GRID_COLS} role="row">
+            <div
+              role="columnheader"
+              className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-400"
+            >
+              Week
+            </div>
+            {WEEKDAYS.map((d) => (
+              <div
+                key={d}
+                role="columnheader"
+                className="text-center text-xs font-semibold uppercase tracking-wide text-slate-400"
+              >
+                {d}
+              </div>
+            ))}
+            <div
+              role="columnheader"
+              className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-400"
+            >
+              Total
+            </div>
+          </div>
+
+          {visible.map((w) => (
+            <AgendaWeekRow
+              key={w.week}
+              week={w}
+              state={weekState(w)}
+              maxKm={maxKm}
+              planStartDate={plan.start_date}
+              planEndDate={plan.end_date}
+            />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

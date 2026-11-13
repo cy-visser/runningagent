@@ -45,27 +45,25 @@ _NEEDS_STRUCTURE_MESSAGE = (
     "given, start from it and change only what the runner asked; keep everything else as is), then stage the full "
     "set again. Do not ask the runner."
 )
-# Above either limit the change is a plan overhaul: plan-builder stages it in one compact call.
+# Above MAX_WORKOUT_CHANGES the change is a plan overhaul: plan-builder stages it in one compact call.
 MAX_WORKOUT_CHANGES = 10
-MAX_ISO_WEEKS = 2
 # Rejected (needs_structure) staging attempts allowed in one turn before the app stops the retries.
 MAX_NEEDS_STRUCTURE_ATTEMPTS = 3
 _ATTEMPTS_STATE_KEY = "temp:needs_structure_attempts"
 
 
 def plan_builder_redirect(workout_changes: int, days: list[date]) -> Optional[dict]:
-    """The redirect result when the set is too big for workout-creator (> MAX_WORKOUT_CHANGES workout changes
-    or spanning more than MAX_ISO_WEEKS ISO weeks), else None. Nothing is staged then."""
-    weeks = (monday_of(max(days)) - monday_of(min(days))).days // 7 + 1 if days else 0
-    if workout_changes <= MAX_WORKOUT_CHANGES and weeks <= MAX_ISO_WEEKS:
+    """The redirect result when the set is too big for workout-creator (> MAX_WORKOUT_CHANGES workout changes),
+    else None. Nothing is staged then."""
+    if workout_changes <= MAX_WORKOUT_CHANGES:
         return None
     window = ""
     if days:
         start, end = monday_of(min(days)), monday_of(max(days)) + timedelta(days=6)
         window = f'start_date="{iso_date(start)}", end_date="{iso_date(end)}", '
     return {"staged": 0, "use_plan_builder": True, "message": (
-        f"Nothing was staged: {workout_changes} workout changes across {weeks} ISO weeks is a plan overhaul "
-        f"(workout-creator: <= {MAX_WORKOUT_CHANGES} changes within <= {MAX_ISO_WEEKS} ISO weeks). Use plan-builder: "
+        f"Nothing was staged: {workout_changes} workout changes is a plan overhaul "
+        f"(workout-creator: <= {MAX_WORKOUT_CHANGES} workout changes). Use plan-builder: "
         f'call load_skill(skill_name="plan-builder", {window}mode="overhaul"), then '
         "stage the plan with ONE stage_training_plan call.")}
 
@@ -164,7 +162,7 @@ async def _current_workouts(tool_context: ToolContext, workout_ids: list[str]) -
 async def stage_workout_changes(
     tool_context: ToolContext, changes: list[dict[str, Any]], message: str = ""
 ) -> str:
-    """Stages <= 10 workout/note changes within <= 2 ISO weeks for the Update TrainingPeaks button.
+    """Stages <= 10 workout/note changes for the Update TrainingPeaks button.
 
     `message`: 2-4 sentence coaching rationale + numeric risks (never list changes; shown above the table
     and ends the turn; omit for plain moves/renames). Replaces any prior staged set.

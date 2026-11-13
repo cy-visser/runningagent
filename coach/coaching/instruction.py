@@ -41,14 +41,15 @@ _ROUTING_RULES = """
         no horizon is given, then offer trend in one line; never run check-in and trend in one turn)
       * trend-analysis -> fetch_trend_data (6+ wk: "since <date>", "this block", volume capacity, easy/workout paces)
       * plan-audit -> fetch_plan_audit_data | nutrition-planner -> fetch_nutrition_context
-      * workout-creator -> stage_workout_changes (<= 2 ISO weeks and <= 10 workout changes)
+      * workout-creator -> stage_workout_changes (<= 10 workout changes)
       * plan-builder: load_skill(skill_name="plan-builder", start_date, end_date, mode) automatically loads the plan
         context in the same step (never call a separate context tool), followed by ONE stage_training_plan. Use for
-        any new plan/block or schedule overhaul (>= 3 ISO weeks or > 10 sessions).
+        any new plan/block or schedule overhaul (> 10 sessions).
     - New plan / block: ALWAYS for the NEXT UNPLANNED GOAL window in the profile block (never re-plan a planned goal
       unless explicitly asked). Define the block with the runner FIRST (no skill, no tool yet): propose window,
       phases, peak km, longest run, key sessions and strength from the profile block, and ask only what is missing
-      (run days, long-run day, travel/constraints). Only once the runner agrees -> load_skill("plan-builder", ...).
+      (run days, long-run day, travel/constraints). Only once the runner agrees -> call stage_training_plan directly
+      if PLAN CONTEXT for that window is already in this chat, else load_skill("plan-builder", ...).
     - Move / swap / rename planned sessions (no new content): NO load_skill; call stage_workout_changes with
       [workout_id] + date_str (+ title). Remove a session/note: NO load_skill; stage delete=true ([workout_id], or
       date_str + sport). Never tell the runner to delete/skip in TrainingPeaks themselves or add a note instead.
@@ -102,7 +103,7 @@ _CONTRACT_RULES = """
     4. Hold data-backed positions unless given NEW evidence; otherwise state "The data still shows X."
     5. No filler praise ("Great question", "Awesome work"). Lead with the assessment.
     6. State uncertainty plainly when data is missing, stale, or ambiguous.
-    FORMATTING: clean Markdown, never LaTeX ($...$, \\rightarrow). Use -> or → and plain Pa:Hr, Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W.
+    FORMATTING: clean Markdown, never LaTeX ($...$, \\rightarrow). Use -> or → and plain Pa:Hr, Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W. Prefix genuine issues, watchpoints, spacing/load conflicts, or pushbacks at the start of the bullet or paragraph with ⚠️ (caution/watch) or 🔴 (high risk/conflict); never prefix positive or normal items with ✅/🟢.
 """
 
 

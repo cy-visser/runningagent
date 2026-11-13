@@ -51,7 +51,11 @@ APPLIED_STAGE_RESULT = {"result": "[applied: see the apply_staged_changes result
 STALE_SKILL_STUB = "[skill instructions from an earlier turn: call load_skill again before following this skill]"
 PLAN_STAGE = "stage_training_plan"
 PLAN_APPLY = "apply_training_plan"
+PLAN_CONTEXT = "fetch_plan_context"
+REPLACED_PLAN_STUB = "[replaced by a later staged plan below]"
+REPLACED_PLAN_RESULT = {"result": "[replaced: the current staged plan is further below]"}
 APPLIED_PLAN_STUB = "[applied plan: {weeks} weeks, {sessions} sessions, see the apply summary]"
+APPLIED_PLAN_CONTEXT_STUB = "[plan context settled: see the applied training plan summary below]"
 
 _REPORT_BLOCK_RE = re.compile(r'\n*<report tool="(?P<tool>[^"]+)"[^>]*>.*?</report>', re.DOTALL)
 REPORT_MEMORY_HEADER = (
@@ -235,13 +239,15 @@ def keep_latest_reports_and_skills(
         if p.function_call and p.function_call.name == LOAD_SKILL and p.function_call.id
     }
 
-    # Pass 1: the position of the latest copy of each report / skill (later in the request = newer).
+    # Pass 1: the position of the latest copy of each report / skill / plan context (later = newer).
     latest: dict[tuple[str, str], tuple[int, int, int]] = {}
     for ci, content in enumerate(contents):
         for pi, part in enumerate(content.parts or []):
             response = part.function_response
             if response and response.name in REPORT_LABELS and _is_usable(result_text(response)):
                 latest[("report", response.name)] = (ci, pi, 0)
+            elif response and response.name == PLAN_CONTEXT and _is_usable(result_text(response)):
+                latest[("context", PLAN_CONTEXT)] = (ci, pi, 0)
             elif response and response.name == LOAD_SKILL and _skill_name(part, call_skills):
                 latest[("skill", _skill_name(part, call_skills))] = (ci, pi, 0)
             elif part.text and not part.thought:
@@ -260,7 +266,7 @@ def keep_latest_reports_and_skills(
                 changed = True  # an earlier week of a plan apply: the latest one carries the summary
                 continue
             new = (
-                _compact_plan(part, plans)
+                _compact_plan(part, plans, ci)
                 or _without_replaced_staging(part, replaced)
                 or _compact_applied(part, applied)
                 or _stale_skill_stub(part, ci, pi, turn_start, latest, call_skills)
@@ -283,30 +289,51 @@ def keep_latest_reports_and_skills(
 # ------------------------------------------------------------------------------
 
 def plan_status(contents: list[types.Content]) -> dict:
-    """Applied plans in the request: {"stubs": {stage call id: stub}, "drop": apply call ids of earlier
-    weeks, "summaries": {latest apply call id per plan: summary line}}."""
+    """Applied/replaced plans in the request: {"stubs": {stage call id: stub}, "replaced": set[str],
+    "drop": apply call ids of earlier weeks, "summaries": {latest apply call id per plan: summary line},
+    "last_apply_ci": int}."""
     calls: dict[str, list[str]] = {}       # staged_id -> apply call ids, in order
     call_plan: dict[str, str] = {}         # apply call id -> staged_id
     responses: dict[str, dict] = {}        # apply call id -> result JSON
     stages: dict[str, tuple[str, dict]] = {}  # stage call id -> (staged_id, result JSON)
-    for content in contents:
+    replaced: set[str] = set()
+    failed_pending: set[str] = set()
+    pending_cid: Optional[str] = None
+    pending_sid: Optional[str] = None
+    last_apply_ci = -1
+    for ci, content in enumerate(contents):
         for part in content.parts or []:
             call, response = part.function_call, part.function_response
             if call and call.name == PLAN_APPLY and call.id:
                 staged_id = str((call.args or {}).get("staged_id") or "")
                 calls.setdefault(staged_id, []).append(call.id)
                 call_plan[call.id] = staged_id
+                if pending_sid == staged_id:
+                    pending_cid = None
+                    pending_sid = None
             elif response and response.id and response.name == PLAN_APPLY:
                 responses[response.id] = _result_json(response)
+                last_apply_ci = ci
             elif response and response.id and response.name == PLAN_STAGE:
                 result = _result_json(response)
                 if result.get("staged_id"):
-                    stages[response.id] = (result["staged_id"], result)
+                    sid = result["staged_id"]
+                    stages[response.id] = (sid, result)
+                    replaced.update(failed_pending)
+                    failed_pending.clear()
+                    if pending_cid and pending_sid not in calls:
+                        replaced.add(pending_cid)
+                    pending_cid = response.id
+                    pending_sid = sid
+                elif result.get("staged") == 0:
+                    failed_pending.add(response.id)
     stubs = {cid: APPLIED_PLAN_STUB.format(weeks=r.get("total_weeks", "?"), sessions=r.get("sessions", "?"))
              for cid, (sid, r) in stages.items() if sid in calls}
+    for cid in replaced:
+        stubs[cid] = REPLACED_PLAN_STUB
     drop = {cid for ids in calls.values() for cid in ids[:-1]}
     summaries = {ids[-1]: applied_plan_summary(sid, responses.get(ids[-1]) or {}) for sid, ids in calls.items()}
-    return {"stubs": stubs, "drop": drop, "summaries": summaries}
+    return {"stubs": stubs, "replaced": replaced, "drop": drop, "summaries": summaries, "last_apply_ci": last_apply_ci}
 
 
 def _week_ranges(weeks: list[int]) -> str:
@@ -340,16 +367,23 @@ def _is_collapsed_apply(part: types.Part, plans: dict) -> bool:
                 or (response and response.name == PLAN_APPLY and response.id in plans["drop"]))
 
 
-def _compact_plan(part: types.Part, plans: dict) -> Optional[types.Part]:
-    """The applied plan's stage call as a stub (message kept) and the latest apply response as one line."""
+def _compact_plan(part: types.Part, plans: dict, ci: int = 0) -> Optional[types.Part]:
+    """Applied or replaced plan stage calls / contexts as stubs and the latest apply response as one line."""
     call, response = part.function_call, part.function_response
     if call and call.name == PLAN_STAGE and call.id in plans["stubs"]:
         args = {"plan": plans["stubs"][call.id]}
-        if (call.args or {}).get("message"):
+        if call.id not in plans["replaced"] and (call.args or {}).get("message"):
             args["message"] = call.args["message"]
         return part.model_copy(update={"function_call": call.model_copy(update={"args": args})})
+    if response and response.name == PLAN_STAGE and response.id in plans["replaced"]:
+        return part.model_copy(
+            update={"function_response": response.model_copy(update={"response": REPLACED_PLAN_RESULT})}
+        )
     if response and response.name == PLAN_APPLY and response.id in plans["summaries"]:
         compact = {"result": plans["summaries"][response.id]}
+        return part.model_copy(update={"function_response": response.model_copy(update={"response": compact})})
+    if response and response.name == PLAN_CONTEXT and ci < plans.get("last_apply_ci", -1):
+        compact = {"result": APPLIED_PLAN_CONTEXT_STUB}
         return part.model_copy(update={"function_response": response.model_copy(update={"response": compact})})
     return None
 
@@ -426,6 +460,11 @@ def _keep_latest_in_part(
         if latest.get(("report", response.name), (ci, pi, 0)) == (ci, pi, 0):
             return part
         note = f"[superseded: the latest {REPORT_LABELS[response.name]} output is further below]"
+        return part.model_copy(update={"function_response": response.model_copy(update={"response": {"result": note}})})
+    if response and response.name == PLAN_CONTEXT:
+        if latest.get(("context", PLAN_CONTEXT), (ci, pi, 0)) == (ci, pi, 0):
+            return part
+        note = "[superseded: the latest plan context is further below]"
         return part.model_copy(update={"function_response": response.model_copy(update={"response": {"result": note}})})
     if response and response.name == LOAD_SKILL:
         skill = _skill_name(part, call_skills)

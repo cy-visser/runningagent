@@ -7,11 +7,10 @@ at apply time: no native builders are stored for 150 sessions (keeps the Firesto
 
 from typing import Optional
 
+from ....shared.session_state import APPLIED_PLAN_STATE_KEY, STAGED_PLAN_STATE_KEY
 from .plan_diff import ROW_FIELDS, counts
-from .plan_expand import plan_window
+from .plan_expand import effective_plan_end, plan_window
 
-STAGED_PLAN_STATE_KEY = "staged_training_plan"
-APPLIED_PLAN_STATE_KEY = "applied_training_plan"
 PLAN_VERSION = 1
 
 
@@ -36,7 +35,8 @@ def week_payload(week: dict, changes: list[dict]) -> dict:
 
 
 def staged_plan_payload(staged_id: str, spec: dict, zones: dict, weeks: list[dict], title: str) -> dict:
-    start, end = plan_window(spec)
+    start, _ = plan_window(spec)
+    end = effective_plan_end(spec)
     totals = {"weeks": len(weeks), "sessions": sum(w["sessions"] for w in weeks)}
     for action in ("create", "update", "delete", "keep"):
         totals[action] = sum(w["counts"][action] for w in weeks)

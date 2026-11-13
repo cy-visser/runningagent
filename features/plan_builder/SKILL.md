@@ -1,17 +1,17 @@
 ---
 name: plan-builder
-description: Builds a new training plan/block or overhauls >= 3 ISO weeks / > 10 sessions using compact session codes, applied week by week.
+description: Builds a new training plan/block or overhauls > 10 sessions using compact session codes, applied week by week.
 ---
 
 # Plan Builder Skill
 
-Builds a **new plan/block** or **overhauls** >= 3 ISO weeks / > 10 sessions (`<= 2` weeks and `<= 10` sessions use `workout-creator`). `load_skill("plan-builder", start_date, end_date, mode)` automatically loads `PLAN CONTEXT` (zones, recent training, weekly calendar) in the same step. You write session codes; the app builds exact workouts, builders, strides, and calendar diffs.
+Builds a **new plan/block** or **overhauls** > 10 sessions (`<= 10` sessions use `workout-creator`). `load_skill("plan-builder", start_date, end_date, mode)` automatically loads `PLAN CONTEXT` (zones, recent training, weekly calendar) in the same step. You write session codes; the app builds exact workouts, builders, strides, and calendar diffs.
 
 ## Protocol
 
 1. **Scope & Agreement**:
    - New plans target the **NEXT UNPLANNED GOAL** in the profile block after block intake agreement (never re-plan a `planned` goal unless asked). Overhauls (`mode="overhaul"`) need no prior intake.
-   - Weigh `PLAN CONTEXT` (recent weekly km, long runs, CTL, strength/bike frequency, calendar notes) and `KEY EVENTS` (recent races, injuries, breaks).
+   - Weigh `PLAN CONTEXT` (recent weekly km, long runs, CTL, strength/bike frequency, calendar notes) and `KEY EVENTS` (recent races, injuries, breaks). When `W1` is marked `partial` (mid-week start), schedule only the active days of `W1` and scale `W1` volume proportionally—never squeeze a full week or standalone opener long run onto a 1-2 day partial week.
 2. **Periodize & Balance**:
    - Progress phases (`base -> build -> peak -> taper`) from recent held volume at a runner-appropriate ramp with down weeks every 3-4 weeks; peak ~2-3 weeks pre-race, then taper. Treat sub-goal races as steps (mini-taper, race, short recovery, resume build toward north star).
    - Keep ~80/20 easy/hard by time, >= 48 h between quality sessions (goal-pace long runs count as quality), and one long run/week.
@@ -23,12 +23,19 @@ Builds a **new plan/block** or **overhauls** >= 3 ISO weeks / > 10 sessions (`<=
 
 ## Output Contract
 
-Call `stage_training_plan` **once** with `plan` and `message` (ends the turn; never write separate text or list sessions):
-- `message`: 3-6 sentences covering progression logic, strength/bike fit with training times, peak, taper, and numeric risks.
-- `plan`: `{"start_date": "YYYY-MM-DD", "mode": "new" | "overhaul", "weeks": [{"week": 1, "phase": "base", "focus": "...", "days": {"Mon": ["B 45' Z2", "S 40' heavy-lower"], "Tue": "I 6x1k r2'", "Fri": "REST", "Sun": "L 24"}}]}` (`week: 1` = ISO week of `start_date`).
-- `mode`: `"new"` adds/updates per day+sport; `"overhaul"` also removes unlisted planned Run/Strength/Bike sessions in the window. `REST` clears planned Run/Strength/Bike on that day. Completed workouts and notes are untouched.
+Keep internal reasoning brief—do not draft week-by-week tables, re-audit unchanged weeks, or sum km in thoughts; the app computes exact km and TSS. Call `stage_training_plan` **once** with `plan` and `message` (ends the turn; never write separate text):
+- `message`: Telegraphic plain-chat Markdown—the interactive agenda card below already shows every week, km/TSS, and session, so **never restate the schedule or intake summary**:
+  - **Initial plan / overhaul (`### Block Strategy`, <= 120 words total)**: 1 short lead sentence (<= 20 words), then 3-4 single-sentence numbered items (<= 22 words each; omit #3 if no strength/bike):
+    1. `**Volume & Long Runs:**` start -> peak km, down-week rhythm, peak long run, taper.
+    2. `**Intensity & Rhythm:**` quality anchors and easy/rest spacing.
+    3. `**Strength & Cross-Training:**` pairing with runs and peak/taper step-down.
+    4. `**Watchpoints:**` 1-2 short `- ⚠️ ` sub-bullets (<= 18 words each) on concrete load/injury/goal guardrails.
+  - **Revisions (`### Plan Update`, delta-only, <= 90 words; <= 120 words if pushing back)**: **never repeat unchanged pillars or weeks**. Write 1 short lead sentence stating what changed, plus 1-3 single-sentence numbered items (<= 25 words each; prefix physiological pushbacks/conflicts with `⚠️` or `🔴`) covering only what applies: physiological pushback/compromise (with numbers + 1-clause override offer), ripple shifts to protect recovery, and execution guardrails for added races/key sessions (for trivial 1-2 session tweaks, skip bullets—1-2 sentences total).
+  - **NO Markdown tables** and **NO week-by-week or session lists**.
+- `plan`: `{"start_date": "YYYY-MM-DD", "mode": "new" | "overhaul", "weeks": ["W1 | base | Aerobic base; 2x strength | Mon: B 45' Z2; S 40' heavy-lower | Tue: I 6x1k r2' | Sun: L 24", ...]}` (`W1` = ISO week of `start_date`; separate multiple sessions on one day with `;`; keep `focus` <= 6 words).
+- `mode`: `"new"` adds/updates per day+sport; `"overhaul"` also removes unlisted planned Run/Strength/Bike sessions in the window. **Omit rest days in `"new"` mode** unless clearing an existing planned workout on that day (`REST` deletes planned Run/Strength/Bike on that day; omitted days automatically show as Rest on the agenda). Completed workouts and notes are untouched.
 - On `errors`: fix the flagged codes and call `stage_training_plan` again without asking the runner.
-- **Edits after staging**: `stage_training_plan(plan={"weeks": [changed weeks]}, base_staged_id=<staged_id>, message=...)`. If approved in chat, tell the runner to press **Apply to TrainingPeaks**.
+- **Edits after staging**: call `stage_training_plan(plan={"weeks": [changed weeks]}, base_staged_id=<staged_id>, message=...)` passing **only** the changed weeks (omit unchanged weeks; never call `load_skill("plan-builder")` again for the same window). If approved in chat, tell the runner to press **Apply to TrainingPeaks**.
 
 ## Session Codes
 

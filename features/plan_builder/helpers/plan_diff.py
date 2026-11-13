@@ -13,7 +13,7 @@ X session of that sport on that day (then that sport is managed on that day; del
 from typing import Any, Optional
 
 from ....shared.dates import iso_date, parse_date, parse_iso_timestamp
-from ....shared.sports import BIKE_SPORTS, NON_TRAINING_SPORTS, RUN_SPORTS, STRENGTH_SPORTS
+from ....shared.sports import BIKE_SPORTS, NON_TRAINING_SPORTS, RUN_SPORTS, STRENGTH_SPORTS, is_quality_title
 from ....shared.units import as_float
 from ....shared.workout_status import is_workout_completed
 from ....shared.workout_upsert import ACTION_CREATE, ACTION_DELETE, ACTION_UPDATE, KIND_WORKOUT
@@ -22,11 +22,12 @@ ACTION_KEEP = "keep"
 DAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 MANAGED_SPORTS = ("Run", "Strength", "Bike")
 SPORT_ORDER = {"Run": 0, "Bike": 1, "Strength": 2}
+QUALITY_KINDS = frozenset({"T", "I", "RP", "M", "P", "H", "RACE"})
 DISTANCE_TOL_KM = 0.1
 DURATION_TOL_MIN = 1.5
 # Row fields shown on the web card (contract: staged_training_plan.weeks[].rows).
-ROW_FIELDS = ("date", "day", "sport", "action", "title", "code", "distance_km", "duration_minutes", "tss_planned",
-              "summary", "exercises", "load", "time")
+ROW_FIELDS = ("date", "day", "sport", "category", "action", "title", "code", "distance_km", "duration_minutes",
+              "tss_planned", "summary", "exercises", "load", "time")
 
 
 def sport_name(raw: Any) -> str:
@@ -40,6 +41,20 @@ def sport_name(raw: Any) -> str:
     if low in STRENGTH_SPORTS:
         return "Strength"
     return text[:1].upper() + text[1:]
+
+
+def session_category(sport: str, title: str = "", kind: Optional[str] = None, code: Optional[str] = None) -> str:
+    """Agenda category ('easy' | 'quality' | 'bike' | 'strength' | 'other'), matching plan-audit."""
+    low = str(sport or "Run").strip().lower()
+    if low in BIKE_SPORTS:
+        return "bike"
+    if low in STRENGTH_SPORTS:
+        return "strength"
+    if low in RUN_SPORTS or low == "race":
+        if (kind and kind.upper() in QUALITY_KINDS) or (code and "@" in code) or is_quality_title(title):
+            return "quality"
+        return "easy"
+    return "other"
 
 
 def _day(workout: dict) -> Optional[str]:
@@ -108,14 +123,17 @@ def match(planned: list[dict], existing: list[dict]) -> tuple[list[tuple[dict, d
 
 def _row(session: dict, action: str, workout: Optional[dict] = None) -> dict:
     row = {k: session.get(k) for k in ROW_FIELDS}
+    row["category"] = session_category(session["sport"], session.get("title") or "", session.get("kind"), session.get("code"))
     row.update({"action": action, "workout_id": str(workout["id"]) if workout and workout.get("id") else None,
                 "session": session})
     return row
 
 
 def _delete_row(workout: dict, day: str, day_label: str) -> dict:
-    return {"date": day, "day": day_label, "sport": sport_name(workout.get("sport")), "action": ACTION_DELETE,
-            "title": workout.get("title") or "Planned workout", "code": None, **_existing_values(workout),
+    sport = sport_name(workout.get("sport"))
+    title = workout.get("title") or "Planned workout"
+    return {"date": day, "day": day_label, "sport": sport, "category": session_category(sport, title),
+            "action": ACTION_DELETE, "title": title, "code": None, **_existing_values(workout),
             "summary": None, "exercises": None, "load": None, "time": None,
             "workout_id": str(workout.get("id") or ""), "session": None}
 

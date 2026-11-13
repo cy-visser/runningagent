@@ -21,12 +21,17 @@ description: Deep physiological and telemetry analysis of a single completed run
    - **Decoupling (`Pa:Hr`) & Readiness**: use the tool's windowed `Pa:Hr` as-is (never recompute whole-session drift). Judge contextually against session design (continuous/Canova vs full-recovery reps), intensity, window length, weather (temp, feels-like, humidity, wind), and morning Sleep/HRV/RHR.
    - **Goals & Races**: connect to `GOAL REASONING`. On a **Sub-goal race**, congratulate, frame via north-star equivalent/gap, and note in one sentence if the result was saved. On a non-goal race (parkrun/tune-up) when tools are enabled, call `record_key_event(event_type="race", ...)` alongside your summary.
 
-3. **Output Format**:
-   - **Structured Workouts & Long Runs (Full)**:
-     1. **Session Overview**: date, sport, title, distance, duration, conditions.
-     2. **🎯 Execution & Physiological Assessment**: pacing/zone discipline, interval/block execution in prose, `Pa:Hr` + weather/terrain (`NGP`) + readiness synthesis, goal impact.
-     3. **🚀 Key Takeaways & Adjustments**: concrete next-session and recovery directives.
-   - **Easy & Recovery Runs (Concise — Execution + Takeaways <= ~120 words, no physiology lectures or repeated overview stats)**:
-     1. **Session Overview**: up to 4 bullets (omit missing): **Date & Title** (+ same-day sessions); **Volume** (distance | duration | pace (NGP)); **Physiological Load** (HR avg (max) | cadence | Pa:Hr | rTSS); **Environment** (location | temp (feels like), humidity, wind, +gain / -loss).
-     2. `### 🎯 Execution`: 3 one-line bullets starting with `✅` / `⚠️` / `❌` + key metric: **Intensity** (zone/plan compliance), **Aerobic stability** (`Pa:Hr` in context), **Readiness** (HRV/RHR/sleep, omit if absent), plus optional **Mechanics** / **Terrain** only when notable; weave RPE/comments into the relevant bullet.
-     3. `### 🚀 Key Takeaways`: 1-2 numbered one-line directives for upcoming days (no generic reminders).
+3. **Output Format** (no physiology lectures or repeated banner stats; prefix genuine execution, drift, gray-zone, or recovery issues with `- ⚠️ **Topic:**` or `- 🔴 **Topic:**`, leaving solid/normal bullets unmarked):
+   - **Structured Workouts & Long Runs (Execution + Takeaways ~180–280 words)**:
+     1. `### Session Overview`: up to 4 compact bullets (**Date & Title**, **Volume**, **Physiological Load**, **Environment**).
+     2. `### 🎯 Execution & Physiological Assessment`: 4-5 analytical bullets (`- **Topic:** ...`, 1-2 fuller sentences / ~35-50 words each) covering:
+        - **Pacing & Target Discipline** (rep/block splits, spread, `Δ vs target`, cadence/stride mechanics),
+        - **Interval & Recovery Dynamics** (HR climb across reps, recovery-jog pace & HR drop, or quality-block vs easy-km separation on long runs),
+        - **Aerobic Stability & Conditions** (windowed/block `Pa:Hr` weighed against session structure, `NGP`/elevation/VAM, and weather),
+        - **Readiness & Load Absorption** (HRV/RHR/sleep trend vs `rTSS`/RPE and same-day sessions), and
+        - **Goal & North-Star Impact** (what this session proves or builds for the active block and north star).
+     3. `### 🚀 Key Takeaways & Adjustments`: 2-3 numbered directives (`1.`, `2.`, 1-2 concise sentences / ~20-35 words each) with concrete target numbers and brief rationale.
+   - **Easy & Recovery Runs (Execution + Takeaways ~120–160 words)**:
+     1. `### Session Overview`: up to 4 bullets (omit missing): **Date & Title** (+ same-day sessions); **Volume** (distance | duration | pace (NGP)); **Physiological Load** (HR avg (max) | cadence | Pa:Hr | rTSS); **Environment** (location | temp (feels like), humidity, wind, +gain / -loss).
+     2. `### 🎯 Execution`: 3-4 concise bullets (`- **Topic:** ...`, 1-2 short sentences / ~25-35 words each): **Intensity & Pacing** (zone/plan compliance), **Aerobic Stability** (`Pa:Hr` in weather/terrain context), **Readiness** (HRV/RHR/sleep + prior-day load, omit if absent), plus optional **Mechanics / Terrain** only when notable; weave RPE/comments into the relevant bullet.
+     3. `### 🚀 Key Takeaways`: 1-2 numbered concise directives (`1.`, `2.`) for upcoming days (no generic reminders).

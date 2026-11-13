@@ -46,6 +46,12 @@ def test_next_unplanned_goal_skips_past_and_planned_goals_with_its_block_window(
     assert (single["window_start"], single["window_end"]) == (date(2026, 11, 2), date(2026, 12, 6))
     assert next_unplanned_goal({**SINGLE_PROFILE, "planned": True}, TODAY) is None
 
+    # A future block configured with a Sunday 1st-of-the-month start (2027-08-01) snaps to Monday 2027-08-02.
+    aug_sun = {**SINGLE_PROFILE, "goal_set_date": "2027-08-01", "timeline": "2027-10-31"}
+    assert (next_unplanned_goal(aug_sun, TODAY)["window_start"], next_unplanned_goal(aug_sun, TODAY)["window_end"]) == (
+        date(2027, 8, 2), date(2027, 10, 31)
+    )
+
 
 def test_all_future_goals_planned_needs_at_least_one_future_goal():
     assert not all_future_goals_planned(_plan(sub1=True), TODAY)

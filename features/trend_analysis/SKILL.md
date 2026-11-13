@@ -17,11 +17,11 @@ Call `fetch_trend_data` in the same step as `load_skill` (pass `weeks` only when
 
 ## Output
 
-**Write no overview, tables, or dimension sections, and do not restate chart values.** Output only:
+**Write no overview, tables, or dimension sections, do not restate chart values, and keep the entire reply <= ~160 words.** Output only:
 
-1. `### 🎯 Next Block: Top 3`: exactly 3 numbered recommendations ranked by goal impact, each formatted as:
+1. `### 🎯 Next Block: Top 3`: exactly 3 numbered recommendations (`1.`, `2.`, `3.`) ranked by goal impact (<= 30 words each), formatted as:
    - **Bold, concrete action** (weekly km, long-run km, min/km paces, session mix, or test), followed by
-   - `Why:` one line citing exact tool numbers (e.g. weeks held + km gap, hit rate at `%LTHR`, LT/CTL delta, projection gap).
-2. `### 🧭 North Star` (goal plans only): 1-3 numbered recommendations in the same format covering what this block must protect/build for the north star (CTL trajectory vs peak range, long-run progression from history, volume toward block/north-star target), quoting the north-star equivalent and gap once.
+   - `Why:` one compact clause citing exact tool numbers (e.g. weeks held + km gap, hit rate at `%LTHR`, LT/CTL delta, projection gap).
+2. `### 🧭 North Star` (goal plans only): 1-3 numbered recommendations (`1.`, `2.`) in the same compact format covering what this block must protect/build for the north star (CTL trajectory vs peak range, long-run progression from history, volume toward block/north-star target), quoting the north-star equivalent and gap once.
 
 If the coverage line notes unrecorded workouts, append one italic sentence noting those weeks are incomplete and re-running later will fill them in.

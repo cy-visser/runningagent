@@ -6,6 +6,7 @@ from typing import Optional
 
 from google.adk.tools import FunctionTool, ToolContext
 
+from ...shared.session_state import PLAN_CONTEXT_STATE_KEY
 from ...shared.ui_channel import reply
 from .helpers.staged_changes import APPLIED_CHANGES_STATE_KEY, STAGED_CHANGES_STATE_KEY, confirmation_text
 from ...shared.workout_upsert import write_change
@@ -34,6 +35,8 @@ async def apply_staged_changes(tool_context: ToolContext, staged_id: Optional[st
 
     results = list(await asyncio.gather(*(write_change(tool_context, c) for c in staged["changes"])))
     tool_context.state[STAGED_CHANGES_STATE_KEY] = None
+    if any(r.get("ok") for r in results):
+        tool_context.state[PLAN_CONTEXT_STATE_KEY] = None
     tool_context.state[APPLIED_CHANGES_STATE_KEY] = {
         "staged_id": staged.get("staged_id"),
         "applied": sum(1 for r in results if r.get("ok")),

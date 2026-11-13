@@ -8,10 +8,14 @@ ramp is appropriate for this runner (CTL, recent weekly km, background, recovery
 from datetime import date
 from typing import Optional
 
-from ....shared.dates import monday_of, parse_date
-from ....shared.goal_distance import resolve_target_peak_ctl
-from ....shared.goal_plan import KIND_NORTH_STAR, north_star, race_day
-from ....shared.long_run_facts import format_history, format_weekly_km_history, week_long_run_facts
+from ....shared.dates import monday_of
+from ....shared.long_run_facts import (
+    fmt_duration,
+    fmt_km,
+    format_history,
+    format_weekly_km_history,
+    week_long_run_facts,
+)
 from ....shared.north_star_targets import (
     PHASE_POST_RACE,
     PHASE_RACE_WEEK,
@@ -51,7 +55,7 @@ def annotate_long_runs(weeks: list[dict], profile: Optional[dict]) -> list[dict]
 
 
 def format_week_long_run(w: dict) -> str:
-    """'Long run: 16 km (1:28, 34% of the week's running km) | 9 wk to 5K', or ''."""
+    """'Long run: 16 km (1:28, 34% of the week's running km) | 9 wk to 5K', or '' (web payload)."""
     info = w.get("long_run") or {}
     if not info.get("goal_label") and not w.get("long_km"):
         return ""
@@ -101,82 +105,98 @@ def _signed_pct(value: Optional[float]) -> str:
     return f"{value:+.0f}%"
 
 
-def format_week_over_week(w: dict) -> str:
-    """'+14% vs prior week 54.4 km', or '' when there is no prior-week volume."""
-    if w.get("vs_prior_pct") is None:
-        return ""
-    return f"{_signed_pct(w['vs_prior_pct'])} vs prior week {w['prior_km']:.1f} km"
-
-
-def format_week_volume(w: dict) -> str:
-    """'Volume: 62.0 km (+14% vs prior week 54.4 km) | path 58 km (build, ...), +7% vs path', or ''."""
+def _week_phase_meta(w: dict) -> str:
     v = w.get("volume")
-    km = w.get("total_distance_km") or 0.0
-    wow = format_week_over_week(w)
-    head = f"Volume: {km:.1f} km" + (f" ({wow})" if wow else "")
-    if not v:
-        return head if wow else ""
-    wk = f", {v['weeks_to_race']} wk to {v['goal_label']}" if v.get("weeks_to_race") is not None else ""
-    if v["phase"] == PHASE_TAPER:
-        detail = f"taper{wk}; {round(v['taper_share'] * 100)}% of the {v['block_target_km']} km block target"
-    elif v["phase"] == PHASE_RECOVERY:
-        detail = (f"recovery week{wk}; {round(RECOVERY_SHARE * 100)}% of this week's {v['ramp_km']} km path step, "
-                  f"block target {v['block_target_km']} km")
-    else:
-        detail = f"build{wk}; block target {v['block_target_km']} km"
-        if v.get("maintain"):
-            detail += ", already reached: maintain, no cut needed"
-        elif v.get("peak_week"):
-            detail += f" by {v['peak_week'].isoformat()}"
-    if km <= 0:
-        tail = NO_RUNS_PLANNED
-    elif v.get("vs_path_pct") is not None:
-        tail = f"{_signed_pct(v['vs_path_pct'])} vs path"
-    else:
-        tail = ""
-    return f"{head} | path {v['target_km']} km ({detail})" + (f", {tail}" if tail else "")
+    if v:
+        wk = f", {v['weeks_to_race']} wk to {v['goal_label']}" if v.get("weeks_to_race") is not None else ""
+        phase = "recovery week" if v["phase"] == PHASE_RECOVERY else v["phase"]
+        return f" ({phase}{wk})"
+    info = w.get("long_run") or {}
+    phase = info.get("phase")
+    if phase in (PHASE_TRANSITION, PHASE_POST_RACE):
+        return f" ({phase} week, outside {info['goal_label']} block)"
+    if phase == PHASE_RACE_WEEK:
+        return f" ({info['goal_label']} race week)"
+    if info.get("weeks_to_race") is not None and info.get("goal_label"):
+        return f" ({info['weeks_to_race']} wk to {info['goal_label']})"
+    return ""
+
+
+def _week_volume_part(w: dict) -> str:
+    km = round(w.get("total_distance_km") or 0.0, 1)
+    v = w.get("volume")
+    notes = []
+    if w.get("vs_prior_pct") is not None:
+        notes.append(f"{_signed_pct(w['vs_prior_pct'])} vs prior {w['prior_km']:.1f} km")
+    if v:
+        detail = ""
+        if v["phase"] == PHASE_TAPER:
+            detail = f" [{round(v['taper_share'] * 100)}% of {v['block_target_km']} km]"
+        elif v["phase"] == PHASE_RECOVERY:
+            detail = f" [{round(RECOVERY_SHARE * 100)}% of {v['ramp_km']} km]"
+        elif v.get("maintain"):
+            detail = " [maintain]"
+        if km <= 0:
+            tail = f", {NO_RUNS_PLANNED}"
+        elif v.get("vs_path_pct") is not None:
+            tail = f", {_signed_pct(v['vs_path_pct'])} vs path"
+        else:
+            tail = ""
+        notes.append(f"path {v['target_km']} km{detail}{tail}")
+    return f"{km:.1f} km" + (f" ({'; '.join(notes)})" if notes else "")
+
+
+def format_audit_week_header(w: dict) -> str:
+    """Compact one-line week header with volume/ramp/path, TSS, sport split and long-run facts."""
+    start_str = w["start_date"].isoformat()
+    end_str = w["end_date"].strftime("%b %d")
+    km = round(w.get("total_distance_km") or 0.0, 1)
+    parts = [_week_volume_part(w), f"TSS {round(w.get('total_tss') or 0.0)}"]
+
+    split = []
+    easy, qual = w.get("easy_count") or 0, w.get("quality_count") or 0
+    if easy + qual:
+        split.append(f"{easy}E/{qual}Q")
+    if w.get("bike_count"):
+        split.append(f"{w['bike_count']} Bike")
+    if w.get("strength_count"):
+        split.append(f"{w['strength_count']} Str")
+    if w.get("other_sport_count"):
+        split.append(f"{w['other_sport_count']} Oth")
+    if split:
+        parts.append(", ".join(split))
+
+    long_km = w.get("long_km") or 0.0
+    info = w.get("long_run") or {}
+    if long_km > 0:
+        dur = fmt_duration(w.get("long_duration_h"))
+        share = f"{round(long_km / km * 100)}%" if km > 0 else ""
+        extra = ", ".join(x for x in (dur, share) if x)
+        parts.append(f"LR {fmt_km(round(long_km, 1))} km" + (f" ({extra})" if extra else ""))
+    elif easy + qual == 0 and (info.get("goal_label") or w.get("volume")):
+        parts.append("LR none")
+
+    return f"* **{start_str} – {end_str}**{_week_phase_meta(w)}: {' · '.join(parts)}"
 
 
 def format_goal_context(
     profile: Optional[dict], today: date, ctl: Optional[float] = None, long_runs: Optional[list[dict]] = None
 ) -> str:
-    """Goal (plan) context for the plan audit: current block, north star, long-run and weekly-km facts,
-    volume rule."""
+    """Compact audit context: dynamic training facts not already in `<runner_profile>`."""
     ctx = block_context(profile, today)
-    goal, label = ctx["goal"], ctx["label"]
-    if not label:
+    label = ctx["label"]
+    if not label and ctl is None and not long_runs:
         return ""
-    ns = north_star(profile)
-    race = parse_date(goal.get("timeline"))
-    weeks = f" ({max(0, (monday_of(race) - monday_of(today)).days // 7)} weeks)" if race else ""
-    block = f"{goal['training_goal']}, race {goal.get('timeline') or 'not set'}{weeks}"
-    if goal.get("before_start"):
-        block += f"; block starts {goal['goal_set_date']} (transition/recovery until then)"
-    ctl_str = f"; current CTL {ctl:.1f}" if ctl is not None else ""
-
-    if ns:
-        lines = ["**Goal Plan Context** (judge the plan on both levels: the current sub goal AND the north star):"]
-        kind = "north-star block" if goal.get("kind") == KIND_NORTH_STAR else "sub-goal block"
-        lines.append(f"- Current {kind}: {block}.")
-        name = f" ({ns['race_name']})" if ns.get("race_name") else ""
-        ns_race = race_day(ns)
-        ns_weeks = f" ({(monday_of(ns_race) - monday_of(today)).days // 7} weeks)" if ns_race else ""
-        _, (lo, hi) = resolve_target_peak_ctl(ns["training_goal"])
-        lines.append(f"- North star: {ns['training_goal']}{name}, race {ns['timeline']}{ns_weeks}. "
-                     f"North-star peak CTL reference range {lo:.0f}-{hi:.0f}{ctl_str}.")
-    else:
-        lines = ["**Goal Context:**", f"- Current goal: {block}{ctl_str}."]
-    history = format_history(long_runs or [])
+    lines = ["**Audit Context:**"]
+    if ctl is not None:
+        lines.append(f"- Current CTL: {ctl:.1f}")
     n = len(long_runs or [])
-    lines.append(f"- Long-run history (longest completed run of each of the last {n} complete weeks, oldest "
-                 f"first): {history or 'no completed runs'}.")
-    weekly = format_weekly_km_history(long_runs or [])
-    lines.append(f"- Recent weekly running km (last {n} complete weeks, oldest first): {weekly or 'no completed runs'}.")
-    lines.append("- Long run: no computed target. Decide each week's long run yourself from these facts "
-                 "(see the skill's long-run guidance).")
-    lines.append("- Weekly ramp: no coded limit. Each week shows its change vs the prior week and vs the reference "
-                 "path; judge whether each step suits this runner (see the skill's volume guidance).")
-    volume = volume_rule_summary(ctx)
-    if volume:
-        lines.append(f"- Weekly-volume reference ({label} block): {volume}. Per-week path values are below.")
-    return "\n".join(lines)
+    if n:
+        weekly = format_weekly_km_history(long_runs or []) or "no completed runs"
+        history = format_history(long_runs or []) or "no completed runs"
+        lines.append(f"- Last {n} complete weeks (oldest first): weekly km `{weekly}` | longest runs `{history}`")
+    if label:
+        volume = volume_rule_summary(ctx)
+        if volume:
+            lines.append(f"- Volume reference ({label} block): {volume}.")
+    return "\n".join(lines) if len(lines) > 1 else ""

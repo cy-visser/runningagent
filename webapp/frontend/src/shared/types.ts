@@ -574,6 +574,7 @@ export interface PlanSessionRow {
   date: string;
   day: string;
   sport: string;
+  category?: AuditSessionCategory | null;
   action: PlanRowAction;
   title: string;
   code?: string | null;

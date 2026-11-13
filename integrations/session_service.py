@@ -92,22 +92,6 @@ class CoachFirestoreSessionService(FirestoreSessionService):
         )
         
         session.state = desanitize_state(session.state)
-
-        try:
-            greeting_text = (
-                "Hi! I'm your AI running coach. I can analyze a workout, run your weekly check-in, "
-                "audit your schedule, or plan sessions and fueling. What would you like to do?"
-            )
-            greeting_event = Event(
-                invocation_id=Event.new_id(),
-                author=app_name,
-                message=greeting_text
-            )
-            await self.append_event(session, greeting_event)
-            logger.info("Appended initial greeting to the new session.")
-        except Exception as e:
-            logger.error(f"Failed to append initial greeting: {e}", exc_info=True)
-
         return session
 
     async def get_session(self, *args, **kwargs) -> Optional[Session]:

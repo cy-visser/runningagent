@@ -83,19 +83,56 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
 
     from running_coach.coach.coaching.model_callbacks import after_coach_model, hide_internal_tools
 
-    decls = [
-        types.FunctionDeclaration(name=n)
-        for n in ("load_skill", "fetch_plan_context", "stage_training_plan", "apply_training_plan", "get_weather")
-    ]
-    req = LlmRequest(
-        contents=[_user("hi")],
-        config=types.GenerateContentConfig(tools=[types.Tool(function_declarations=decls)]),
-    )
-    req.tools_dict.update({d.name: d for d in decls})
+    def make_req(contents: list[types.Content]) -> LlmRequest:
+        decls = [
+            types.FunctionDeclaration(name=n)
+            for n in (
+                "load_skill",
+                "fetch_plan_context",
+                "stage_training_plan",
+                "apply_training_plan",
+                "apply_staged_changes",
+                "get_weather",
+            )
+        ]
+        r = LlmRequest(
+            contents=contents,
+            config=types.GenerateContentConfig(tools=[types.Tool(function_declarations=decls)]),
+        )
+        r.tools_dict.update({d.name: d for d in decls})
+        return r
+
+    # 1. Plain chat: internal tools AND stage_training_plan hidden; apply_staged_changes stays declared.
+    req = make_req([_user("hi")])
     hide_internal_tools(None, req)
     declared = {d.name for t in req.config.tools for d in t.function_declarations}
-    assert declared == {"load_skill", "stage_training_plan", "get_weather"}
-    assert {"fetch_plan_context", "apply_training_plan"} <= set(req.tools_dict)  # still runnable in code
+    assert declared == {"load_skill", "apply_staged_changes", "get_weather"}
+    assert {"fetch_plan_context", "apply_training_plan", "stage_training_plan"} <= set(req.tools_dict)
+
+    # 2. Current turn loaded plan-builder -> stage_training_plan is declared for Step 2.
+    plan_turn = make_req([
+        _user("yes, build the plan"),
+        _model(types.Part(function_call=types.FunctionCall(name="load_skill", args={"skill_name": "plan-builder"}))),
+        _resp("load_skill"),
+    ])
+    hide_internal_tools(SimpleNamespace(state={}), plan_turn)
+    assert "stage_training_plan" in {d.name for t in plan_turn.config.tools for d in t.function_declarations}
+
+    # 3. Follow-up turn while staged_training_plan is unapplied -> stage_training_plan stays declared;
+    #    once applied_training_plan marks that staged_id done -> hidden again on subsequent turns.
+    followup_unapplied = make_req([_user("make week 5 easier")])
+    hide_internal_tools(SimpleNamespace(state={"staged_training_plan": {"staged_id": "plan-1"}}), followup_unapplied)
+    assert "stage_training_plan" in {d.name for t in followup_unapplied.config.tools for d in t.function_declarations}
+
+    followup_applied = make_req([_user("what shoes should I buy?")])
+    hide_internal_tools(
+        SimpleNamespace(state={
+            "staged_training_plan": {"staged_id": "plan-1"},
+            "applied_training_plan": {"staged_id": "plan-1", "done": True},
+        }),
+        followup_applied,
+    )
+    assert "stage_training_plan" not in {d.name for t in followup_applied.config.tools for d in t.function_declarations}
 
     ctx = SimpleNamespace(state={}, invocation_id="inv-1")
     resp = LlmResponse(content=types.Content(role="model", parts=[
@@ -110,6 +147,133 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
         ("load_skill", {"skill_name": "plan-builder", "start_date": "2026-11-30", "mode": "overhaul"}),
         ("fetch_plan_context", {"start_date": "2026-11-30", "mode": "overhaul"}),
     ]
+
+    # 4. Turn 2/3 after plan-builder:intake: active fetch_plan_context unhides stage_training_plan,
+    #    uses LOW thinking ("plan_builder"), and reuses plan_context_cache even after staging.
+    from running_coach.coach.coaching.model_callbacks import thinking_for
+    from running_coach.shared.dates import get_today_date, iso_date
+
+    intake_turn2 = make_req([
+        _user("I'd like to build a new training plan"),
+        _model(_call("fetch_plan_context")),
+        types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
+            name="fetch_plan_context", response={"result": "PLAN CONTEXT (new): 2026-11-30 → 2027-02-21"}
+        ))]),
+        _model(types.Part(text="How many days can you run?")),
+        _user("4 days a week, Sunday long run"),
+    ])
+    hide_internal_tools(SimpleNamespace(state={}), intake_turn2)
+    assert "stage_training_plan" in {d.name for t in intake_turn2.config.tools for d in t.function_declarations}
+    pb_cfg, pb_reason = thinking_for({}, intake_turn2)
+    assert pb_cfg.thinking_level == types.ThinkingLevel.LOW and pb_reason == "plan_builder"
+
+    edit_cfg, edit_reason = thinking_for({"staged_training_plan": {"staged_id": "plan-1"}}, followup_unapplied)
+    assert edit_cfg.thinking_level == types.ThinkingLevel.LOW and edit_reason == "plan_builder"
+
+    today_iso = iso_date(get_today_date())
+    cached_ctx = SimpleNamespace(
+        state={
+            "plan_context_cache": {
+                "start_date": "2026-11-30",
+                "end_date": "2027-02-21",
+                "mode": "overhaul",
+                "today": today_iso,
+            }
+        },
+        invocation_id="inv-2",
+    )
+    same_window = LlmResponse(content=types.Content(role="model", parts=[
+        types.Part(function_call=types.FunctionCall(
+            name="load_skill",
+            args={"skill_name": "plan-builder", "start_date": "2026-11-30", "end_date": "2027-02-21", "mode": "overhaul"},
+        ))
+    ]))
+    assert after_coach_model(cached_ctx, same_window) is None  # no duplicate fetch_plan_context!
+    different_mode = LlmResponse(content=types.Content(role="model", parts=[
+        types.Part(function_call=types.FunctionCall(
+            name="load_skill",
+            args={"skill_name": "plan-builder", "start_date": "2026-11-30", "end_date": "2027-02-21", "mode": "new"},
+        ))
+    ]))
+    assert len(after_coach_model(cached_ctx, different_mode).content.parts) == 2  # mode changed -> re-fetch
+
+
+def test_plan_builder_expansion_stays_contiguous_across_sse_trailing_empty_part():
+    import asyncio
+    from types import SimpleNamespace
+    from google.adk.utils.streaming_utils import StreamingResponseAggregator
+
+    from running_coach.coach.coaching.model_callbacks import after_coach_model
+
+    async def aggregate_sse_chunks(chunks: list[types.GenerateContentResponse]):
+        agg = StreamingResponseAggregator()
+        for chunk in chunks:
+            async for _ in agg.process_response(chunk):
+                pass
+        return agg.close()
+
+    # Mirrors gemini-4-argon SSE stream: thought chunk -> signed load_skill FC chunk -> STOP chunk with Part(text="").
+    chunks = [
+        types.GenerateContentResponse(
+            candidates=[types.Candidate(content=types.Content(role="model", parts=[
+                types.Part(text="Planning block...", thought=True),
+            ]))]
+        ),
+        types.GenerateContentResponse(
+            candidates=[types.Candidate(content=types.Content(role="model", parts=[
+                types.Part(
+                    function_call=types.FunctionCall(
+                        id="call_1",
+                        name="load_skill",
+                        args={"skill_name": "plan-builder", "start_date": "2026-11-16", "mode": "new"},
+                    ),
+                    thought_signature=SIG,
+                ),
+            ]))]
+        ),
+        types.GenerateContentResponse(
+            candidates=[types.Candidate(
+                content=types.Content(role="model", parts=[types.Part(text="")]),
+                finish_reason=types.FinishReason.STOP,
+            )]
+        ),
+    ]
+    aggregated = asyncio.run(aggregate_sse_chunks(chunks))
+    assert aggregated.content.parts[-1].text == "" and aggregated.content.parts[-1].function_call is None
+
+    shaped = after_coach_model(SimpleNamespace(state={}, invocation_id="inv-sse"), aggregated)
+    parts = shaped.content.parts
+    fc_indices = [i for i, p in enumerate(parts) if p.function_call]
+    assert fc_indices == [1, 2]  # contiguous: never split by the trailing Part(text="") at index 3
+    assert [(parts[i].function_call.name, parts[i].thought_signature) for i in fc_indices] == [
+        ("load_skill", SIG),
+        ("fetch_plan_context", None),
+    ]
+
+
+
+def test_create_session_does_not_append_greeting_event(monkeypatch):
+    import asyncio
+    from google.adk.integrations.firestore.firestore_session_service import FirestoreSessionService
+    from google.adk.sessions.session import Session
+    from running_coach.integrations.session_service import CoachFirestoreSessionService
+
+    svc = object.__new__(CoachFirestoreSessionService)
+    appended = []
+
+    async def fake_super_create(self, *, app_name, user_id, state=None, session_id=None):
+        return Session(id=session_id or "s1", app_name=app_name, user_id=user_id, state=state or {})
+
+    async def fake_append(session, event):
+        appended.append(event)
+        return event
+
+    monkeypatch.setattr(FirestoreSessionService, "create_session", fake_super_create)
+    monkeypatch.setattr(svc, "append_event", fake_append)
+
+    session = asyncio.run(svc.create_session(app_name="running_coach", user_id="u1", state={"__k": "v"}))
+    assert session.state == {"__k": "v"}
+    assert appended == [] and session.events == []
 
 
 def test_get_runner_tp_cookie_singleflights_concurrent_kms_decrypts(monkeypatch):

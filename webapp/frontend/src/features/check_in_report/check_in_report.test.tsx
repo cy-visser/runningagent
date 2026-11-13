@@ -71,7 +71,10 @@ describe("check-in report feature", () => {
     ]);
     expect(
       sectionTeaser("\n🟢 **On Track**. CTL is climbing [link](http://x). More."),
-    ).toBe("🟢 On Track.");
+    ).toBe("On Track.");
+    expect(
+      sectionTeaser("- ⚠️ **HRV dip:** Suppressed after threshold. Rest more."),
+    ).toBe("HRV dip: Suppressed after threshold.");
 
     // 3. Render CheckinReport component and expand a collapsible analysis section
     render(

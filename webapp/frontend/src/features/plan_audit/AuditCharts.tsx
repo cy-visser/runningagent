@@ -1,20 +1,26 @@
+import { useState } from "react";
+import { Check } from "lucide-react";
 import {
-  Activity,
-  Bike,
-  Check,
-  Dumbbell,
-  Footprints,
-  Zap,
-  type LucideIcon,
-} from "lucide-react";
+  AGENDA_WINDOW_WEEKS,
+  AgendaPager,
+  CATEGORY_META,
+  TONE_CLASSES,
+  VolumeBar,
+  WEEKDAYS,
+  gapTone,
+  parseIso,
+  toIso,
+  weekdayIndex,
+} from "../../shared/agenda";
 import { formatChartTickDate } from "../../shared/format";
 import type {
   AuditSession,
-  AuditSessionCategory,
   AuditVolumeReference,
   AuditWeek,
   AuditWeekVolume,
 } from "../../shared/types";
+
+export { gapTone };
 
 interface AuditChartsProps {
   weeks: AuditWeek[];
@@ -26,23 +32,6 @@ interface AuditChartsProps {
 
 function signedPct(value?: number | null): string | null {
   return value == null ? null : `${value > 0 ? "+" : ""}${Math.round(value)}%`;
-}
-
-/** Planned km within ±GAP_TOLERANCE_PCT of the target counts as on track. */
-const GAP_TOLERANCE_PCT = 10;
-
-type GapTone = "on" | "below" | "above";
-
-/** Neutral palette (amber/violet, not red/green): the target is a reference, the ramp is the coach's call. */
-const TONE_CLASSES: Record<GapTone, { text: string; fill: string }> = {
-  on: { text: "text-slate-600", fill: "bg-gradient-to-r from-orange-400 to-pink-500" },
-  below: { text: "text-amber-600", fill: "bg-amber-400" },
-  above: { text: "text-violet-600", fill: "bg-violet-500" },
-};
-
-export function gapTone(vsTargetPct?: number | null): GapTone {
-  if (vsTargetPct == null || Math.abs(vsTargetPct) <= GAP_TOLERANCE_PCT) return "on";
-  return vsTargetPct < 0 ? "below" : "above";
 }
 
 function ordinal(n: number): string {
@@ -105,108 +94,8 @@ function VolumeTarget({ volume, vsPriorPct }: { volume: AuditWeekVolume; vsPrior
   );
 }
 
-/** Weekly km bar: with a target, planned km vs target (tick); otherwise relative to the biggest week. */
-function VolumeBar({ km, maxKm, volume }: { km: number; maxKm: number; volume?: AuditWeekVolume | null }) {
-  if (!volume) {
-    const pct = Math.max(4, Math.round((km / maxKm) * 100));
-    return (
-      <span className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-        <span
-          className={`block h-full rounded-full ${TONE_CLASSES.on.fill}`}
-          style={{ width: `${pct}%` }}
-        />
-      </span>
-    );
-  }
-  // The larger of planned and target fills 85% of the bar, so an overshoot stays visible.
-  const scale = Math.max(km, volume.target_km, 1) / 0.85;
-  const fillPct = Math.max(km > 0 ? 4 : 0, Math.round((km / scale) * 100));
-  const tickPct = Math.round((volume.target_km / scale) * 100);
-  return (
-    <span className="relative block h-1.5 w-full rounded-full bg-slate-100">
-      <span
-        className={`block h-full rounded-full ${TONE_CLASSES[gapTone(volume.vs_path_pct)].fill}`}
-        style={{ width: `${fillPct}%` }}
-      />
-      <span
-        data-testid="volume-tick"
-        className="absolute -top-0.5 h-2.5 w-0.5 -translate-x-1/2 rounded-full bg-slate-700"
-        style={{ left: `${tickPct}%` }}
-        aria-hidden="true"
-      />
-    </span>
-  );
-}
-
-interface CategoryMeta {
-  label: string;
-  icon: LucideIcon;
-  /** Completed session: solid fill. */
-  solid: string;
-  /** Planned session: light tint + coloured outline. */
-  planned: string;
-  swatch: string;
-}
-
-const CATEGORY_META: Record<AuditSessionCategory, CategoryMeta> = {
-  easy: {
-    label: "Easy run",
-    icon: Footprints,
-    solid: "bg-sky-400 border-sky-400 text-white",
-    planned: "bg-sky-50 border-sky-300 text-sky-950",
-    swatch: "bg-sky-400",
-  },
-  quality: {
-    label: "Quality run",
-    icon: Zap,
-    solid: "bg-orange-500 border-orange-500 text-white",
-    planned: "bg-orange-50 border-orange-300 text-orange-950",
-    swatch: "bg-orange-500",
-  },
-  bike: {
-    label: "Bike",
-    icon: Bike,
-    solid: "bg-violet-500 border-violet-500 text-white",
-    planned: "bg-violet-50 border-violet-300 text-violet-950",
-    swatch: "bg-violet-500",
-  },
-  strength: {
-    label: "Strength",
-    icon: Dumbbell,
-    solid: "bg-emerald-500 border-emerald-500 text-white",
-    planned: "bg-emerald-50 border-emerald-300 text-emerald-950",
-    swatch: "bg-emerald-500",
-  },
-  other: {
-    label: "Other",
-    icon: Activity,
-    solid: "bg-slate-400 border-slate-400 text-white",
-    planned: "bg-slate-50 border-slate-300 text-slate-900",
-    swatch: "bg-slate-400",
-  },
-};
-
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
-
 const GRID_COLS =
   "grid grid-cols-[3.75rem_repeat(7,minmax(5.5rem,1fr))_6rem] gap-1.5";
-
-function parseIso(iso: string | null | undefined): Date | null {
-  if (!iso) return null;
-  const parts = iso.slice(0, 10).split("-").map(Number);
-  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
-  const [y, m, d] = parts;
-  return new Date(Date.UTC(y, m - 1, d));
-}
-
-function toIso(dt: Date): string {
-  return dt.toISOString().slice(0, 10);
-}
-
-/** 0 = Monday … 6 = Sunday. */
-function weekdayIndex(dt: Date): number {
-  return (dt.getUTCDay() + 6) % 7;
-}
 
 function localTodayIso(): string {
   const now = new Date();
@@ -238,11 +127,45 @@ function measureFor(s: AuditSession): string {
 }
 
 export default function AuditCharts({ weeks, volumeReference, today }: AuditChartsProps) {
+  const [start, setStart] = useState(0);
   if (weeks.length === 0) return null;
+
+  const total = weeks.length;
+  const paged = total > AGENDA_WINDOW_WEEKS;
+  const pageStart = paged && start < total ? start : 0;
+  const end = paged ? Math.min(pageStart + AGENDA_WINDOW_WEEKS, total) : total;
+  const visibleWeeks = paged ? weeks.slice(pageStart, end) : weeks;
 
   const todayIso = today ?? localTodayIso();
   const maxKm = Math.max(1, ...weeks.map((w) => w.km));
   const hasTargets = weeks.some((w) => w.volume);
+
+  const legend = (
+    <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-600">
+      {(["easy", "quality", "bike", "strength"] as const).map((cat) => (
+        <span key={cat} className="inline-flex items-center gap-1.5">
+          <span
+            className={`h-2.5 w-2.5 rounded-xs ${CATEGORY_META[cat].swatch}`}
+          />
+          {CATEGORY_META[cat].label}
+        </span>
+      ))}
+      <span className="inline-flex items-center gap-1.5 text-slate-500">
+        <span className="h-2.5 w-2.5 rounded-xs bg-slate-500" />
+        Completed
+      </span>
+      <span className="inline-flex items-center gap-1.5 text-slate-500">
+        <span className="h-2.5 w-2.5 rounded-xs border border-slate-400 bg-slate-50" />
+        Planned
+      </span>
+      {hasTargets && (
+        <span className="inline-flex items-center gap-1.5 text-slate-500">
+          <span className="h-2.5 w-0.5 rounded-full bg-slate-700" />
+          Weekly km target
+        </span>
+      )}
+    </div>
+  );
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-card space-y-4">
@@ -261,32 +184,21 @@ export default function AuditCharts({ weeks, volumeReference, today }: AuditChar
           )}
         </div>
 
-        {/* Legend */}
-        <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-600">
-          {(["easy", "quality", "bike", "strength"] as const).map((cat) => (
-            <span key={cat} className="inline-flex items-center gap-1.5">
-              <span
-                className={`h-2.5 w-2.5 rounded-xs ${CATEGORY_META[cat].swatch}`}
-              />
-              {CATEGORY_META[cat].label}
-            </span>
-          ))}
-          <span className="inline-flex items-center gap-1.5 text-slate-500">
-            <span className="h-2.5 w-2.5 rounded-xs bg-slate-500" />
-            Completed
-          </span>
-          <span className="inline-flex items-center gap-1.5 text-slate-500">
-            <span className="h-2.5 w-2.5 rounded-xs border border-slate-400 bg-slate-50" />
-            Planned
-          </span>
-          {hasTargets && (
-            <span className="inline-flex items-center gap-1.5 text-slate-500">
-              <span className="h-2.5 w-0.5 rounded-full bg-slate-700" />
-              Weekly km target
-            </span>
-          )}
-        </div>
+        {!paged && legend}
       </div>
+
+      {paged && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <AgendaPager
+            start={pageStart}
+            end={end}
+            total={total}
+            onPrev={() => setStart(Math.max(0, pageStart - AGENDA_WINDOW_WEEKS))}
+            onNext={() => setStart(pageStart + AGENDA_WINDOW_WEEKS)}
+          />
+          {legend}
+        </div>
+      )}
 
       <div className="overflow-x-auto -mx-1 px-1">
         <div className="min-w-[48.75rem] space-y-1.5" role="table" aria-label="Weekly schedule">
@@ -315,9 +227,9 @@ export default function AuditCharts({ weeks, volumeReference, today }: AuditChar
             </div>
           </div>
 
-          {weeks.map((w, wIdx) => (
+          {visibleWeeks.map((w, wIdx) => (
             <WeekRow
-              key={w.week ?? wIdx}
+              key={w.week ?? pageStart + wIdx}
               week={w}
               todayIso={todayIso}
               maxKm={maxKm}

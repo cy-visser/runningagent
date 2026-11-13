@@ -21,10 +21,11 @@ from ...integrations.trainingpeaks import tp_calls
 from ...shared.dates import get_today_date, iso_date, parse_date
 from ...shared.goal_plan import planned_update
 from ...shared.runner_identity import profile_user_id
+from ...shared.session_state import PLAN_CONTEXT_STATE_KEY
 from ...shared.ui_channel import reply
 from ...shared.workout_upsert import write_change
 from .helpers.plan_diff import diff_week, write_change as plan_write_change
-from .helpers.plan_expand import cutoff_date, expand_week, plan_window, week_monday
+from .helpers.plan_expand import cutoff_date, effective_plan_end, end_cutoff_date, expand_week, plan_window, week_monday
 from .helpers.plan_summary_text import (
     NOTHING_STAGED_TEXT,
     REPLACED_TEXT,
@@ -51,7 +52,8 @@ async def mark_goals_planned(tool_context: ToolContext, staged: dict) -> bool:
     Never raises: a failed save must not break the apply."""
     try:
         profile = tool_context.state.get("user_profile") or {}
-        start, end = plan_window(staged["spec"])
+        start = plan_window(staged["spec"])[0]
+        end = effective_plan_end(staged["spec"])
         update = planned_update(profile, start, end)
         user_id = profile_user_id(profile)
         if not update or not user_id:
@@ -116,7 +118,9 @@ async def apply_training_plan(tool_context: ToolContext, staged_id: str, week: i
 
     spec = staged["spec"]
     monday = week_monday(spec, week)
-    expanded = expand_week(spec_week, monday, staged["zones"], cutoff_date(spec, get_today_date()), spec.get("times"))
+    expanded = expand_week(
+        spec_week, monday, staged["zones"], cutoff_date(spec, get_today_date()), spec.get("times"), end_cutoff_date(spec)
+    )
     try:
         workouts = await tp_calls.fetch_workouts(tool_context, iso_date(monday), iso_date(monday + timedelta(days=6)))
     except Exception as e:  # never diff against a calendar we could not read (it would create duplicates)
@@ -136,6 +140,8 @@ async def apply_training_plan(tool_context: ToolContext, staged_id: str, week: i
               for r in results if not r.get("ok")]
     applied = applied_after_week(applied, staged, week, ok, len(errors))
     state[APPLIED_PLAN_STATE_KEY] = applied
+    if ok or applied["done"]:
+        state[PLAN_CONTEXT_STATE_KEY] = None
     if applied["done"]:
         await mark_goals_planned(tool_context, staged)
     _finish(tool_context, staged, applied, week, week_failed_text(week, errors) if errors else "")

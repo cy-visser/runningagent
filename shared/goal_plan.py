@@ -108,12 +108,20 @@ def goal_list(profile: Optional[dict]) -> list[dict]:
     return [single] if single["training_goal"] or single["timeline"] else []
 
 
+def snap_new_block_start(start: date, end: Optional[date] = None) -> date:
+    """Snaps a weekend (Sat/Sun) new-block start date forward to Monday when `end` allows it."""
+    if start.weekday() < 5:
+        return start
+    next_mon = start + timedelta(days=7 - start.weekday())
+    return next_mon if end is None or next_mon <= end else start
+
+
 def next_unplanned_goal(profile: Optional[dict], today: Optional[date] = None) -> Optional[dict]:
     """The first goal (race order) racing today or later that is not planned, with its block window
     (`window_start`, `window_end` = race day), or None.
 
     window_start: the goal's own start date if still ahead, else the day after the previous goal's
-    race if still ahead, else next Monday (never after the race).
+    race if still ahead, else next Monday (never after the race). Weekend start dates snap to Monday.
     """
     today = today or get_today_date()
     goals = goal_list(profile)
@@ -126,6 +134,7 @@ def next_unplanned_goal(profile: Optional[dict], today: Optional[date] = None) -
         prev_race = race_day(goals[i - 1]) if i > 0 else None
         after_prev = prev_race + timedelta(days=1) if prev_race else None
         start = next((d for d in (own, after_prev) if d and d > today), next_monday)
+        start = snap_new_block_start(start, race)
         return {**goal, "window_start": min(start, race), "window_end": race}
     return None
 

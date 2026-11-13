@@ -6,7 +6,7 @@ def _plural(n: int, word: str) -> str:
 
 
 def staged_line(totals: dict) -> str:
-    return (f"📋 {totals['weeks']}-week plan staged: {totals['sessions']} sessions ({totals['create']} new · "
+    return (f"- **{totals['weeks']}-week plan staged:** {totals['sessions']} sessions ({totals['create']} new · "
             f"{totals['update']} updated · {totals['delete']} removed). Review the weeks below and press "
             "**Apply to TrainingPeaks**.")
 

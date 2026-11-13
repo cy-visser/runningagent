@@ -223,3 +223,84 @@ def test_an_applied_plan_is_stubbed_and_its_week_applies_collapse_into_one_line(
                        "1-3 of 24 done · 15 created, 3 updated, 0 removed, 0 failed")
     # Only the request changes: the session's contents keep the full spec and every apply event.
     assert original[1].parts[0].function_call.args["plan"] == spec and len(original) == 12
+
+
+def test_superseded_and_applied_plan_contexts_are_compacted():
+    from google.adk.models.llm_request import LlmRequest
+    from running_coach.coach.report_memory import APPLIED_PLAN_CONTEXT_STUB
+
+    request = LlmRequest(contents=[
+        types.Content(role="user", parts=[types.Part(text="Build plan")]),
+        types.Content(role="model", parts=[_call("fetch_plan_context", "pc1")]),
+        types.Content(role="user", parts=[_resp("fetch_plan_context", "pc1", {"result": "PLAN CONTEXT (new): old"})]),
+        types.Content(role="model", parts=[_call("fetch_plan_context", "pc2")]),
+        types.Content(role="user", parts=[_resp("fetch_plan_context", "pc2", {"result": "PLAN CONTEXT (overhaul): new"})]),
+    ])
+    keep_latest_reports_and_skills(None, request)
+    resps = {p.function_response.id: p.function_response.response["result"]
+             for c in request.contents for p in c.parts if p.function_response}
+    assert resps == {
+        "pc1": "[superseded: the latest plan context is further below]",
+        "pc2": "PLAN CONTEXT (overhaul): new",
+    }
+
+    applied_req = LlmRequest(contents=[
+        *request.contents,
+        types.Content(role="model", parts=[_call("apply_training_plan", "ap1", staged_id="s1", week=1)]),
+        types.Content(role="user", parts=[_resp("apply_training_plan", "ap1", {"result": '{"success": true}'})]),
+    ])
+    keep_latest_reports_and_skills(None, applied_req)
+    after = {p.function_response.id: p.function_response.response["result"]
+             for c in applied_req.contents for p in c.parts
+             if p.function_response and p.function_response.name == "fetch_plan_context"}
+    assert after == {"pc1": APPLIED_PLAN_CONTEXT_STUB, "pc2": APPLIED_PLAN_CONTEXT_STUB}
+
+
+def test_replaced_unapplied_staged_plan_is_stubbed_dropping_superseded_message_and_keeping_latest_draft():
+    from google.adk.models.llm_request import LlmRequest
+    from running_coach.coach.report_memory import REPLACED_PLAN_RESULT, REPLACED_PLAN_STUB
+
+    first_spec = {"start_date": "2027-08-02", "weeks": ["W1 | base | Aerobic | Tue: E 8 | Sun: L 18"]}
+    second_spec = {"start_date": "2027-08-02", "weeks": ["W1 | build | Quality | Tue: I 6x1k r2' | Sun: L 22 +6@M"]}
+    request = LlmRequest(contents=[
+        types.Content(role="user", parts=[types.Part(text="6 days running")]),
+        types.Content(role="model", parts=[_call("stage_training_plan", "p1", plan=first_spec, message="Initial base block.")]),
+        types.Content(role="user", parts=[_resp("stage_training_plan", "p1", {"result": json.dumps(
+            {"staged_id": "sid-1", "total_weeks": 13, "sessions": 96})})]),
+        types.Content(role="user", parts=[types.Part(text="I want a ton of quality")]),
+        types.Content(role="model", parts=[_call("stage_training_plan", "p2", plan=second_spec, message="High-quality block.")]),
+        types.Content(role="user", parts=[_resp("stage_training_plan", "p2", {"result": json.dumps(
+            {"staged_id": "sid-2", "total_weeks": 13, "sessions": 104})})]),
+        types.Content(role="user", parts=[types.Part(text="Make week 4 a down week")]),
+    ])
+    keep_latest_reports_and_skills(None, request)
+    calls = {p.function_call.id: p.function_call.args for c in request.contents for p in c.parts if p.function_call}
+    resps = {p.function_response.id: p.function_response.response for c in request.contents for p in c.parts if p.function_response}
+    assert calls["p1"] == {"plan": REPLACED_PLAN_STUB}
+    assert resps["p1"] == REPLACED_PLAN_RESULT
+    assert calls["p2"] == {"plan": second_spec, "message": "High-quality block."}
+    assert json.loads(resps["p2"]["result"])["staged_id"] == "sid-2"
+
+    # A failed staging (staged: 0) stays intact during its active retry, then becomes a stub once a retry succeeds.
+    in_retry = LlmRequest(contents=[
+        types.Content(role="user", parts=[types.Part(text="6 days running")]),
+        types.Content(role="model", parts=[_call("stage_training_plan", "f0", plan=first_spec, message="Draft.")]),
+        types.Content(role="user", parts=[_resp("stage_training_plan", "f0", {"result": json.dumps(
+            {"staged": 0, "errors": [{"week": 13, "day": "Race week"}]})})]),
+    ])
+    after_retry = LlmRequest(contents=[
+        *in_retry.contents,
+        types.Content(role="model", parts=[_call("stage_training_plan", "p3", plan=second_spec, message="Fixed.")]),
+        types.Content(role="user", parts=[_resp("stage_training_plan", "p3", {"result": json.dumps(
+            {"staged_id": "sid-3", "total_weeks": 13, "sessions": 96})})]),
+        types.Content(role="user", parts=[types.Part(text="Looks great, shift W4")]),
+    ])
+    keep_latest_reports_and_skills(None, in_retry)
+    assert in_retry.contents[1].parts[0].function_call.args["plan"] == first_spec  # needed for the live retry!
+
+    keep_latest_reports_and_skills(None, after_retry)
+    retry_calls = {p.function_call.id: p.function_call.args for c in after_retry.contents for p in c.parts if p.function_call}
+    retry_resps = {p.function_response.id: p.function_response.response for c in after_retry.contents for p in c.parts if p.function_response}
+    assert retry_calls["f0"] == {"plan": REPLACED_PLAN_STUB} and retry_resps["f0"] == REPLACED_PLAN_RESULT
+    assert retry_calls["p3"] == {"plan": second_spec, "message": "Fixed."}
+

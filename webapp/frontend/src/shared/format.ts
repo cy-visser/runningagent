@@ -349,7 +349,9 @@ export function sectionTeaser(body: string): string {
     if (inFence || !line || line.startsWith("|") || line.startsWith(">") || /^[-*_]{3,}$/.test(line)) {
       continue;
     }
-    const prose = stripInlineMarkdown(line.replace(/^(?:[-*+]|\d+\.)\s+/, ""));
+    const prose = stripInlineMarkdown(line.replace(/^(?:[-*+]|\d+\.)\s+/, ""))
+      .replace(LEADING_STATUS_EMOJI_RE, "")
+      .trim();
     if (prose) {
       const sentence = /^(.+?[.!?])(?:\s|$)/.exec(prose);
       return sentence ? sentence[1] : prose;

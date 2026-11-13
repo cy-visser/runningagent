@@ -31,7 +31,7 @@ interface WorkoutReportProps {
 
 /* ---------- Markdown: the banner replaces the coach's Session Overview ---------- */
 
-const OVERVIEW_LINE_RE = /^\s*(?:#{1,6}\s*)?(?:\*\*|__)?[^\w\n]*Session Overview\b.*$/i;
+const OVERVIEW_LINE_RE = /^\s*(?:#{1,6}\s*)?(?:\*\*|__)?[^\w\n]*(?:Session|Ride) Overview\b.*$/i;
 const HEADING_RE = /^\s*#{1,6}\s/;
 /** A bold-only line acting as a heading, e.g. "**🎯 Execution**". */
 const BOLD_HEADING_RE = /^\s*(?:\*\*|__)[^*_\n]+(?:\*\*|__):?\s*$/;
@@ -366,7 +366,7 @@ export function WorkoutReport({ data, markdown }: WorkoutReportProps) {
           {assessment && <RichMarkdown content={assessment} spacing="relaxed" />}
           {takeaways && (
             <div data-testid="workout-takeaways" className={assessment ? "mt-8 border-t border-slate-100 pt-6" : ""}>
-              <RichMarkdown content={takeaways} bulletStyle="recommendation" spacing="relaxed" />
+              <RichMarkdown content={takeaways} spacing="relaxed" />
             </div>
           )}
         </div>

@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 from typing import Any, Optional
 
-from .dates import format_display_date, iso_week_key, parse_date
+from .dates import iso_week_key, parse_date
 from .sports import BIKE_SPORTS, NON_TRAINING_SPORTS, RUN_SPORTS, STRENGTH_SPORTS, is_quality_title
 from .workout_status import is_workout_completed
 
@@ -13,6 +13,17 @@ def _float(value: Any) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _start_hhmm(start_time: Any) -> Optional[str]:
+    """Extracts 'HH:MM' from an ISO start_time when non-midnight, else None."""
+    raw = str(start_time or "")
+    if "T" not in raw:
+        return None
+    hhmm = raw.split("T", 1)[1][:5]
+    if len(hhmm) == 5 and hhmm[2] == ":" and hhmm != "00:00":
+        return hhmm
+    return None
 
 
 def new_week_bucket(day: date) -> dict:
@@ -32,7 +43,6 @@ def new_week_bucket(day: date) -> dict:
         "bike_count": 0,
         "strength_count": 0,
         "other_sport_count": 0,
-        "sessions": [],
         "session_items": [],
         "notes": [],
     }
@@ -76,8 +86,11 @@ def tally_workout(bucket: dict, workout: dict, w_date: date) -> None:
         category = "other"
         bucket["other_sport_count"] += 1
 
+    w_id = workout.get("id") or workout.get("workout_id")
     bucket["session_items"].append({
+        "id": str(w_id) if w_id is not None else None,
         "date": w_date,
+        "time": _start_hhmm(workout.get("start_time")),
         "sport": sport,
         "title": title,
         "category": category,
@@ -86,14 +99,6 @@ def tally_workout(bucket: dict, workout: dict, w_date: date) -> None:
         "tss": tss,
         "completed": completed,
     })
-    dist_str = f"{round(dist, 1)}km, " if dist > 0 else ""
-    # Same `[workout_id]` format as the check-in, so the coach can stage changes from an audit
-    # without calling a report tool as a lookup.
-    w_id = workout.get("id") or workout.get("workout_id")
-    id_str = f" [{w_id}]" if w_id else ""
-    bucket["sessions"].append(
-        f"[{sport}] '{title}'{id_str} on {format_display_date(w_date)} ({dist_str}TSS: {round(tss, 0)})"
-    )
 
 
 def build_week_buckets(workouts: Optional[list[dict]], start: date, end: date) -> dict[str, dict]:
