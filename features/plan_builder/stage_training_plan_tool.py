@@ -14,7 +14,7 @@ from ...shared.goal_plan import current_goal
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.training_times import default_session_times
 from ...shared.ui_channel import reply
-from .helpers.pace_zones import resolve_zones
+from ...shared.session_codes.pace_zones import resolve_zones
 from .helpers.plan_context_text import PLAN_CONTEXT_STATE_KEY, TEMP_PLAN_WORKOUTS_KEY
 from .helpers.plan_diff import diff_week
 from .helpers.plan_expand import expand_plan, merge_weeks, normalize_plan, plan_window

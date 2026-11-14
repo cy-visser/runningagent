@@ -304,3 +304,42 @@ def test_replaced_unapplied_staged_plan_is_stubbed_dropping_superseded_message_a
     assert retry_calls["f0"] == {"plan": REPLACED_PLAN_STUB} and retry_resps["f0"] == REPLACED_PLAN_RESULT
     assert retry_calls["p3"] == {"plan": second_spec, "message": "Fixed."}
 
+
+def test_superseded_failed_workout_stagings_are_compacted_while_active_retry_stays_intact():
+    from google.adk.models.llm_request import LlmRequest
+
+    f1_changes = [{"date_str": "2026-11-18", "distance_km": 10}]
+    f2_changes = [{"date_str": "2026-11-18", "structure": {"steps": []}}]
+    s3_changes = [{"date_str": "2026-11-18", "code": "E 10"}]
+
+    # Call 3 (f1 failed, then f2 failed): f1 is stubbed out, f2 stays verbatim for the live retry.
+    in_second_retry = LlmRequest(contents=[
+        types.Content(role="user", parts=[types.Part(text="Apply audit recommendations")]),
+        types.Content(role="model", parts=[_call("stage_workout_changes", "f1", changes=f1_changes)]),
+        types.Content(role="user", parts=[_resp("stage_workout_changes", "f1", {"result": json.dumps(
+            {"staged": 0, "needs_structure": [{"why": "missing"}]})})]),
+        types.Content(role="model", parts=[_call("stage_workout_changes", "f2", changes=f2_changes)]),
+        types.Content(role="user", parts=[_resp("stage_workout_changes", "f2", {"result": json.dumps(
+            {"staged": 0, "needs_structure": [{"why": "empty steps"}]})})]),
+    ])
+    keep_latest_reports_and_skills(None, in_second_retry)
+    parts_mid = _stage_parts(in_second_retry)
+    assert parts_mid[("call", "f1")] == REPLACED_STAGE_ARGS and parts_mid[("resp", "f1")] == REPLACED_STAGE_RESULT
+    assert parts_mid[("call", "f2")] == {"changes": f2_changes}
+    assert "empty steps" in parts_mid[("resp", "f2")]["result"]
+
+    # Once s3 succeeds, both f1 and f2 are stubbed on subsequent turns while s3 stays verbatim.
+    settled = LlmRequest(contents=[
+        *in_second_retry.contents,
+        types.Content(role="model", parts=[_call("stage_workout_changes", "s3", changes=s3_changes)]),
+        types.Content(role="user", parts=[_resp("stage_workout_changes", "s3", {"result": json.dumps(
+            {"staged": 1, "staged_id": "sid-ok"})})]),
+        types.Content(role="user", parts=[types.Part(text="Looks good!")]),
+    ])
+    keep_latest_reports_and_skills(None, settled)
+    parts_done = _stage_parts(settled)
+    assert parts_done[("call", "f1")] == REPLACED_STAGE_ARGS
+    assert parts_done[("call", "f2")] == REPLACED_STAGE_ARGS and parts_done[("resp", "f2")] == REPLACED_STAGE_RESULT
+    assert parts_done[("call", "s3")] == {"changes": s3_changes}
+
+

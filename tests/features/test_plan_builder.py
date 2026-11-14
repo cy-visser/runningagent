@@ -9,12 +9,12 @@ import pytest
 from running_coach.features.plan_builder import apply_training_plan_tool as apply_module
 from running_coach.features.plan_builder.apply_training_plan_tool import apply_training_plan
 from running_coach.features.plan_builder.fetch_plan_context_tool import fetch_plan_context
-from running_coach.features.plan_builder.helpers.pace_zones import resolve_zones
 from running_coach.features.plan_builder.helpers.plan_diff import diff_week
 from running_coach.features.plan_builder.helpers.plan_expand import expand_week, normalize_plan
-from running_coach.features.plan_builder.helpers.session_codes import CodeError, build_session
 from running_coach.features.plan_builder.stage_training_plan_tool import stage_training_plan
 from running_coach.features.workout_creator.stage_workout_changes_tool import stage_workout_changes
+from running_coach.shared.session_codes.pace_zones import resolve_zones
+from running_coach.shared.session_codes.session_codes import CodeError, build_session
 from running_coach.shared.training_times import default_session_times
 from running_coach.tests.fakes import PLAN_PROFILE, SETTINGS, TODAY, envelope
 

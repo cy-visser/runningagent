@@ -99,6 +99,11 @@ def _wire_step(raw: Any, metric: str, thr: dict, where: str) -> tuple[Optional[d
     length = {"value": _exact(value), "unit": "meter" if has_distance else "second"}
 
     lo, hi = as_float(raw.get("intensity_min")), as_float(raw.get("intensity_max"))
+    default_bands = (
+        {"warmUp": (50, 65), "coolDown": (50, 65), "rest": (45, 55)}
+        if metric == FTP
+        else {"warmUp": (72, 80), "coolDown": (72, 80), "rest": (65, 75)}
+    )
     if lo is not None and hi is not None:
         pass  # exact stored % values win over a pace hint
     elif raw.get("pace") not in (None, ""):
@@ -111,6 +116,8 @@ def _wire_step(raw: Any, metric: str, thr: dict, where: str) -> tuple[Optional[d
             lo, hi = pace_to_percent(str(raw["pace"]), thr["threshold_speed"])
         except ValueError as e:
             return None, f"{where}: {e}"
+    elif cls in default_bands:
+        lo, hi = default_bands[cls]
     else:
         return None, f"{where}: needs a target: pace or intensity_min + intensity_max"
     if lo > hi:

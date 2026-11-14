@@ -1,7 +1,7 @@
-"""Training zones of the plan builder: run zones as % of threshold speed, bike zones as % of FTP.
+"""Training zones for session codes: run zones as % of threshold speed, bike zones as % of FTP.
 
-Resolved once at staging and saved with the staged plan, so `apply_training_plan` expands every code
-with exactly the same targets later (even if the runner's thresholds or goals change in between).
+Resolved once at staging and saved with a staged plan, so `apply_training_plan` expands every code
+with the exact same targets later (even if the runner's thresholds or goals change in between).
 Goal-pace codes (@5K / @10K / @HM / @M) use the runner's goal target when a goal of that distance has a
 target time, otherwise the typical threshold -> race speed ratio of that distance.
 """
@@ -9,11 +9,11 @@ target time, otherwise the typical threshold -> race speed ratio of that distanc
 from datetime import date
 from typing import Any, Optional
 
-from ....shared.athlete_settings import sport_thresholds
-from ....shared.goal_distance import DISTANCE_PROFILES, resolve_goal_distance
-from ....shared.goal_plan import blocks, current_goal
-from ....shared.race_equivalents import goal_km, goal_target_s
-from ....shared.units import fmt_clock
+from ..athlete_settings import sport_thresholds
+from ..goal_distance import DISTANCE_PROFILES, resolve_goal_distance
+from ..goal_plan import blocks, current_goal
+from ..race_equivalents import goal_km, goal_target_s
+from ..units import fmt_clock
 
 # Run zones, whole % of threshold speed (TrainingPeaks' percentOfThresholdPace: higher = faster).
 RUN_ZONES: dict[str, tuple[int, int]] = {

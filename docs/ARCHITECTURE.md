@@ -65,8 +65,8 @@ running_coach/
 │   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
 │   ├── plan_audit/              # SKILL.md, fetch_plan_audit_data_tool.py, helpers/
 │   ├── nutrition_planner/           # SKILL.md, fetch_nutrition_context_tool.py, helpers/
-│   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes); <= 10 changes within <= 2 ISO weeks, bigger sets redirect to plan_builder
-│   ├── plan_builder/                # SKILL.md, fetch_plan_context_tool.py, stage_training_plan_tool.py, apply_training_plan_tool.py, helpers/ (session_codes, strength_templates, pace_zones, plan_expand, plan_diff, plan_context_text, plan_summary_text, web_payload)
+│   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes); <= 10 changes (session codes or custom builders), bigger sets redirect to plan_builder
+│   ├── plan_builder/                # SKILL.md, fetch_plan_context_tool.py, stage_training_plan_tool.py, apply_training_plan_tool.py, helpers/ (plan_expand, plan_diff, plan_context_text, plan_summary_text, web_payload)
 │   └── weather_lookup/              # get_weather_tool.py
 ├── shared/                          # domain helpers used by 2+ features/coach
 │   ├── dates  units  sports  session_state  runner_identity  parallel_fetch  tp_payloads
@@ -74,6 +74,7 @@ running_coach/
 │   ├── weekly_buckets  calendar_notes  long_run_facts  health_metrics  athlete_settings  hr_pace_fit
 │   ├── analysis_summary  workout_status  workout_structure  runner_weather  web_report_payload  ui_channel
 │   ├── workout_builder  strides  workout_upsert   # exact TP builder + totals, strides rule, TP writes (workout_creator + plan_builder)
+│   ├── session_codes/               # session_codes, pace_zones, strength_templates (workout_creator + plan_builder)
 │   └── training_log/                # record_builder, record_writer, telemetry_file
 ├── integrations/                    # external I/O only
 │   ├── config  package_paths  firestore  session_service  open_meteo

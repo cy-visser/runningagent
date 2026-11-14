@@ -11,7 +11,7 @@ from ...shared.long_run_facts import get_or_fetch_volume_history, read_cached_vo
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.runner_identity import profile_user_id
 from ...shared.tp_payloads import coerce_mcp_payload
-from .helpers.pace_zones import resolve_zones
+from ...shared.session_codes.pace_zones import resolve_zones
 from .helpers.plan_context_text import (
     PLAN_CONTEXT_STATE_KEY,
     TEMP_PLAN_WORKOUTS_KEY,

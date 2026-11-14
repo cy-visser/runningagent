@@ -1,4 +1,4 @@
-"""Session-code language of the plan builder: one compact code per session -> an exact TrainingPeaks session.
+"""Session-code language shared by plan-builder and workout-creator: one compact code -> an exact TP session.
 
 The coach plans in codes (`E 10`, `T 2x15' r2'`, `L 28 +8@M`, `B 4x8' @SS r4'`, `S 45' heavy-lower`, ...);
 this module turns each code into the session the app writes: sport, title, coded description and, for
@@ -11,8 +11,8 @@ import re
 from datetime import date
 from typing import Any, Optional
 
-from ....shared.strides import ADDED, default_strides, ensure_strides
-from ....shared.workout_builder import builder_summary, builder_totals, parse_coach_structure
+from ..strides import ADDED, default_strides, ensure_strides
+from ..workout_builder import builder_summary, builder_totals, parse_coach_structure
 from .pace_zones import run_band
 from .strength_templates import FOCI, focus_key, strength_session
 
@@ -77,6 +77,25 @@ def normalize(code: Any) -> str:
     text = re.sub(r"\+\s+", "+", text)
     text = re.sub(r"\s+@", " @", text)
     return " ".join(text.split())
+
+
+def code_sport(code: Any) -> Optional[str]:
+    """Inferred TrainingPeaks sport for a session code ('Run', 'Bike', 'Strength', 'Swim', 'Walk',
+    'Crosstrain'), or None for empty / REST / unknown codes."""
+    tokens = normalize(code).split()
+    if not tokens:
+        return None
+    head = tokens[0].upper()
+    if head in RUN_KINDS or head == "RACE":
+        return "Run"
+    if head == "B":
+        return "Bike"
+    if head == "S":
+        return "Strength"
+    if head == "X":
+        words = [t.lower() for t in tokens[1:] if not re.match(r"^\d", t) and t.lower() not in TIMES_OF_DAY]
+        return CROSS_SPORTS.get(" ".join(words)) or "Crosstrain"
+    return None
 
 
 def parse_length(token: str) -> tuple[str, float]:
@@ -190,7 +209,7 @@ def _need_main(parsed: dict, what: str) -> tuple[str, float]:
 # Runs
 # ------------------------------------------------------------------------------
 
-def _steady_run(parsed: dict, kind: str, zones: dict) -> tuple[dict, str, Optional[str]]:
+def _steady_run(parsed: dict, kind: str, zones: dict, allow_strides: bool = True) -> tuple[dict, str, Optional[str]]:
     main = _check(_need_main(parsed, "the run"), MAX_RUN_M, MAX_S, "run length")
     if parsed["pace"]:
         raise CodeError("easy, recovery and long runs take no @pace (a long-run fast finish is +8@M)")
@@ -212,7 +231,7 @@ def _steady_run(parsed: dict, kind: str, zones: dict) -> tuple[dict, str, Option
                  _step(f"@{pace}", "active", seg, run_band(zones, pace))]
         title += f" (last {length_text(seg)} @{pace})"
         extra_cue = f"Finish the last {length_text(seg)} at @{pace}."
-    if parsed["strides"]:
+    if parsed["strides"] and allow_strides:
         steps.append(default_strides())
         title += " + strides"
     return {"steps": steps}, title, extra_cue
@@ -251,36 +270,53 @@ def _race(parsed: dict, zones: dict, day: Optional[date]) -> tuple[dict, str]:
     return {"steps": [step]}, f"Race: {race['title']}"
 
 
-def _run_session(parsed: dict, code: str, zones: dict, day: Optional[date]) -> dict:
+def _run_session(
+    parsed: dict,
+    code: str,
+    zones: dict,
+    day: Optional[date],
+    *,
+    current_builder: Optional[dict] = None,
+    allow_strides: bool = True,
+    include_code_footer: bool = True,
+) -> dict:
     kind = parsed["kind"]
     extra_cue = None
+    strides_status = None
     if kind == "RACE":
         structure, title = _race(parsed, zones, day)
     elif kind in QUALITY_KINDS:
         structure, title = _quality_run(parsed, kind, zones)
     else:
-        structure, title, extra_cue = _steady_run(parsed, kind, zones)
+        structure, title, extra_cue = _steady_run(parsed, kind, zones, allow_strides=allow_strides)
+        if parsed["strides"] and allow_strides:
+            strides_status = ADDED
     thr = zones["thr"]["run"]
     native, error = parse_coach_structure(structure, "Run", thr)
     if error:
         raise CodeError(error)
-    if kind in QUALITY_KINDS:
-        native, status = ensure_strides({"sport": "Run", "title": title}, native, None, thr)
-        if status != ADDED and kind in STRIDE_KINDS:
+    if allow_strides and kind in QUALITY_KINDS:
+        native, status = ensure_strides({"sport": "Run", "title": title}, native, current_builder, thr)
+        strides_status = status
+        if status is None and kind in STRIDE_KINDS:
             # Short reps (e.g. 10x200) are not a "quality run" for ensure_strides; plans still open them with strides.
             structure["steps"].insert(1, default_strides())
             native, error = parse_coach_structure(structure, "Run", thr)
             if error:
                 raise CodeError(error)
+            strides_status = ADDED
     cue = " ".join(c for c in (_CUES[kind], extra_cue) if c)
-    return _with_totals({"sport": "Run", "kind": kind, "title": title}, native, thr, cue, code)
+    out = _with_totals({"sport": "Run", "kind": kind, "title": title}, native, thr, cue, code, include_code_footer)
+    if strides_status:
+        out["strides_added"] = strides_status
+    return out
 
 
 # ------------------------------------------------------------------------------
 # Bike, strength, cross-training
 # ------------------------------------------------------------------------------
 
-def _bike_session(parsed: dict, code: str, zones: dict) -> dict:
+def _bike_session(parsed: dict, code: str, zones: dict, *, include_code_footer: bool = True) -> dict:
     main = _need_main(parsed, "the ride")
     if main[0] != "s":
         raise CodeError("rides are planned in time (e.g. B 60' Z2)")
@@ -314,7 +350,7 @@ def _bike_session(parsed: dict, code: str, zones: dict) -> dict:
     if error:
         raise CodeError(error)
     return _with_totals({"sport": "Bike", "kind": "B", "title": title}, native, thr,
-                        "Smooth, steady cadence; this is low-impact aerobic load.", code)
+                        "Smooth, steady cadence; this is low-impact aerobic load.", code, include_code_footer)
 
 
 def _minutes(parsed: dict, bounds: tuple[int, int], what: str) -> int:
@@ -327,35 +363,49 @@ def _minutes(parsed: dict, bounds: tuple[int, int], what: str) -> int:
     return minutes
 
 
-def _strength(parsed: dict, code: str, phase: Optional[str]) -> dict:
+def _strength(parsed: dict, code: str, phase: Optional[str], *, include_code_footer: bool = True) -> dict:
     minutes = _minutes(parsed, STRENGTH_MINUTES, "a strength session")
     focus = focus_key(" ".join(parsed["words"])) if parsed["words"] else None
     if not focus:
         raise CodeError(f"strength needs a focus: {', '.join(FOCI)}")
     s = strength_session(focus, minutes, phase)
-    return {"sport": "Strength", "kind": "S", "title": s["title"], "description": f"{s['description']}\nPlan code: {code}",
+    desc = f"{s['description']}\nPlan code: {code}" if include_code_footer else s["description"]
+    return {"sport": "Strength", "kind": "S", "title": s["title"], "description": desc,
             "summary": s["summary"][:SUMMARY_CHARS], "exercises": s["exercises"], "load": s["load"],
             "structured_workout": None, "distance_km": None, "duration_minutes": minutes,
             "tss_planned": s["tss_planned"]}
 
 
-def _cross(parsed: dict, code: str) -> dict:
+def _cross(parsed: dict, code: str, *, include_code_footer: bool = True) -> dict:
     minutes = _minutes(parsed, CROSS_MINUTES, "cross-training")
     sport = CROSS_SPORTS.get(" ".join(parsed["words"]))
     if not sport:
         raise CodeError("cross-training needs a sport: swim, walk or crosstrain")
-    return {"sport": sport, "kind": "X", "title": f"{sport} {minutes}'", "description": f"Easy {sport.lower()}.\nPlan code: {code}",
+    desc = f"Easy {sport.lower()}.\nPlan code: {code}" if include_code_footer else f"Easy {sport.lower()}."
+    return {"sport": sport, "kind": "X", "title": f"{sport} {minutes}'", "description": desc,
             "summary": f"{minutes}' easy", "structured_workout": None, "distance_km": None,
             "duration_minutes": minutes, "tss_planned": round(minutes * CROSS_TSS_PER_MIN[sport])}
 
 
-def _with_totals(base: dict, native: dict, thr: dict, cue: str, code: str) -> dict:
+def _with_totals(
+    base: dict, native: dict, thr: dict, cue: str, code: str, include_code_footer: bool = True
+) -> dict:
     summary = builder_summary(native, thr)
-    return {**base, "description": f"{summary}\n{cue}\nPlan code: {code}", "summary": summary[:SUMMARY_CHARS],
+    desc = f"{summary}\n{cue}\nPlan code: {code}" if include_code_footer else f"{summary}\n{cue}"
+    return {**base, "description": desc, "summary": summary[:SUMMARY_CHARS],
             "structured_workout": native, **builder_totals(native, thr)}
 
 
-def build_session(code: Any, zones: dict, phase: Optional[str] = None, day: Optional[date] = None) -> dict:
+def build_session(
+    code: Any,
+    zones: dict,
+    phase: Optional[str] = None,
+    day: Optional[date] = None,
+    *,
+    current_builder: Optional[dict] = None,
+    allow_strides: bool = True,
+    include_code_footer: bool = True,
+) -> dict:
     """The session of one code: sport, kind, code, title, description, summary, structured_workout (runs and
     rides), distance_km / duration_minutes / tss_planned and time (from 'am' / 'mid' / 'pm', else None).
 
@@ -365,13 +415,21 @@ def build_session(code: Any, zones: dict, phase: Optional[str] = None, day: Opti
     parsed = _parse(text)
     kind = parsed["kind"]
     if kind in RUN_KINDS or kind == "RACE":
-        session = _run_session(parsed, text, zones, day)
+        session = _run_session(
+            parsed,
+            text,
+            zones,
+            day,
+            current_builder=current_builder,
+            allow_strides=allow_strides,
+            include_code_footer=include_code_footer,
+        )
     elif kind == "B":
-        session = _bike_session(parsed, text, zones)
+        session = _bike_session(parsed, text, zones, include_code_footer=include_code_footer)
     elif kind == "S":
-        session = _strength(parsed, text, phase)
+        session = _strength(parsed, text, phase, include_code_footer=include_code_footer)
     elif kind == "X":
-        session = _cross(parsed, text)
+        session = _cross(parsed, text, include_code_footer=include_code_footer)
     else:
         raise CodeError(f"unknown session type '{text.split()[0]}' (E R L T I Rp M P H RACE B S X or REST)")
     return {**session, "code": text, "time": parsed["time"]}

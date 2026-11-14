@@ -232,3 +232,86 @@ def test_the_confirmation_is_only_the_table_without_a_builder_block(runner):
     asyncio.run(apply_staged_changes(_fresh(ctx), staged_id=staged_id))
     assert "| Change | Date | Before | After |" in ctx.reply_text()
     assert "Workout builder" not in ctx.reply_text()
+
+
+def test_compact_session_codes_stage_multi_week_audit_changes_in_one_call(runner):
+    ctx = runner.ctx()
+    audit_deltas = [
+        {"date_str": "2026-11-02", "code": "E 8"},                       # updates Mon easy run
+        {"date_str": "2026-11-03", "code": "T 4x2k r2'"},                # updates Tue threshold (keeps custom strides)
+        {"date_str": "2026-11-03", "code": "S 40' heavy-lower", "create": True},  # infers sport='Strength'
+        {"date_str": "2026-11-04", "code": "X 40' swim"},                # infers sport='Swim'
+        {"date_str": "2026-11-05", "code": "B 60' Z2"},                  # updates Thu bike
+        {"date_str": "2026-11-06", "code": "REST"},                      # deletes Fri easy run
+        {"date_str": "2026-11-07", "code": "L 22 +6@M"},                 # updates Sat long run
+        {"date_str": "2026-11-10", "code": "I 5x1k r2'"},                # creates next-week Tue VO2max
+    ]
+    result = _stage_with(_fresh(ctx), audit_deltas, "Trimmed Friday to protect Sunday's marathon-pace long run.")
+
+    assert result["staged"] == 8 and ctx.actions.skip_summarization is True
+    staged = ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    by_day_sport = {(c["date"][:10], c["sport"]): c for c in staged}
+
+    tue_run = by_day_sport[("2026-11-03", "Run")]
+    assert tue_run["action"] == "update" and tue_run["title"] == "Threshold 4x2km"
+    assert tue_run["strides_added"] == "kept"  # preserved 4x(15"/45") from existing TP workout
+    assert "Plan code:" not in tue_run["description"]
+
+    tue_str = by_day_sport[("2026-11-03", "Strength")]
+    assert tue_str["action"] == "create" and tue_str["duration_minutes"] == 40 and tue_str["tss_planned"] > 0
+
+    wed_swim = by_day_sport[("2026-11-04", "Swim")]
+    assert wed_swim["action"] == "create" and wed_swim["duration_minutes"] == 40
+
+    fri_del = by_day_sport[("2026-11-06", "Run")]
+    assert fri_del["action"] == "delete" and fri_del["replaces"]["title"] == "Easy Run"
+
+    sat_lr = by_day_sport[("2026-11-07", "Run")]
+    assert sat_lr["distance_km"] == 22.0 and "@M" in sat_lr["title"]
+
+
+def test_targetless_non_active_steps_default_cleanly_and_post_stride_totals_pass(runner):
+    ctx = runner.ctx()
+    # Warm-up, rest, and cool-down omit pace/intensity_min; stated 76 min includes kept/added strides.
+    intervals = {
+        "steps": [
+            {"name": "Warm up", "intensityClass": "warmUp", "duration_seconds": 900},
+            {
+                "type": "repetition",
+                "reps": 4,
+                "steps": [
+                    {"name": "Threshold", "intensityClass": "active", "distance_m": 2000, "pace": "4:45-4:52"},
+                    {"name": "Jog", "intensityClass": "rest", "duration_seconds": 120},
+                ],
+            },
+            {"name": "Cool down", "intensityClass": "coolDown", "duration_seconds": 600},
+        ]
+    }
+    result = _stage(_fresh(ctx), [{"date_str": "2026-11-03", "duration_minutes": 77, "structure": intervals}])
+    assert result["staged"] == 1 and "needs_structure" not in result
+
+
+def test_needs_structure_retry_reuses_tp_cache_and_merges_delta_only_fix(runner):
+    ctx = runner.ctx()
+    initial = [
+        {"date_str": "2026-11-02", "code": "E 8"},
+        {"date_str": "2026-11-03", "code": "T 3x2k r2'"},
+        {"date_str": "2026-11-04", "title": "Broken Run", "distance_km": 10},  # missing code & structure
+    ]
+    first = _stage_with(_fresh(ctx), initial, "Adjusted volume after audit.")
+    assert first["staged"] == 0 and first["ready"] == 2
+    assert [n["date_str"] for n in first["needs_structure"]] == ["2026-11-04"]
+
+    runner.tp_calls.clear()
+    ctx.actions.skip_summarization, ctx.ui_widgets = None, []
+    # Retry sends ONLY the 1 fixed item (no message repeated): zero TP MCP calls, merges all 3 items.
+    second = _stage(ctx, [{"date_str": "2026-11-04", "code": "R 6"}])
+    assert runner.tp_calls == []
+    assert second["staged"] == 3 and ctx.actions.skip_summarization is True
+    assert "Adjusted volume after audit." in (ctx.reply_text() or "")
+    assert [c["date"][:10] for c in ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]] == [
+        "2026-11-02",
+        "2026-11-03",
+        "2026-11-04",
+    ]
+

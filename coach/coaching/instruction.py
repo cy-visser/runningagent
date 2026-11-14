@@ -41,7 +41,9 @@ _ROUTING_RULES = """
         no horizon is given, then offer trend in one line; never run check-in and trend in one turn)
       * trend-analysis -> fetch_trend_data (6+ wk: "since <date>", "this block", volume capacity, easy/workout paces)
       * plan-audit -> fetch_plan_audit_data | nutrition-planner -> fetch_nutrition_context
-      * workout-creator -> stage_workout_changes (<= 10 workout changes)
+      * workout-creator (<= 10 workout/note creates or content edits): if not loaded in this chat yet, call
+        load_skill(skill_name="workout-creator") FIRST (never call stage_workout_changes in the same step unless every
+        change uses compact `code`), then stage in ONE stage_workout_changes call (prefer `code=...`).
       * plan-builder: load_skill(skill_name="plan-builder", start_date, end_date, mode) automatically loads the plan
         context in the same step (never call a separate context tool), followed by ONE stage_training_plan. Use for
         any new plan/block or schedule overhaul (> 10 sessions).

@@ -17,7 +17,7 @@ from ....shared.long_run_facts import (
 from ....shared.session_state import PLAN_CONTEXT_STATE_KEY
 from ....shared.training_times import training_times_text
 from ....shared.workout_status import is_workout_completed
-from .pace_zones import zone_table_text
+from ....shared.session_codes.pace_zones import zone_table_text
 from .plan_diff import MANAGED_SPORTS, sport_name
 
 TEMP_PLAN_WORKOUTS_KEY = "temp:plan_workouts"

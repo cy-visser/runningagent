@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from ....shared.dates import iso_date, monday_of, parse_date
 from ....shared.goal_plan import snap_new_block_start
-from .session_codes import CodeError, build_session, normalize
+from ....shared.session_codes.session_codes import CodeError, build_session, normalize
 
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _DAY_KEYS = {d.lower(): d for d in DAYS} | {

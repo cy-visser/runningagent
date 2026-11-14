@@ -10,7 +10,14 @@ from datetime import date
 from typing import Any, Optional
 
 from ....shared.athlete_settings import sport_family, sport_thresholds
-from ....shared.dates import iso_date, parse_date
+from ....shared.dates import get_today_date, iso_date, parse_date
+from ....shared.session_codes.pace_zones import resolve_zones
+from ....shared.session_codes.session_codes import (
+    CodeError,
+    build_session,
+    code_sport,
+    normalize as normalize_code,
+)
 from ....shared.strides import ensure_strides
 from ....shared.units import as_float
 from ....shared.workout_builder import (
@@ -35,8 +42,9 @@ STAGED_CHANGES_STATE_KEY = "staged_workout_changes"
 # Set when a staged set is applied; the web marks that card as applied.
 APPLIED_CHANGES_STATE_KEY = "applied_workout_changes"
 
-# What a Run/Bike change needs before it can be staged (internal marker, removed by finalize_builders).
+# What a Run/Bike/coded change needs before it can be staged (internal marker, removed by finalize_builders).
 BUILDER_COACH = "coach"      # the coach sent a structure: convert it exactly
+BUILDER_CODE = "code"        # the coach sent a compact session code: compile it in Python
 BUILDER_MISSING = "missing"  # new workout without a structure: back to the coach
 BUILDER_CHECK = "check"      # distance/duration changed without a structure: fetch the current builder
 
@@ -268,7 +276,9 @@ def resolve_changes(
         day = parse_date(raw_date)
         title = str(raw.get("title") or "").strip()
         kind = KIND_NOTE if str(raw.get("kind") or "").strip().lower() == KIND_NOTE else KIND_WORKOUT
-        if raw.get("delete"):
+        raw_code = normalize_code(raw.get("code"))
+        is_delete = bool(raw.get("delete")) or raw_code.upper() == "REST"
+        if is_delete:
             day_str = iso_date(day) if day else None
             change, problem = (_delete_note(day_str, title, notes or []) if kind == KIND_NOTE
                                else _delete_workout(raw, day_str, title, workouts, by_id, details_by_id))
@@ -289,13 +299,19 @@ def resolve_changes(
             staged.append(change)
             continue
 
-        sport = str(raw.get("sport") or "Run").strip() or "Run"
+        inferred_sport = code_sport(raw_code) if raw_code else None
+        sport = str(raw.get("sport") or inferred_sport or "Run").strip() or "Run"
         change.update({"sport": sport, "workout_id": None})
+        if title:
+            change["_coach_title"] = True
         for field in _NUMERIC_FIELDS:
             change[field] = _number(raw.get(field), field)
         if raw.get("structure") not in (None, "", {}):
             change["structure"] = raw["structure"]
             change["builder"] = BUILDER_COACH
+        elif raw_code:
+            change["code"] = raw_code
+            change["builder"] = BUILDER_CODE
         elif needs_builder(sport):
             change["builder"] = BUILDER_MISSING
         if raw.get("strides") is False:
@@ -421,13 +437,19 @@ def _show_current_builder(change: dict, detail: Optional[dict], thr: dict) -> No
 
 
 def finalize_builders(
-    staged: list[dict], settings_raw: Any, details_by_id: dict[str, dict]
+    staged: list[dict],
+    settings_raw: Any,
+    details_by_id: dict[str, dict],
+    *,
+    profile: Optional[dict] = None,
+    today: Optional[date] = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Applies the workout-builder rules to resolved changes.
 
+    - A compact session `code` compiles in Python into exact builder, paces, strides, description and totals.
     - A coach `structure` becomes the exact native builder; distance / duration / TSS follow it.
-    - A Run/Bike create without a structure goes back to the coach (`missing`).
-    - A Run/Bike update whose distance/duration changes without a structure goes back to the coach with
+    - A Run/Bike create without `code` or `structure` goes back to the coach (`missing`).
+    - A Run/Bike update whose distance/duration changes without `code` or `structure` goes back to the coach with
       the builder that is in TrainingPeaks now (`current_structure`, exact), so it edits only what changes.
     - Moves, renames and description edits keep the existing builder.
     Updates whose current workout was read show its builder summary on the card.
@@ -436,29 +458,76 @@ def finalize_builders(
     ready: list[dict] = []
     needs: list[dict] = []
     notes: list[dict] = []
+    zones: Optional[dict] = None
     for change in staged:
         if change.get("action") == ACTION_DELETE:
             ready.append(change)
             continue
         marker = change.pop("builder", None)
         raw_structure = change.pop("structure", None)
+        raw_code = change.pop("code", None)
+        coach_titled = bool(change.pop("_coach_title", False))
         thr = sport_thresholds(settings_raw, change.get("sport"))
         if change.get("workout_id"):
             _show_current_builder(change, details_by_id.get(str(change["workout_id"])), thr)
-        if marker == BUILDER_COACH:
+        if marker == BUILDER_CODE:
+            if zones is None:
+                zones = resolve_zones(settings_raw, profile, today or get_today_date())
+            current = (details_by_id.get(str(change.get("workout_id"))) or {}).get("structured_workout")
+            try:
+                built = build_session(
+                    raw_code,
+                    zones,
+                    day=parse_date(change["date"]),
+                    current_builder=current if has_builder(current) else None,
+                    allow_strides=change.get("strides") is not False,
+                    include_code_footer=False,
+                )
+            except CodeError as exc:
+                needs.append(_needs_structure(change, f"invalid code '{raw_code}': {exc}"))
+                continue
+            inherited = set(change.get("inherited") or ())
+            change["sport"] = built["sport"]
+            if built.get("time") and "T" not in str(change.get("date") or ""):
+                change["date"] = f"{change['date'][:10]}T{built['time']}:00"
+            if not coach_titled:
+                change["title"] = built["title"]
+                inherited.discard("title")
+            if not change.get("description") and built.get("description"):
+                change["description"] = built["description"]
+                change["description_summary"] = description_summary(built["description"])
+            if built.get("strides_added"):
+                change["strides_added"] = built["strides_added"]
+            if built.get("structured_workout"):
+                for f in _NUMERIC_FIELDS:
+                    change[f] = None
+                _set_inherited(change, inherited)
+                thr_built = sport_thresholds(settings_raw, built["sport"])
+                _apply_builder(change, built["structured_workout"], thr_built, notes)
+            else:
+                for f in _NUMERIC_FIELDS:
+                    if built.get(f) is not None:
+                        change[f] = built[f]
+                        inherited.discard(f)
+                _set_inherited(change, inherited)
+        elif marker == BUILDER_COACH:
             native, error = parse_coach_structure(raw_structure, change.get("sport"), thr)
             if error:
                 needs.append(_needs_structure(change, f"invalid: {error}"))
                 continue
-            mismatch = _totals_mismatch(change, builder_totals(native, thr))
+            current = (details_by_id.get(str(change.get("workout_id"))) or {}).get("structured_workout")
+            final, strides = ensure_strides(change, native, current if has_builder(current) else None, thr)
+            native_totals = builder_totals(native, thr)
+            mismatch = _totals_mismatch(change, native_totals)
+            if mismatch and final is not native:
+                if _totals_mismatch(change, builder_totals(final, thr)) is None:
+                    mismatch = None
             if mismatch:
                 needs.append(_needs_structure(change, mismatch))
                 continue
-            current = (details_by_id.get(str(change.get("workout_id"))) or {}).get("structured_workout")
-            final, strides = ensure_strides(change, native, current if has_builder(current) else None, thr)
             if strides:
                 change["strides_added"] = strides  # "kept" (from the current builder) or "added" (default)
-            _apply_builder(change, final, thr, notes, note_totals=builder_totals(native, thr))
+            _apply_builder(change, final, thr, notes, note_totals=native_totals)
         elif marker == BUILDER_MISSING:
             needs.append(_needs_structure(change, "missing"))
             continue

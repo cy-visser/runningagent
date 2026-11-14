@@ -219,6 +219,26 @@ def replaced_stagings(contents: list[types.Content]) -> set[str]:
     return staging_status(contents)[0]
 
 
+def superseded_failed_stagings(contents: list[types.Content]) -> set[str]:
+    """Call ids of failed `stage_workout_changes` (`staged: 0`) superseded by a later staging attempt."""
+    superseded: set[str] = set()
+    failed_pending: set[str] = set()
+    for content in contents:
+        for part in content.parts or []:
+            response = part.function_response
+            if not response or not response.id or response.name != STAGE:
+                continue
+            result = _result_json(response)
+            if (result.get("staged") or 0) > 0:
+                superseded.update(failed_pending)
+                failed_pending.clear()
+            elif result.get("staged") == 0:
+                superseded.update(failed_pending)
+                failed_pending.clear()
+                failed_pending.add(response.id)
+    return superseded
+
+
 def _last_runner_message(contents: list[types.Content]) -> int:
     """Index of the latest runner message (a user content that is not only tool responses)."""
     return max(
@@ -256,6 +276,7 @@ def keep_latest_reports_and_skills(
 
     # Pass 2: drop or point away from every older copy; compact what the app already settled.
     replaced, applied = staging_status(contents)
+    replaced = replaced | superseded_failed_stagings(contents)
     plans = plan_status(contents)
     turn_start = _last_runner_message(contents)
     out: list[types.Content] = []

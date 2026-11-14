@@ -310,3 +310,79 @@ def test_get_runner_tp_cookie_singleflights_concurrent_kms_decrypts(monkeypatch)
         assert reads == 1 and decrypts == 1
     finally:
         credentials.clear_tp_credential_cache()
+
+
+def test_audit_recommendation_confirmations_and_workout_creator_steps_use_low_thinking():
+    from running_coach.coach.coaching.model_callbacks import thinking_for
+
+    history = [
+        _user("Audit my plan for the next 4 weeks"),
+        _model(types.Part(text="### Assessment\n- ...\n### Recommendations\n- Nov 18: E 10 -> E 8")),
+    ]
+    for prompt in (
+        "Apply the recommendations",
+        "Apply all your recommendations",
+        "Make all those changes",
+        "Implement the adjustments",
+        "Update my schedule",
+    ):
+        cfg, reason = thinking_for({}, LlmRequest(contents=[*history, _user(prompt)]))
+        assert cfg.thinking_level == types.ThinkingLevel.LOW and reason == "confirmation", prompt
+
+    # Non-confirmation turn that loaded workout-creator in Step 1 -> Step 2 runs at LOW thinking ("workout_creator").
+    wc_step2 = LlmRequest(contents=[
+        _user("Schedule 5x1000m VO2max on Thursday and a 6 km recovery run on Friday"),
+        _model(types.Part(function_call=types.FunctionCall(name="load_skill", args={"skill_name": "workout-creator"}))),
+        _resp("load_skill"),
+    ])
+    cfg_wc, reason_wc = thinking_for({}, wc_step2)
+    assert cfg_wc.thinking_level == types.ThinkingLevel.LOW and reason_wc == "workout_creator"
+
+    # Validation retry after stage_workout_changes returns staged: 0 -> runs at LOW thinking ("workout_creator").
+    retry_req = LlmRequest(contents=[
+        _user("Swap Thursday to a custom pyramid session"),
+        _model(_call("stage_workout_changes")),
+        types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
+            name="stage_workout_changes", response={"result": '{"staged": 0, "needs_structure": [{}]}'}
+        ))]),
+    ])
+    cfg_retry, reason_retry = thinking_for({}, retry_req)
+    assert cfg_retry.thinking_level == types.ThinkingLevel.LOW and reason_retry == "workout_creator"
+
+
+def test_drop_premature_staging_strips_blind_parallel_call_but_keeps_coded_call():
+    from types import SimpleNamespace
+    from google.adk.models.llm_response import LlmResponse
+    from running_coach.coach.coaching.model_callbacks import after_coach_model
+
+    # 1. Blind parallel stage_workout_changes (missing code & structure) is dropped; signature stays on load_skill.
+    blind = LlmResponse(content=types.Content(role="model", parts=[
+        types.Part(
+            function_call=types.FunctionCall(
+                name="stage_workout_changes",
+                args={"changes": [{"date_str": "2026-11-18", "sport": "Run", "distance_km": 8}]},
+            ),
+            thought_signature=SIG,
+        ),
+        types.Part(function_call=types.FunctionCall(name="load_skill", args={"skill_name": "workout-creator"})),
+    ]))
+    shaped = after_coach_model(SimpleNamespace(state={}, invocation_id="inv-blind"), blind)
+    assert [(p.function_call.name, p.thought_signature) for p in shaped.content.parts if p.function_call] == [
+        ("load_skill", SIG)
+    ]
+
+    # 2. Coded parallel stage_workout_changes is complete -> kept intact so the turn finishes in 1 call.
+    coded = LlmResponse(content=types.Content(role="model", parts=[
+        types.Part(
+            function_call=types.FunctionCall(name="load_skill", args={"skill_name": "workout-creator"}),
+            thought_signature=SIG,
+        ),
+        types.Part(
+            function_call=types.FunctionCall(
+                name="stage_workout_changes",
+                args={"changes": [{"date_str": "2026-11-18", "code": "E 8"}]},
+            )
+        ),
+    ]))
+    assert after_coach_model(SimpleNamespace(state={}, invocation_id="inv-coded"), coded) is None
+
