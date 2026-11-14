@@ -346,10 +346,13 @@ def test_fetch_plan_context_is_compact_and_feeds_the_plan_window(runner):
     assert "PLAN CONTEXT (overhaul): 2026-11-02 → 2027-04-18 · 24 weeks" in text
     assert "T 4:42–4:54/km" in text and "@M 4:34–4:39/km (goal Sub-3:15 Marathon)" in text
     assert "Bike (FTP 260 W)" in text and "strength" in text and "Long runs, last 6 weeks" in text
+    assert "Running km/week, last 12 weeks (oldest first):" in text and "peak " in text and "streak >= 50 km" in text
+    assert "Volume reference" not in text and "block target" not in text
     assert "Training times: run morning · strength evening" in text and "Cross-training / strength" not in text
     assert "W1 2026-11-02: Mon Run 'Easy Aerobic Run' 10 km [w" in text      # ids in overhaul mode
     assert "W5–W24 (2026-11-30 → 2027-04-12): nothing planned" in text        # consecutive empty full weeks collapsed
     assert len(text) < 8000                                                   # ~1-2k tokens for 24 weeks
+    assert "cyrille_visser" in runner.volume_history_cache
     cached = ctx.state["plan_context_cache"]
     assert (cached["start_date"], cached["end_date"], cached["mode"]) == ("2026-11-02", "2027-04-18", "overhaul")
     assert isinstance(cached["zones"], dict)
@@ -367,8 +370,11 @@ def test_fetch_plan_context_is_compact_and_feeds_the_plan_window(runner):
     # Applying the week writes to TrainingPeaks and clears plan_context_cache.
     _apply(ctx, result["staged_id"], 1)
     assert ctx.state["plan_context_cache"] is None
+    # Subsequent fetch_plan_context reuses the 28-day Firestore volume_history cache (only 1 tp_get_workouts for the window).
+    runner.tp_calls.clear()
     new_text = asyncio.run(fetch_plan_context(runner.ctx(), "2026-11-02", "2026-11-29"))
     assert "[w" not in new_text.split("CALENDAR IN WINDOW")[1]               # no ids in new mode
+    assert [kw["start_date"][:10] for n, kw in runner.tp_calls if n == "tp_get_workouts"] == ["2026-11-02"]
 
 
 def test_sunday_aug_1_new_plan_snaps_to_monday_aug_2_and_midweek_partial_weeks_clip_cleanly(runner):

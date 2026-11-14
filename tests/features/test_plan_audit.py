@@ -1,14 +1,13 @@
 """Behavioural test for the plan audit feature (`fetch_plan_audit_data`)."""
 
 import asyncio
-from datetime import date
+from datetime import date, timedelta
 import json
 import re
 
 from running_coach.features.plan_audit.fetch_plan_audit_data_tool import (
     fetch_plan_audit_data,
 )
-from running_coach.features.trend_analysis.fetch_trend_data_tool import fetch_trend_data
 
 
 def test_plan_audit_surfaces_goal_context_long_run_facts_and_web_payload(runner):
@@ -19,57 +18,87 @@ def test_plan_audit_surfaces_goal_context_long_run_facts_and_web_payload(runner)
 
     assert "**Audit Context:**" in out
     assert "transition week, outside 10K block" in out
-    # Long run: facts only (distance, duration, share of the week, block position) and the recent
-    # history; the coach reasons the distance. No computed target, floor, cap or flag.
+    # Long run & weekly volume: measured facts only (12-week history, peak, streak, recent active mean,
+    # week-over-week vs prior, longest runs); no synthetic volume path, block target, floor, cap, or flag.
     assert "12 wk to 10K" in out and "LR 14 km (" in out
-    assert "- Last 6 complete weeks (oldest first): weekly km `" in out and "| longest runs `" in out
-    for computed in ("north-star floor", "Long-run rule", "cap 1", "target 24", "below target"):
-        assert computed not in out
+    assert "- Last 12 complete weeks (oldest first): weekly km `" in out
+    assert "peak " in out and "-wk streak >= 50 km" in out and "recent 4-wk active mean " in out
+    assert "- Longest runs (last 6 complete weeks, oldest first): `" in out and "12-wk max " in out
+    for computed in (
+        "north-star floor",
+        "Long-run rule",
+        "cap 1",
+        "target 24",
+        "below target",
+        "Volume reference",
+        "block target",
+        "vs path",
+        "path ",
+    ):
+        assert computed not in out, computed
     assert "Work trip to Berlin" in out
     assert "Rest Day" not in out
     # Single-sport-per-day sessions omit 10-digit [workout_id]s (stage_workout_changes resolves by date + sport).
     session_lines = [ln for ln in out.splitlines() if ln.startswith("  Sessions: ")]
     assert session_lines and not any(re.search(r"\[w_\w+\]", ln) for ln in session_lines)
 
-    # Weekly volume: 10K block target = 72% of the 100 km/week north-star peak; completed and
-    # transition weeks have no path; planned weeks report facts only (vs prior, vs path), never a
-    # coded ramp verdict.
-    assert "- Volume reference (10K block): block target 72 km/week (72% of the 100 km/week" in out
+    # Planned weeks report measured facts only (km + vs prior), never a coded ramp verdict or target path.
     assert "44.5 km (" in out and "vs prior" in out
-    assert "path 55 km, -19% vs path" in out
-    header_lines = [ln for ln in out.splitlines() if ln.startswith("* **") or "Volume reference" in ln]
-    assert header_lines and not any("⚠" in ln or "10%" in ln or "%/week" in ln for ln in header_lines)
+    header_lines = [ln for ln in out.splitlines() if ln.startswith("* **")]
+    assert header_lines and not any("⚠" in ln or "10%" in ln or "%/week" in ln or "path" in ln for ln in header_lines)
 
     report = json.loads(json.dumps(ctx.state.get("audit_report_data")))
     assert report["version"] == 1
     assert len(report["weeks"]) >= 4
+    assert "volume_reference" not in report
     long_runs = [w["long_run"] for w in report["weeks"] if w.get("long_run")]
     assert long_runs and all("⚠" not in lr and "target" not in lr for lr in long_runs)
-    by_week = {w["week"]: w["volume"] for w in report["weeks"]}
-    assert by_week["2026-10-26"] is None and by_week["2026-11-09"] is None
-    assert by_week["2026-11-16"] == {"target_km": 55, "block_target_km": 72, "phase": "build",
-                                     "vs_path_pct": -19.1}
-    assert all("vs_prior_pct" in w for w in report["weeks"])
-    # Caption facts: how the weekly km targets are derived (block of the first targeted week).
-    assert report["volume_reference"] == {
-        "goal": "Sub-43 10K", "goal_label": "10K", "ns_goal": "Sub-3:15 Marathon", "own_block": False,
-        "block_target_km": 72, "ns_peak_km": 100, "start_km": 53.7, "peak_week": "2027-01-25",
-        "recovery_every_weeks": 4,
-    }
+    assert all("vs_prior_pct" in w and "volume" not in w for w in report["weeks"])
 
-    # Late in the block: taper week at 75% of the block target; nothing planned is a fact, not a verdict.
+    # Late in the block: nothing planned is reported as a fact without a synthetic target path.
     late = asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2027-01-25", end_date="2027-02-07"))
-    assert "(build, 2 wk to 10K): 0.0 km (path 72 km, no runs planned)" in late
-    assert "(taper, 1 wk to 10K): 0.0 km (path 54 km [75% of 72 km], no runs planned)" in late
-    recovery = asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2026-12-07", end_date="2026-12-13"))
-    assert "(recovery week, 9 wk to 10K):" in recovery and "[80% of " in recovery
+    assert "(2 wk to 10K): 0.0 km (no runs planned)" in late
+    assert "(1 wk to 10K): 0.0 km (no runs planned)" in late
 
-    # Same per-week targets as the trend report (one shared rule and baseline).
-    trend_ctx = runner.ctx()
-    asyncio.run(fetch_trend_data(trend_ctx, weeks=6))
-    trend_plan = {p["week"]: p["km"] for p in trend_ctx.state["trend_report_data"]["goal"]["volume"]["plan"]}
-    audit_targets = {wk: v["target_km"] for wk, v in by_week.items() if v}
-    assert audit_targets and all(trend_plan[wk] == km for wk, km in audit_targets.items())
+
+def test_plan_audit_caches_12_week_volume_history_in_firestore_for_28_days(runner):
+    # 1. Cold cache: pulls 12-week history from TrainingPeaks and stores weekly totals + fetched_at in Firestore.
+    asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2026-11-16", end_date="2026-12-13"))
+    cached = runner.volume_history_cache.get("cyrille_visser")
+    assert cached and cached.get("fetched_at") and len(cached.get("weeks") or []) == 12
+    first_ts = cached["fetched_at"]
+    workout_ranges_cold = [
+        (kw["start_date"][:10], kw["end_date"][:10])
+        for name, kw in runner.tp_calls
+        if name == "tp_get_workouts"
+    ]
+    assert len(workout_ranges_cold) == 2  # audited window + 12-week baseline fetch
+
+    # 2. Within 28 days (e.g. +20 days): Firestore cache hit -> zero 12-week history tp_get_workouts call.
+    runner.tp_calls.clear()
+    runner.now = runner.now + timedelta(days=20)
+    warm_out = asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2026-11-16", end_date="2026-12-13"))
+    assert "- Last 12 complete weeks (oldest first): weekly km `" in warm_out
+    workout_ranges_warm = [
+        (kw["start_date"][:10], kw["end_date"][:10])
+        for name, kw in runner.tp_calls
+        if name == "tp_get_workouts"
+    ]
+    assert workout_ranges_warm == [("2026-11-09", "2026-12-13")]
+    assert runner.volume_history_cache["cyrille_visser"]["fetched_at"] == first_ts
+
+    # 3. Older than 28 days (e.g. +29 days total): cache expired -> repulls from TrainingPeaks and updates timestamp.
+    runner.tp_calls.clear()
+    runner.now = runner.now + timedelta(days=9)
+    stale_out = asyncio.run(fetch_plan_audit_data(runner.ctx(), start_date="2026-12-07", end_date="2026-12-27"))
+    assert "- Last 12 complete weeks (oldest first): weekly km `" in stale_out
+    workout_ranges_stale = [
+        (kw["start_date"][:10], kw["end_date"][:10])
+        for name, kw in runner.tp_calls
+        if name == "tp_get_workouts"
+    ]
+    assert len(workout_ranges_stale) == 2
+    assert runner.volume_history_cache["cyrille_visser"]["fetched_at"] > first_ts
 
 
 def _span_days(kw: dict) -> int:

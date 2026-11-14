@@ -3,7 +3,8 @@
 from datetime import date, timedelta
 from typing import Any, Optional
 
-from .dates import get_today_date, parse_date
+from .dates import get_today_date, monday_of, parse_date
+from .goal_distance import resolve_goal_distance
 
 GOAL_TYPE_SINGLE = "single"
 GOAL_TYPE_PLAN = "plan"
@@ -229,3 +230,28 @@ def next_block(profile: Optional[dict], block: dict) -> Optional[dict]:
                 and b["timeline"] == block.get("timeline"):
             return all_blocks[i + 1] if i + 1 < len(all_blocks) else None
     return None
+
+
+def prev_block(profile: Optional[dict], block: dict) -> Optional[dict]:
+    """The block before `block` in race order, or None."""
+    prev = None
+    for b in blocks(profile):
+        if all(b.get(k) == block.get(k) for k in ("kind", "index", "timeline", "training_goal")):
+            return prev
+        prev = b
+    return None
+
+
+def block_on_date(profile: Optional[dict], day: date) -> dict:
+    """Active goal block on `day` with resolved distance label, start, race and weeks_to_race."""
+    goal = current_goal(profile, day)
+    label = resolve_goal_distance(goal.get("training_goal"))
+    monday = monday_of(day)
+    race = race_day(goal)
+    start = parse_date(goal.get("goal_set_date"))
+    if not start:
+        prev = prev_block(profile, goal)
+        prev_race = race_day(prev) if prev else None
+        start = prev_race + timedelta(days=1) if prev_race else None
+    weeks_to_race = (monday_of(race) - monday).days // 7 if race else None
+    return {"goal": goal, "label": label, "race": race, "start": start, "weeks_to_race": weeks_to_race}

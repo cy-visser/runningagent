@@ -14,7 +14,7 @@ import {
   YAxis,
 } from "recharts";
 import { formatChartTickDate, formatDuration } from "../../shared/format";
-import type { TrendGoal, TrendNorthStar, TrendVolume, TrendWeekPoint } from "../../shared/types";
+import type { TrendGoal, TrendNorthStar, TrendWeekPoint } from "../../shared/types";
 
 interface GoalChartsProps {
   weeks: TrendWeekPoint[];
@@ -381,45 +381,34 @@ interface ReadinessPoint {
   label: string;
   long_km?: number | null;
   km?: number | null;
-  target?: number | null;
 }
 
-/** History weeks merged with the block's future weekly-volume targets, ordered by week. */
-export function readinessData(weeks: TrendWeekPoint[], volume?: TrendVolume | null): ReadinessPoint[] {
+/** Historical weeks ordered chronologically for the long-run & weekly-volume readiness chart. */
+export function readinessData(weeks: TrendWeekPoint[]): ReadinessPoint[] {
   const byWeek = new Map<string, ReadinessPoint>();
   for (const w of weeks) {
     if (w.week) byWeek.set(w.week, { label: formatChartTickDate(w.week), long_km: w.long_km, km: w.km });
   }
-  for (const p of volume?.plan ?? []) {
-    const row = byWeek.get(p.week) ?? { label: formatChartTickDate(p.week) };
-    byWeek.set(p.week, { ...row, target: p.km });
-  }
   return [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v);
 }
 
-/** "Longest run per week · volume 54 → 72 km/wk by Jan 25 (NS peak 100)". */
-export function readinessSubtitle(volume?: TrendVolume | null, provenKm?: number | null): string {
+/** "Longest run per week · proven 70 km/wk". */
+export function readinessSubtitle(provenKm?: number | null): string {
   const parts = ["Longest run per week"];
-  if (volume) {
-    const from = volume.baseline_km != null ? `${Math.round(volume.baseline_km)} → ` : "";
-    const by = volume.peak_week && !volume.maintain ? ` by ${formatChartTickDate(volume.peak_week)}` : "";
-    const peak = volume.own_block ? "" : ` (NS peak ${volume.ns_peak_km})`;
-    parts.push(`volume ${from}${volume.block_target_km} km/wk${by}${peak}`);
-  } else if (provenKm) {
+  if (provenKm) {
     parts.push(`proven ${provenKm} km/wk`);
   }
   return parts.join(" · ");
 }
 
-/** D. Weekly long run (no computed target: the coach reasons it) and weekly km vs the block's volume path. */
+/** D. Weekly long run and weekly km against proven historical capacity (facts only, no synthetic target path). */
 function LongRunReadinessChart({ weeks, goal, provenKm }: GoalChartsProps) {
   if (!goal?.label) return null;
-  const volume = goal?.volume;
-  const data = readinessData(weeks, volume);
+  const data = readinessData(weeks);
   if (!data.some((d) => (d.long_km ?? 0) > 0)) return null;
   const longDomain = paddedDomain([...data.map((d) => d.long_km), 0]);
   const kmDomain = paddedDomain(
-    [...data.map((d) => d.km), ...data.map((d) => d.target), provenKm, volume?.block_target_km, 0],
+    [...data.map((d) => d.km), provenKm, 0],
     0.08,
     2,
     10,
@@ -427,11 +416,10 @@ function LongRunReadinessChart({ weeks, goal, provenKm }: GoalChartsProps) {
   return (
     <ChartCard
       title="Long-Run & Volume Readiness"
-      subtitle={readinessSubtitle(volume, provenKm)}
+      subtitle={readinessSubtitle(provenKm)}
       legend={[
         { color: "#F97316", label: "Longest run" },
         { color: "#7C3AED", label: "km/wk" },
-        ...(volume ? [{ color: "#C026D3", label: "Volume target", dashed: true }] : []),
         ...(provenKm ? [{ color: "#7C3AED", label: "Proven", dashed: true }] : []),
       ]}
     >
@@ -450,16 +438,6 @@ function LongRunReadinessChart({ weeks, goal, provenKm }: GoalChartsProps) {
         <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(value: number, name: string) => [`${value} km`, name]} />
         {provenKm ? (
           <ReferenceLine yAxisId="km" y={provenKm} stroke="#7C3AED" strokeDasharray="5 4" strokeOpacity={0.7} />
-        ) : null}
-        {volume ? (
-          <ReferenceLine
-            yAxisId="km"
-            y={volume.block_target_km}
-            stroke="#C026D3"
-            strokeDasharray="2 3"
-            strokeOpacity={0.6}
-            label={{ value: `Block ${volume.block_target_km}`, position: "insideTopRight", fontSize: rem(10), fill: "#A21CAF" }}
-          />
         ) : null}
         <Bar
           yAxisId="long"
@@ -481,20 +459,6 @@ function LongRunReadinessChart({ weeks, goal, provenKm }: GoalChartsProps) {
           connectNulls
           isAnimationActive={false}
         />
-        {volume ? (
-          <Line
-            yAxisId="km"
-            type="linear"
-            dataKey="target"
-            name="Volume target"
-            stroke="#C026D3"
-            strokeWidth={2}
-            strokeDasharray="5 4"
-            dot={{ r: 2, fill: "#C026D3" }}
-            connectNulls
-            isAnimationActive={false}
-          />
-        ) : null}
       </ComposedChart>
     </ChartCard>
   );

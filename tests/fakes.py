@@ -150,6 +150,7 @@ class FakeRunnerEnv:
         self.connected_runners: set[str] = {"cyrille_visser"}
         self.training_records: dict[str, dict] = {}
         self.analysis_cache: dict[tuple[str, str], dict] = {}
+        self.volume_history_cache: dict[str, dict] = {}
         self.profile_updates: list[tuple[str, dict]] = []
         self.tp_calls: list[tuple[str, dict]] = []
         self.rate_limited_workout_ids: set[str] = set()

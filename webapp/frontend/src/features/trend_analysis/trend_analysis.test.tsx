@@ -83,24 +83,13 @@ describe("trend analysis feature", () => {
     expect(next).toMatchObject({ level: 70, weeks: 0, proven: false });
   });
 
-  it("extends the long-run & volume readiness chart with the block's volume target path", async () => {
+  it("builds the long-run & volume readiness chart from measured history and proven capacity", async () => {
     const { readinessData, readinessSubtitle } =
       await vi.importActual<typeof import("./GoalCharts")>("./GoalCharts");
-    const goal = DEMO_TREND_DATA.goal!;
-    const data = readinessData(DEMO_TREND_DATA.weeks, goal.volume);
-    // History weeks first, then the future weeks of the block carrying only a target.
-    expect(data).toHaveLength(DEMO_TREND_DATA.weeks.length + 18);   // history ends 2026-10-26; plan starts 11-02
-    const last = data[data.length - 1];
-    expect(last).toMatchObject({ target: 56 });
-    expect(last.km).toBeUndefined();
-    expect(Math.max(...data.map((d) => d.target ?? 0))).toBe(94);
-    // Every 4th build week dips to 80% of the ramp step.
-    expect(goal.volume!.plan.filter((p) => p.phase === "recovery").map((p) => p.km)).toEqual([61, 66, 71]);
-    // No computed long-run target: the coach reasons long runs, the chart shows the actual ones.
-    expect(readinessSubtitle(goal.volume, 70)).toBe(
-      "Longest run per week · volume 71 → 94 km/wk by Feb 15 (NS peak 110)",
-    );
-    // Without a volume target the proven level is shown, as before.
-    expect(readinessSubtitle(null, 70)).toBe("Longest run per week · proven 70 km/wk");
+    const data = readinessData(DEMO_TREND_DATA.weeks);
+    expect(data).toHaveLength(DEMO_TREND_DATA.weeks.length);
+    expect(data.every((d) => "km" in d && "long_km" in d && !("target" in d))).toBe(true);
+    expect(readinessSubtitle(70)).toBe("Longest run per week · proven 70 km/wk");
+    expect(readinessSubtitle(null)).toBe("Longest run per week");
   });
 });

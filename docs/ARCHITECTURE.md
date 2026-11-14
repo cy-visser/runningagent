@@ -71,7 +71,7 @@ running_coach/
 ├── shared/                          # domain helpers used by 2+ features/coach
 │   ├── dates  units  sports  session_state  runner_identity  parallel_fetch  tp_payloads
 │   ├── goal_plan  goal_distance  race_equivalents  goal_plan_summary  progress_verdicts
-│   ├── weekly_buckets  calendar_notes  long_run_facts  north_star_targets  health_metrics  athlete_settings  hr_pace_fit
+│   ├── weekly_buckets  calendar_notes  long_run_facts  health_metrics  athlete_settings  hr_pace_fit
 │   ├── analysis_summary  workout_status  workout_structure  runner_weather  web_report_payload  ui_channel
 │   ├── workout_builder  strides  workout_upsert   # exact TP builder + totals, strides rule, TP writes (workout_creator + plan_builder)
 │   └── training_log/                # record_builder, record_writer, telemetry_file
@@ -110,6 +110,7 @@ running_coach/
   - `users/{runner_id}/private/trainingpeaks`: KMS ciphertext + metadata (`tp_athlete_id`, `tp_name`, `kms_key_version`).
   - `users/{runner_id}/training_log/{workout_id}`: structured workout history indexed by date (`google_firestore_index.training_log_by_date`).
   - `users/{runner_id}/workout_analyses/{workout_id}`: 90-day TTL projection cache (`google_firestore_field.workout_analyses_ttl`).
+  - `users/{runner_id}/cache/volume_history`: 28-day freshness cache of 12-week completed weekly volume & long-run totals (`fetched_at` + `weeks`), shared by `plan_audit` and `plan_builder`.
   - `<root>/running_coach/users/{user_id}/sessions/{session_id}` (+ `events` subcollection): ADK sessions with 7-day TTL (`google_firestore_field.sessions_ttl`, `google_firestore_field.session_events_ttl`).
 
 ---

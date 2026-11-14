@@ -66,7 +66,7 @@ export function AuditReport({ data, markdown }: AuditReportProps) {
           <div className="h-96 rounded-2xl border border-slate-200 animate-shimmer" />
         }
       >
-        <AuditCharts weeks={data.weeks} volumeReference={data.volume_reference} />
+        <AuditCharts weeks={data.weeks} />
       </Suspense>
 
       {/* Coaching Evaluation */}

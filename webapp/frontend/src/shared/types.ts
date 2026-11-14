@@ -313,21 +313,6 @@ export interface TrendGoal {
     phase?: string | null;
     plan: { week: string; ctl: number }[];
   };
-  volume?: TrendVolume | null;
-}
-
-/** Weekly running-volume targets of the current block (same per-week numbers as the plan audit). */
-export interface TrendVolume {
-  block_target_km: number;
-  ns_peak_km: number;
-  baseline_km?: number | null;
-  this_week_km?: number | null;
-  first_km?: number | null;
-  first_week?: string | null;
-  peak_week?: string | null;
-  maintain: boolean;
-  own_block: boolean;
-  plan: { week: string; km: number; phase: string }[];
 }
 
 export interface TrendMilestone {
@@ -404,39 +389,14 @@ export interface AuditWeek {
   long_run?: string | null;
   /** Running km change vs the previous week (fact; no coded limit). */
   vs_prior_pct?: number | null;
-  volume?: AuditWeekVolume | null;
   notes: string[];
   sessions: AuditSession[];
-}
-
-/** Planned week's running-volume reference path (null: completed, transition or race week). */
-export interface AuditWeekVolume {
-  target_km: number;
-  block_target_km: number;
-  phase: string;
-  /** Planned km vs the path value (fact; the coach judges whether it matters). */
-  vs_path_pct?: number | null;
-}
-
-/** How the weekly km targets are derived (block of the first targeted week); drives the calendar caption. */
-export interface AuditVolumeReference {
-  goal?: string | null;
-  goal_label?: string | null;
-  ns_goal?: string | null;
-  own_block: boolean;
-  block_target_km: number;
-  ns_peak_km?: number | null;
-  /** Starting level of the path: recent 4-week average, or the previous block's target. */
-  start_km?: number | null;
-  peak_week?: string | null;
-  recovery_every_weeks: number;
 }
 
 export interface AuditReportData {
   version: number;
   window: { start: string | null; end: string | null };
   weeks: AuditWeek[];
-  volume_reference?: AuditVolumeReference | null;
 }
 
 /** One headline metric of the workout banner (pre-formatted by the backend). */

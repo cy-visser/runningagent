@@ -123,6 +123,19 @@ async def save_workout_analysis(user_id: str, workout_id: str, summary: dict[str
     await write_document(f"users/{user_id}/workout_analyses", str(workout_id), data)
 
 
+VOLUME_HISTORY_DOC_ID = "volume_history"
+
+
+async def get_cached_volume_history(user_id: str) -> Optional[dict[str, Any]]:
+    """Reads cached 12-week completed volume history from 'users/{user_id}/cache/volume_history'."""
+    return await read_document(f"users/{user_id}/cache", VOLUME_HISTORY_DOC_ID)
+
+
+async def save_volume_history(user_id: str, payload: dict[str, Any]) -> None:
+    """Writes 12-week completed volume history + `fetched_at` timestamp to 'users/{user_id}/cache/volume_history'."""
+    await write_document(f"users/{user_id}/cache", VOLUME_HISTORY_DOC_ID, payload)
+
+
 async def save_training_record(user_id: str, workout_id: str, record: dict[str, Any]) -> None:
     """Writes (fully replaces) 'users/{user_id}/training_log/{workout_id}'."""
     await write_document(f"users/{user_id}/training_log", str(workout_id), record)
@@ -150,6 +163,8 @@ __all__ = [
     "update_user_profile",
     "get_cached_workout_analysis",
     "save_workout_analysis",
+    "get_cached_volume_history",
+    "save_volume_history",
     "save_training_record",
     "list_training_records",
 ]

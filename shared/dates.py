@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Union
 
 DateLike = Union[str, date, datetime, None]
@@ -10,6 +10,12 @@ ISO_DATETIME_NO_SECONDS_FMT = "%Y-%m-%dT%H:%M"
 
 
 _now = datetime.now
+
+
+def get_now_utc() -> datetime:
+    """Returns current UTC datetime (uses monkeypatched `_now()` when overridden in tests)."""
+    dt = datetime.now(timezone.utc) if _now is datetime.now else _now()
+    return dt.astimezone(timezone.utc) if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
 def get_today_date() -> date:

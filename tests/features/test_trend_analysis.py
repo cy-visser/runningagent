@@ -65,18 +65,8 @@ def test_trend_analysis_gap_fills_flags_rate_limited_runs_and_builds_web_payload
     assert goal["race_date"] == "2027-02-14" and goal["goal_s"] == 43 * 60
     assert goal["ctl"]["target_peak"] and len(goal["ctl"]["range"]) == 2
     assert "long_run" not in goal                       # no computed long-run band in the payload
-    # 10K block: 72% of the 100 km/week north-star peak, a linear reference path from the recent level to the peak week.
-    vol = goal["volume"]
-    assert vol["block_target_km"] == 72 and vol["ns_peak_km"] == 100 and "reachable" not in vol
-    assert vol["first_week"] == "2026-11-16" and vol["peak_week"] == "2027-01-25"
-    kms = [p["km"] for p in vol["plan"] if p["phase"] == "build"]
-    assert kms == sorted(kms) and kms[-1] == 72 and kms[0] < 72
-    assert vol["plan"][-1] == {"week": "2027-02-01", "km": 54, "phase": "taper"}
-    # Every 4th build week is a recovery week at 80% of its path step (never the peak week).
-    recovery = [(p["week"], p["km"]) for p in vol["plan"] if p["phase"] == "recovery"]
-    assert [w for w, _ in recovery] == ["2026-12-07", "2027-01-04"]
-    assert "- Weekly volume reference (10K block" in out and "72 km block target by 2027-01-25" in out
-    assert "no % cap" in out and "%/week" not in out
+    assert "volume" not in goal                         # no synthetic weekly-volume target path in the payload
+    assert "Weekly volume reference" not in out and "block target" not in out
     # Outlook: km gap to each target, never a build-week count derived from a fixed ramp.
     assert all("gap_km" in t and "build_weeks" not in t for t in report["outlook"]["targets"])
     assert "build weeks from current" not in out

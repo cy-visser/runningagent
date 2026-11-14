@@ -2,7 +2,7 @@
 
 Feeds the header projection, the four goal-progress charts (fitness vs CTL band, implied race time,
 north-star milestones, long-run & volume readiness) and the goal context the coach reasons over. Long runs
-have no computed target: the coach reasons them from the long-run history.
+and weekly volume have no computed target path: the coach reasons them from measured history and load capacity.
 """
 
 import math
@@ -12,11 +12,6 @@ from typing import Any, Optional
 from ....shared.goal_distance import DISTANCE_PROFILES, resolve_goal_distance, resolve_target_peak_ctl
 from ....shared.goal_plan import KIND_NORTH_STAR, KIND_SUB_GOAL, blocks, current_goal, north_star, race_day
 from ....shared.goal_projection.race_projection import format_projection_evidence
-from ....shared.north_star_targets import (
-    RECOVERY_EVERY_WEEKS,
-    RECOVERY_SHARE,
-    volume_plan,
-)
 from ....shared.race_equivalents import format_gap, goal_target_s, north_star_equivalent
 from ....shared.units import as_float, format_seconds_hms
 
@@ -83,33 +78,14 @@ def ctl_plan(rows: list[dict], info: dict, ctl_now: Optional[float]) -> list[dic
     ]
 
 
-def _volume(profile: dict, today: date, baseline: Optional[float]) -> Optional[dict]:
-    """Weekly running-volume targets of the current block (identical to the plan audit's per-week targets)."""
-    plan = volume_plan(profile, today, baseline)
-    if not plan:
-        return None
-    return {
-        **{k: plan[k] for k in ("block_target_km", "ns_peak_km", "baseline_km", "this_week_km", "first_km",
-                                "maintain", "own_block")},
-        "first_week": _iso(plan["first_week"]),
-        "peak_week": _iso(plan["peak_week"]),
-        "plan": [{"week": _iso(p["week"]), "km": p["km"], "phase": p["phase"]} for p in plan["plan"]],
-    }
-
-
 def goal_progress(
     profile: dict,
     today: date,
     rows: list[dict],
     fitness: Optional[dict],
     race_projection: Optional[dict],
-    volume_baseline: Optional[float] = None,
 ) -> dict:
-    """{'goal': ..., 'north_star': ... | None} for the trend payload and the goal context.
-
-    `volume_baseline` is the shared recent weekly-km level (north_star_targets.recent_volume_baseline),
-    the starting point of the weekly-volume path.
-    """
+    """{'goal': ..., 'north_star': ... | None} for the trend payload and the goal context."""
     goal = current_goal(profile, today)
     label = resolve_goal_distance(goal.get("training_goal"))
     fit = fitness or {}
@@ -133,7 +109,6 @@ def goal_progress(
             "phase": info.get("phase"),
             "plan": ctl_plan(rows, info, as_float(fit.get("ctl_end"))),
         },
-        "volume": _volume(profile, today, volume_baseline) if label else None,
     }
 
     ns = north_star(profile)
@@ -183,27 +158,13 @@ def goal_progress(
     return {"goal": goal_payload, "north_star": ns_payload}
 
 
-def _format_volume_line(g: dict, v: dict) -> str:
-    """'- Weekly volume reference (...): 52 km/week now -> 54 km in week 2026-11-16 -> 72 km by 2027-01-25 ...'."""
-    ns_part = "" if v.get("own_block") else f" -> {v.get('ns_peak_km')} km/week north-star peak"
-    now = f"{v['baseline_km']:.0f} km/week now (mean of the last complete weeks)" if v.get("baseline_km") else "no recent volume"
-    first = f" -> {v['first_km']} km in the week of {v['first_week']}" if v.get("first_km") is not None else ""
-    if v.get("maintain"):
-        peak = f"; already at or above the {v['block_target_km']} km block target: maintain, no cut needed"
-    else:
-        by = f" by {v['peak_week']}" if v.get("peak_week") else ""
-        peak = (f" -> {v['block_target_km']} km block target{by} (linear reference path, no % cap; "
-                f"every {RECOVERY_EVERY_WEEKS}th build week a recovery week at {round(RECOVERY_SHARE * 100)}%)")
-    return (f"- Weekly volume reference ({g['label']} block{ns_part}): {now}{first}{peak}. Same per-week path as "
-            "the plan audit; whether its steps are a safe ramp for this runner is your judgement.")
-
-
 def format_goal_context(progress: dict, profile: dict, today: date) -> str:
     """Goal context for the coach: projection, CTL trajectory and the north-star mapping.
 
     The goal-plan table (sub goals, results, equivalents) is in the coach instruction on every
     call, so it is referenced here rather than repeated.
     """
+    del today
     g, ns = progress["goal"], progress["north_star"]
     lines = []
     if north_star(profile):
@@ -240,9 +201,6 @@ def format_goal_context(progress: dict, profile: dict, today: date) -> str:
             f"- CTL now {c['current']:.0f}; goal peak-CTL target {c['target_peak']:.0f} "
             f"(range {c['range'][0]:.0f}-{c['range'][1]:.0f}); phase {c.get('phase') or '-'}{ramp}."
         )
-    v = g.get("volume")
-    if v:
-        lines.append(_format_volume_line(g, v))
     if ns:
         ns_weeks = f", {ns['weeks_to_race']:.0f} weeks away" if ns.get("weeks_to_race") is not None else ""
         equiv = (f"; current projection's north-star equivalent {format_seconds_hms(ns['equivalent_s'])} "

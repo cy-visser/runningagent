@@ -96,10 +96,19 @@ def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
     def fake_geocode(location: str) -> tuple[float, float]:
         return (52.37, 4.89)
 
+    async def fake_get_volume_history(user_id: str) -> dict | None:
+        doc = env.volume_history_cache.get(user_id)
+        return json.loads(json.dumps(doc)) if doc else None
+
+    async def fake_save_volume_history(user_id: str, payload: dict) -> None:
+        env.volume_history_cache[user_id] = json.loads(json.dumps(payload))
+
     monkeypatch.setattr(dates, "_now", lambda: env.now)
 
     monkeypatch.setattr(firestore, "get_cached_workout_analysis", fake_get_cached_analysis)
     monkeypatch.setattr(firestore, "save_workout_analysis", fake_save_cached_analysis)
+    monkeypatch.setattr(firestore, "get_cached_volume_history", fake_get_volume_history)
+    monkeypatch.setattr(firestore, "save_volume_history", fake_save_volume_history)
     monkeypatch.setattr(firestore, "list_training_records", fake_list_records)
     monkeypatch.setattr(firestore, "save_training_record", fake_save_record)
     monkeypatch.setattr(firestore, "get_user_profile", fake_get_profile)

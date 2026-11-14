@@ -8,7 +8,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import type { AuditSessionCategory, AuditWeekVolume } from "./types";
+import type { AuditSessionCategory } from "./types";
 
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -55,59 +55,20 @@ export function AgendaPager({
   );
 }
 
-/** Planned km within ±GAP_TOLERANCE_PCT of the target counts as on track. */
-export const GAP_TOLERANCE_PCT = 10;
-
-export type GapTone = "on" | "below" | "above";
-
-/** Neutral palette (amber/violet, not red/green): the target is a reference, the ramp is the coach's call. */
-export const TONE_CLASSES: Record<GapTone, { text: string; fill: string }> = {
-  on: { text: "text-slate-600", fill: "bg-gradient-to-r from-orange-400 to-pink-500" },
-  below: { text: "text-amber-600", fill: "bg-amber-400" },
-  above: { text: "text-violet-600", fill: "bg-violet-500" },
-};
-
-export function gapTone(vsTargetPct?: number | null): GapTone {
-  if (vsTargetPct == null || Math.abs(vsTargetPct) <= GAP_TOLERANCE_PCT) return "on";
-  return vsTargetPct < 0 ? "below" : "above";
-}
-
-/** Weekly km bar: with a target, planned km vs target (tick); otherwise relative to the biggest week. */
+/** Weekly km bar relative to the biggest week in the window. */
 export function VolumeBar({
   km,
   maxKm,
-  volume,
 }: {
   km: number;
   maxKm: number;
-  volume?: AuditWeekVolume | null;
 }) {
-  if (!volume) {
-    const pct = km > 0 ? Math.max(4, Math.round((km / Math.max(1, maxKm)) * 100)) : 0;
-    return (
-      <span className="block h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-        <span
-          className={`block h-full rounded-full ${TONE_CLASSES.on.fill}`}
-          style={{ width: `${pct}%` }}
-        />
-      </span>
-    );
-  }
-  // The larger of planned and target fills 85% of the bar, so an overshoot stays visible.
-  const scale = Math.max(km, volume.target_km, 1) / 0.85;
-  const fillPct = Math.max(km > 0 ? 4 : 0, Math.round((km / scale) * 100));
-  const tickPct = Math.round((volume.target_km / scale) * 100);
+  const pct = km > 0 ? Math.max(4, Math.round((km / Math.max(1, maxKm)) * 100)) : 0;
   return (
-    <span className="relative block h-1.5 w-full rounded-full bg-slate-100">
+    <span className="block h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
       <span
-        className={`block h-full rounded-full ${TONE_CLASSES[gapTone(volume.vs_path_pct)].fill}`}
-        style={{ width: `${fillPct}%` }}
-      />
-      <span
-        data-testid="volume-tick"
-        className="absolute -top-0.5 h-2.5 w-0.5 -translate-x-1/2 rounded-full bg-slate-700"
-        style={{ left: `${tickPct}%` }}
-        aria-hidden="true"
+        className="block h-full rounded-full bg-gradient-to-r from-orange-400 to-pink-500"
+        style={{ width: `${pct}%` }}
       />
     </span>
   );

@@ -4,10 +4,8 @@ import {
   AGENDA_WINDOW_WEEKS,
   AgendaPager,
   CATEGORY_META,
-  TONE_CLASSES,
   VolumeBar,
   WEEKDAYS,
-  gapTone,
   parseIso,
   toIso,
   weekdayIndex,
@@ -15,83 +13,17 @@ import {
 import { formatChartTickDate } from "../../shared/format";
 import type {
   AuditSession,
-  AuditVolumeReference,
   AuditWeek,
-  AuditWeekVolume,
 } from "../../shared/types";
-
-export { gapTone };
 
 interface AuditChartsProps {
   weeks: AuditWeek[];
-  /** How the weekly km targets are derived; renders the caption under the header. */
-  volumeReference?: AuditVolumeReference | null;
   /** ISO date (YYYY-MM-DD) treated as "today"; defaults to the local date. */
   today?: string;
 }
 
 function signedPct(value?: number | null): string | null {
   return value == null ? null : `${value > 0 ? "+" : ""}${Math.round(value)}%`;
-}
-
-function ordinal(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
-}
-
-/** One-line explanation of where the weekly km targets come from. */
-export function volumeCaption(ref: AuditVolumeReference): string {
-  const block = ref.goal_label ? `${ref.goal_label} block target` : "block target";
-  const ramp =
-    ref.start_km != null
-      ? `Weekly km targets ramp from your recent level (${Math.round(ref.start_km)} km/wk) to the ${ref.block_target_km} km/wk ${block}`
-      : `Weekly km targets build to the ${ref.block_target_km} km/wk ${block}`;
-  let basis = "";
-  if (ref.ns_goal) {
-    basis = ref.own_block
-      ? ` (your ${ref.ns_goal} peak)`
-      : ref.ns_peak_km
-        ? ` (${Math.round((ref.block_target_km / ref.ns_peak_km) * 100)}% of your ${ref.ns_peak_km} km/wk ${ref.ns_goal} peak)`
-        : "";
-  }
-  return (
-    `${ramp}${basis}. Every ${ordinal(ref.recovery_every_weeks)} week is a recovery week. ` +
-    "Targets are a reference, not a limit."
-  );
-}
-
-/** Planned week's weekly running-km target (shared north-star rule). Facts only: the ramp is the coach's call. */
-function VolumeTarget({ volume, vsPriorPct }: { volume: AuditWeekVolume; vsPriorPct?: number | null }) {
-  const tone = gapTone(volume.vs_path_pct);
-  const gap = signedPct(volume.vs_path_pct);
-  const vsPrior = signedPct(vsPriorPct);
-  const phase = volume.phase === "build" ? null : volume.phase;
-  const title = [
-    `Weekly running-km target${phase ? ` (${phase} week)` : ""}`,
-    gap && `planned ${gap} vs target`,
-    vsPrior && `${vsPrior} vs prior week`,
-    `block target ${volume.block_target_km} km`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  return (
-    <span
-      className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs tabular-nums text-slate-500"
-      title={title}
-      data-testid="volume-target"
-      data-tone={tone}
-    >
-      <span className="h-1.5 w-1.5 rounded-full border border-slate-500" />
-      <span>Target {volume.target_km} km</span>
-      {gap && <span className={`font-semibold ${TONE_CLASSES[tone].text}`}>{gap}</span>}
-      {phase && (
-        <span className="rounded bg-slate-100 px-1 text-[0.6875rem] font-semibold text-slate-600">
-          {phase}
-        </span>
-      )}
-    </span>
-  );
 }
 
 const GRID_COLS =
@@ -126,7 +58,7 @@ function measureFor(s: AuditSession): string {
   return s.sport;
 }
 
-export default function AuditCharts({ weeks, volumeReference, today }: AuditChartsProps) {
+export default function AuditCharts({ weeks, today }: AuditChartsProps) {
   const [start, setStart] = useState(0);
   if (weeks.length === 0) return null;
 
@@ -138,7 +70,6 @@ export default function AuditCharts({ weeks, volumeReference, today }: AuditChar
 
   const todayIso = today ?? localTodayIso();
   const maxKm = Math.max(1, ...weeks.map((w) => w.km));
-  const hasTargets = weeks.some((w) => w.volume);
 
   const legend = (
     <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-600">
@@ -158,12 +89,6 @@ export default function AuditCharts({ weeks, volumeReference, today }: AuditChar
         <span className="h-2.5 w-2.5 rounded-xs border border-slate-400 bg-slate-50" />
         Planned
       </span>
-      {hasTargets && (
-        <span className="inline-flex items-center gap-1.5 text-slate-500">
-          <span className="h-2.5 w-0.5 rounded-full bg-slate-700" />
-          Weekly km target
-        </span>
-      )}
     </div>
   );
 
@@ -177,11 +102,6 @@ export default function AuditCharts({ weeks, volumeReference, today }: AuditChar
           <p className="text-xs text-slate-500">
             Every scheduled session for the audit period
           </p>
-          {volumeReference && hasTargets && (
-            <p className="mt-1 text-xs text-slate-500" data-testid="volume-caption">
-              {volumeCaption(volumeReference)}
-            </p>
-          )}
         </div>
 
         {!paged && legend}
@@ -265,6 +185,8 @@ function WeekRow({
       null,
     );
 
+  const vsPrior = signedPct(week.vs_prior_pct);
+
   return (
     <div className={GRID_COLS} role="row">
       <div
@@ -320,11 +242,18 @@ function WeekRow({
         <span className="font-display text-base font-bold tabular-nums text-slate-900">
           {week.km.toFixed(1)} km
         </span>
-        <VolumeBar km={week.km} maxKm={maxKm} volume={week.volume} />
+        <VolumeBar km={week.km} maxKm={maxKm} />
         <span className="text-xs tabular-nums text-slate-500">
           TSS {Math.round(week.tss)}
         </span>
-        {week.volume ? <VolumeTarget volume={week.volume} vsPriorPct={week.vs_prior_pct} /> : null}
+        {vsPrior ? (
+          <span
+            className="text-xs tabular-nums text-slate-500"
+            data-testid="vs-prior"
+          >
+            {vsPrior} vs prior
+          </span>
+        ) : null}
       </div>
     </div>
   );

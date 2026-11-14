@@ -12,7 +12,6 @@ from ...shared.goal_distance import resolve_goal_distance
 from ...shared.goal_plan import current_goal
 from ...shared.goal_projection.goal_trajectory import summarize_fitness
 from ...shared.goal_projection.race_projection import build_goal_projection
-from ...shared.north_star_targets import recent_volume_baseline
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.runner_identity import profile_user_id
 from ...shared.sports import NON_TRAINING_SPORTS, RUN_SPORTS
@@ -121,8 +120,7 @@ async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
     except Exception:  # the projection must never break the trend report
         logger.exception("Goal projection failed in fetch_trend_data")
         race_projection = {"goal_label": goal_label, "projection": None}
-    goal = goal_progress(profile, today, rows, fitness, race_projection,
-                         volume_baseline=recent_volume_baseline(raw["workouts"], today))
+    goal = goal_progress(profile, today, rows, fitness, race_projection)
 
     # The report renders charts and tables from this payload; the coach only writes recommendations.
     tool_context.state[TREND_REPORT_STATE_KEY] = trend_report_data(
