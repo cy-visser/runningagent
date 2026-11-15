@@ -8,6 +8,7 @@ import type {
   ProfileResponse,
   ProfileUpdatePayload,
   QuickAction,
+  RacePredictorResponse,
   ReportEnvelope,
   SessionResponse,
   StagedChanges,
@@ -107,6 +108,32 @@ export async function updateProfile(
     body: JSON.stringify(payload),
   });
   return handleResponse<ProfileResponse>(res);
+}
+
+export async function fetchRacePredictor(): Promise<RacePredictorResponse> {
+  if (isDemoMode()) {
+    const mod = await import("../demo/mockApi");
+    return mod.demoFetchRacePredictor();
+  }
+  const res = await fetch("/api/race-predictor", {
+    method: "GET",
+    credentials: "same-origin",
+    headers: buildHeaders(),
+  });
+  return handleResponse<RacePredictorResponse>(res);
+}
+
+export async function refreshRacePredictor(): Promise<RacePredictorResponse> {
+  if (isDemoMode()) {
+    const mod = await import("../demo/mockApi");
+    return mod.demoRefreshRacePredictor();
+  }
+  const res = await fetch("/api/race-predictor/refresh", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: buildHeaders(),
+  });
+  return handleResponse<RacePredictorResponse>(res);
 }
 
 export async function connectTrainingPeaks(

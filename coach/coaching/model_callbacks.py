@@ -22,31 +22,48 @@ from opentelemetry import trace
 from ...features.plan_builder.fetch_plan_context_tool import resolve_plan_context_window
 from ...features.workout_creator.stage_workout_changes_tool import STAGED_CHANGES_STATE_KEY
 from ...shared.dates import get_today_date, iso_date
-from ...shared.session_state import PLAN_CONTEXT_STATE_KEY
+from ...shared.session_state import PLAN_CONTEXT_STATE_KEY, WORKOUT_REPORT_STATE_KEY
 from ...shared.workout_builder import needs_builder
 from ..model_config import COACH_THINKING_LEVEL
-from .quick_actions import drop_disabled_tool_calls, is_plan_intake, is_quick_action_report
+from .quick_actions import (
+    BIKE_WORKOUT_SKILL,
+    RUN_WORKOUT_SKILL,
+    drop_disabled_tool_calls,
+    is_plan_intake,
+    is_quick_action_report,
+)
 from .report_tool_guard import track_turn_calls
 from .skill_toolset import (
     PLAN_BUILDER_CONTEXT_ARGS,
     PLAN_BUILDER_SKILL,
     has_active_plan_context,
+    skill_toolset,
     unapplied_staged_plan_id,
 )
 
 # ------------------------------------------------------------------------------
 # Internal tools & plan-builder expansion
 # ------------------------------------------------------------------------------
-INTERNAL_TOOLS = frozenset({"fetch_plan_context", "apply_training_plan"})
+INTERNAL_TOOLS = frozenset({"fetch_plan_context", "apply_training_plan", "refresh_race_projection"})
 LOAD_SKILL = "load_skill"
 FETCH_PLAN_CONTEXT = "fetch_plan_context"
 STAGE_TRAINING_PLAN = "stage_training_plan"
 WORKOUT_CREATOR_SKILL = "workout-creator"
 STAGE_WORKOUT_CHANGES = "stage_workout_changes"
+APPLY_STAGED_CHANGES = "apply_staged_changes"
+ANALYZE_WORKOUT = "analyze_workout"
+_WORKOUT_SKILLS = frozenset({RUN_WORKOUT_SKILL, BIKE_WORKOUT_SKILL})
 
 
 def _has_unapplied_staged_plan(state: Any) -> bool:
     return bool(unapplied_staged_plan_id(state))
+
+
+def _has_unapplied_staged_changes(state: Any) -> bool:
+    if not state:
+        return False
+    staged = state.get(STAGED_CHANGES_STATE_KEY)
+    return isinstance(staged, dict) and bool(staged.get("changes"))
 
 
 def _has_plan_builder_in_context(state: Any, contents: list[types.Content]) -> bool:
@@ -62,6 +79,46 @@ def _has_plan_builder_in_context(state: Any, contents: list[types.Content]) -> b
     )
 
 
+def align_workout_skill(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> Optional[LlmResponse]:
+    """before_model_callback: swaps workout-analysis <-> bike-workout-analysis on the active tool step
+    when a date-only `analyze_workout` resolved to the other sport family (e.g. 'Analyze oct 15th')."""
+    state = callback_context.state if callback_context is not None else None
+    report = state.get(WORKOUT_REPORT_STATE_KEY) if state else None
+    contents = llm_request.contents or []
+    if not isinstance(report, dict) or not contents:
+        return None
+    last = contents[-1]
+    parts = list(last.parts or [])
+    if last.role != "user" or not any(
+        p.function_response
+        and p.function_response.name == ANALYZE_WORKOUT
+        and "### Workout Analysis" in str(p.function_response.response or "")
+        for p in parts
+    ):
+        return None
+    expected = BIKE_WORKOUT_SKILL if report.get("sport_family") == "bike" else RUN_WORKOUT_SKILL
+    changed = False
+    for i, part in enumerate(parts):
+        resp = part.function_response
+        payload = resp.response if (resp and resp.name == LOAD_SKILL and isinstance(resp.response, dict)) else None
+        if not payload or payload.get("skill_name") not in _WORKOUT_SKILLS or payload.get("skill_name") == expected:
+            continue
+        target_skill = next((s for s in skill_toolset._list_skills() if s.name == expected), None)
+        if not target_skill:
+            continue
+        parts[i] = part.model_copy(update={
+            "function_response": resp.model_copy(update={
+                "response": {"skill_name": expected, "instructions": target_skill.instructions}
+            })
+        })
+        changed = True
+    if changed:
+        llm_request.contents = [*contents[:-1], last.model_copy(update={"parts": parts})]
+    return None
+
+
 def hide_internal_tools(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
@@ -73,6 +130,8 @@ def hide_internal_tools(
     hidden = set(INTERNAL_TOOLS)
     if not _has_plan_builder_in_context(state, llm_request.contents or []):
         hidden.add(STAGE_TRAINING_PLAN)
+    if not _has_unapplied_staged_changes(state):
+        hidden.add(APPLY_STAGED_CHANGES)
     kept_tools = []
     for tool in config.tools:
         declarations = getattr(tool, "function_declarations", None)

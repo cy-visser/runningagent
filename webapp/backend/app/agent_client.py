@@ -165,3 +165,45 @@ class AgentRuntimeClient:
                             yield parsed
                     except json.JSONDecodeError:
                         pass
+
+    async def delete_session(self, adk_user_id: str, session_id: str) -> None:
+        """Best-effort deletion of an ephemeral ADK session and its event subcollection."""
+        if not session_id:
+            return
+        try:
+            base, need_token = resolve_agent_api_base(self._settings)
+            headers = await self._headers(need_token)
+            resp = await self._http.delete(
+                self._sessions_url(base, adk_user_id, session_id),
+                headers=headers,
+            )
+            if resp.status_code >= 400 and resp.status_code != 404:
+                logger.warning("Failed to delete ephemeral session %s (HTTP %d)", session_id, resp.status_code)
+        except Exception as exc:
+            logger.warning("Ignoring error deleting ephemeral session %s: %s", session_id, exc)
+
+    async def run_ephemeral_quick_action(
+        self,
+        adk_user_id: str,
+        auth_email: str,
+        quick_action: dict[str, Any],
+        message: str = "Refresh race projection",
+    ) -> None:
+        """Runs a skill-free quick action in an isolated background session and deletes it afterwards."""
+        session = await self.create_session(adk_user_id, auth_email)
+        session_id = str(session.get("id") or "")
+        if not session_id:
+            raise RuntimeError("Could not establish a background agent session.")
+        try:
+            async for ev in self.stream_run_sse(
+                adk_user_id=adk_user_id,
+                session_id=session_id,
+                auth_email=auth_email,
+                message=message,
+                quick_action=quick_action,
+            ):
+                err = ev.get("errorMessage") or ev.get("error_message")
+                if err:
+                    raise RuntimeError(str(err))
+        finally:
+            await self.delete_session(adk_user_id, session_id)

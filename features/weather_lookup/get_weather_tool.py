@@ -10,13 +10,7 @@ from ...shared.runner_weather import location_args
 
 
 async def get_weather(tool_context: ToolContext, dates: list[str], location: Optional[str] = None) -> str:
-    """Weather (daily + hourly) for ISO dates/timestamps at the runner's home location,
-    or at `location` (e.g. a travel or race destination). Forecasts reach 16 days ahead.
-
-    Args:
-        dates: ISO dates (YYYY-MM-DD) or timestamps (YYYY-MM-DDTHH:MM).
-        location: Optional city name; defaults to the runner's home location.
-    """
+    """Forecast/historical weather for ISO `dates` (YYYY-MM-DD or YYYY-MM-DDTHH:MM, <=16d ahead) at home or `location`."""
     profile = tool_context.state.get("user_profile") or {}
     geo = {"location": location, "lat": None, "lon": None} if location else location_args(profile)
     if not geo:

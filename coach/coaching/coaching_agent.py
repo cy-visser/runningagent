@@ -4,6 +4,9 @@ from google.adk import Agent, Context
 from google.adk.workflow import node
 
 from ...features.check_in_report.fetch_checkin_data_tool import fetch_checkin_data_tool
+from ...features.check_in_report.refresh_race_projection_tool import (
+    refresh_race_projection_tool,
+)
 from ...features.nutrition_planner.fetch_nutrition_context_tool import (
     fetch_nutrition_context_tool,
 )
@@ -24,6 +27,7 @@ from ..report_memory import keep_latest_reports_and_skills
 from .instruction import build_coach_instruction
 from .model_callbacks import (
     after_coach_model,
+    align_workout_skill,
     apply_thinking_policy,
     hide_internal_tools,
     strip_stale_thoughts,
@@ -38,6 +42,7 @@ coaching_agent_tools = [
     skill_toolset,
     analyze_workout_tool,
     fetch_checkin_data_tool,
+    refresh_race_projection_tool,
     fetch_trend_data_tool,
     fetch_plan_audit_data_tool,
     fetch_nutrition_context_tool,
@@ -63,6 +68,7 @@ coaching_agent = Agent(
     before_model_callback=[
         ensure_profile_context,
         dispatch_quick_action,
+        align_workout_skill,
         apply_thinking_policy,
         hide_internal_tools,
         strip_stale_thoughts,

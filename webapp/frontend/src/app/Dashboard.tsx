@@ -11,8 +11,8 @@ import {
   Send,
   Sparkles,
   Target,
+  Timer,
   TrendingUp,
-  UserCheck,
 } from "lucide-react";
 import { formatShortDate, greetingForHour } from "../shared/format";
 import type {
@@ -104,12 +104,24 @@ export const ALL_GOALS_PLANNED_SUBTITLE = "All goals are planned";
 export const BUILD_PLAN_PROMPT = "I'd like to build a new training plan";
 export const BUILD_PLAN_ACTION: QuickAction = { skill: "plan-builder:intake" };
 
+export function racePredictorSubtitle(summary: ProfileSummary | null | undefined): string {
+  const goal = summary?.active_goal?.trim();
+  if (!goal || summary?.goal_type === "none" || summary?.has_active_race_goal === false) {
+    return "Set a race goal in Profile to unlock your 12-week projection";
+  }
+  if (summary?.active_goal_kind === "sub_goal") {
+    return `Projected time for ${goal} · last 12 weeks of key sessions`;
+  }
+  return `Projected finish time for ${goal} · last 12 weeks of key sessions`;
+}
+
 interface DashboardProps {
   me: MeResponse;
   messages: ChatMessage[];
   streaming: boolean;
   onSendPrompt: (prompt: string, newConversation?: boolean, action?: QuickAction) => void;
   onViewProfile: () => void;
+  onOpenRacePredictor?: () => void;
   onOpenTrainingPeaks: () => void;
   appliedStagedIds?: ReadonlySet<string>;
   applyingStagedId?: string | null;
@@ -129,6 +141,7 @@ export function Dashboard({
   streaming,
   onSendPrompt,
   onViewProfile,
+  onOpenRacePredictor,
   onOpenTrainingPeaks,
   appliedStagedIds,
   applyingStagedId,
@@ -346,27 +359,26 @@ export function Dashboard({
         <section aria-label="Quick actions" className="space-y-4">
           {/* 6 White Action Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* 1. Profile */}
+            {/* 1. Race Predictor */}
             <button
               type="button"
-              onClick={onViewProfile}
-              className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-slate-400 cursor-pointer"
+              onClick={onOpenRacePredictor}
+              className="group flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-card shadow-card-hover hover:border-emerald-300 cursor-pointer"
             >
               <div className="flex items-start gap-3.5">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-800 text-white shadow-xs transition group-hover:bg-sunset">
-                  <UserCheck className="h-5 w-5" />
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-xs transition group-hover:bg-sunset">
+                  <Timer className="h-5 w-5" />
                 </span>
                 <div>
                   <h2 className="font-display text-lg font-bold text-slate-900">
-                    Profile
+                    Race Predictor
                   </h2>
                   <p className="mt-1 text-sm leading-relaxed text-slate-600">
-                    View & edit biometrics, race goals, injuries, and shoe
-                    rotation
+                    {racePredictorSubtitle(me.summary)}
                   </p>
                 </div>
               </div>
-              <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-800 shrink-0 mt-1" />
+              <ArrowRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-emerald-600 shrink-0 mt-1" />
             </button>
 
             {/* 2. Analyze Today's Run */}

@@ -114,4 +114,40 @@ describe("profile training times", () => {
     );
     expect(await screen.findByText("Run: Morning · Strength: Evening")).toBeInTheDocument();
   });
+
+  it("allows clearing race goals via No Goal mode while staying ready", async () => {
+    vi.spyOn(api, "fetchProfile").mockResolvedValue(DEMO_PROFILE_RESPONSE);
+    const updateProfileSpy = vi.spyOn(api, "updateProfile").mockResolvedValue({
+      ...DEMO_PROFILE_RESPONSE,
+      profile: { ...DEMO_PROFILE_RESPONSE.profile, goal_type: "none", training_goal: null, north_star: null, sub_goals: [] },
+    });
+
+    render(
+      <ProfilePanel
+        open={true}
+        initialMode="edit"
+        email="cyrille@cyvisser.altostrat.com"
+        initials="CV"
+        onClose={vi.fn()}
+        onOpenTrainingPeaks={vi.fn()}
+        onProfileUpdated={vi.fn()}
+      />,
+    );
+
+    const noGoalBtn = await screen.findByRole("button", { name: "No Goal" });
+    fireEvent.click(noGoalBtn);
+    expect(screen.getByText(/No active race goal set/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Save Profile/i }));
+    await waitFor(() => expect(updateProfileSpy).toHaveBeenCalledTimes(1));
+    expect(updateProfileSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal_type: "none",
+        training_goal: null,
+        timeline: null,
+        north_star: null,
+        sub_goals: [],
+      }),
+    );
+  });
 });

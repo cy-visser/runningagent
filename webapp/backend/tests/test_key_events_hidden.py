@@ -32,8 +32,11 @@ class _Doc:
         self._db[self._id].update(patch)
 
     async def get(self):
-        doc = dict(self._db[self._id])
-        return type("Snap", (), {"to_dict": lambda _self: doc})()
+        doc = dict(self._db.get(self._id, {}))
+        return type("Snap", (), {"exists": self._id in self._db, "to_dict": lambda _self: doc})()
+
+    async def delete(self) -> None:
+        self._db.pop(self._id, None)
 
 
 class _Client:

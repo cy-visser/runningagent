@@ -97,8 +97,18 @@ def _block_intensity(steps: list[ExecutedStep]) -> float:
 
 def _step_label(step: PlannedStep) -> str:
     if step.block_reps > 1:
-        return f"B{step.block} {step.name} {step.rep}/{step.block_reps}"
-    return f"B{step.block} {step.name}"
+        return f"{step.name} {step.rep}/{step.block_reps}"
+    return step.name
+
+
+def _block_title(execs: list[ExecutedStep]) -> str:
+    """Human-readable set description (e.g. '3× 2.00 km Hard / 2:30 Easy') with no internal B1/B2/B3 index."""
+    seen: dict[int, PlannedStep] = {}
+    for e in execs:
+        seen.setdefault(e.step.pos, e.step)
+    parts = [f"{_fmt_length(s)} {s.name}".strip() for s in seen.values()]
+    reps = f"{execs[0].step.block_reps}× " if execs[0].step.block_reps > 1 else ""
+    return f"{reps}{' / '.join(parts)}"
 
 
 def format_planned_structure(steps: list[PlannedStep], metric: Optional[str], thr: dict) -> str:
@@ -109,7 +119,7 @@ def format_planned_structure(steps: list[PlannedStep], metric: Optional[str], th
             continue
         seen.add((s.block, s.pos))
         reps = f"{s.block_reps}× " if s.block_reps > 1 else ""
-        lines.append(f"- B{s.block}: {reps}{s.name} {_fmt_length(s)} @ {format_target(s, metric, thr)}")
+        lines.append(f"- {reps}{s.name} {_fmt_length(s)} @ {format_target(s, metric, thr)}")
     return "\n".join(lines)
 
 
@@ -154,39 +164,39 @@ def format_structured_execution(
     for lap in alignment.extra_laps:
         lines.append(f"Extra lap (not in plan): {lap.get('Name') or 'lap'} {fmt_clock(lap_time(lap))}, {lap_km(lap):.2f} km")
 
-    # Repeated blocks: rep-to-rep consistency and HR drift.
+    # Repeated blocks: compact rep-to-rep spread, HR drift and target hit rate (individual splits are in the table above).
     blocks: dict[int, list[ExecutedStep]] = {}
     for e in alignment.steps:
         blocks.setdefault(e.step.block, []).append(e)
     rep_lines = []
-    for b, execs in blocks.items():
+    for execs in blocks.values():
         if execs[0].step.block_reps < 2:
             continue
         positions: dict[int, list[ExecutedStep]] = {}
         for e in execs:
             positions.setdefault(e.step.pos, []).append(e)
-        desc = " / ".join(
-            f"{p[0].step.name} {_fmt_length(p[0].step)} @ {format_target(p[0].step, metric, thr)}" for p in positions.values()
-        )
-        rep_lines.append(f"- B{b} {execs[0].step.block_reps}× ({desc}):")
+        summaries = []
         for p in positions.values():
             parts = []
             if is_bike:
                 vals = [e.power for e in p if e.power]
                 if vals:
-                    parts.append(f"power {', '.join(str(round(v)) for v in vals)} W (spread {round(max(vals) - min(vals))} W)")
+                    parts.append(f"spread {round(max(vals) - min(vals))} W")
             else:
                 vals = [e.pace_s for e in p if e.pace_s]
                 if vals:
-                    parts.append(f"pace {', '.join(fmt_clock(v) for v in vals)} (spread {round(max(vals) - min(vals))}s)")
+                    parts.append(f"spread {round(max(vals) - min(vals))}s")
             hrs = [e.hr_avg for e in p if e.hr_avg]
             if len(hrs) >= 2:
-                parts.append(f"HR {' → '.join(str(round(h)) for h in hrs)} ({round(hrs[-1] - hrs[0]):+d} bpm first→last)")
+                parts.append(f"HR {round(hrs[0])}→{round(hrs[-1])} ({round(hrs[-1] - hrs[0]):+d} bpm)")
             deltas = [target_delta(e, metric, thr) for e in p]
             if any(d is not None for d in deltas):
                 inside = sum(1 for d in deltas if d is not None and round(d[0]) == 0)
-                parts.append(f"{inside}/{len(p)} within the target range")
-            rep_lines.append(f"  - {p[0].step.name}: " + " | ".join(parts))
+                parts.append(f"{inside}/{len(p)} in target")
+            if parts:
+                summaries.append(f"{p[0].step.name}: {', '.join(parts)}")
+        if summaries:
+            rep_lines.append(f"- {_block_title(execs)} -> " + " | ".join(summaries))
     if rep_lines:
         lines += ["", "**Repeated blocks:**", *rep_lines]
 
@@ -205,8 +215,6 @@ def format_structured_execution(
         key_block = max(block_rows, key=lambda r: _block_intensity(r[1]))[0] if len(block_rows) > 1 else None
         lines += ["", "**Decoupling per work block** (EF first vs second half):"]
         for b, execs, t0, t1, value, source in block_rows:
-            reps = f"{execs[0].step.block_reps}× " if execs[0].step.block_reps > 1 else ""
-            names = "/".join(dict.fromkeys(e.step.name for e in execs))
             key = " [highest target intensity]" if b == key_block else ""
-            lines.append(f"- B{b} {reps}{names}: {decoupling_label(sport, t0, t1, source)}: {value}%{key}")
+            lines.append(f"- {_block_title(execs)}: {decoupling_label(sport, t0, t1, source)}: {value}%{key}")
     return "\n".join(lines)

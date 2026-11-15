@@ -1,18 +1,22 @@
 from datetime import date, timedelta
+import logging
 from typing import Any, Optional
 
 from google.adk.tools import ToolContext
 
+from ...integrations import firestore
 from ..athlete_settings import extract_thresholds
-from ..dates import parse_date
+from ..dates import iso_date, parse_date
 from ..goal_distance import DISTANCE_PROFILES, parse_target_time_minutes
 from ..goal_plan import current_goal, goal_race_dates
 from ..hr_pace_fit import (
+    KEY_SESSION_WEIGHT,
     MAX_EXTRAPOLATION,
     THRESHOLD_AGREEMENT,
     evidence_date,
     fit_speed_vs_hr,
     pct_of_lthr,
+    recency_weight,
     steady_lap_points,
     threshold_lap_stats,
 )
@@ -32,9 +36,12 @@ from .projection_evidence import (
     _num,
     classify_run,
     completed_runs,
+    has_quality_kms,
     load_workout_summaries,
     select_for_analysis,
 )
+
+logger = logging.getLogger(__name__)
 
 # Durability tiers: (strong_min_longest_km, weak_below_longest_km) per distance.
 DURABILITY_LONGEST_KM = {
@@ -71,15 +78,36 @@ def format_pace(speed_ms: Optional[float]) -> str:
     return f"{format_seconds_hms(1000.0 / speed_ms)}/km"
 
 
+def _summary_kind(summary: dict, goal_label: str) -> str:
+    return summary.get("session_kind") or classify_run(
+        summary | {"distance_actual_km": summary.get("distance_km")}, goal_label
+    )
+
+
 def threshold_anchor(
-    summaries: list[dict], goal_label: str, lthr: Optional[float], tp_speed: Optional[float]
+    summaries: list[dict],
+    goal_label: str,
+    lthr: Optional[float],
+    tp_speed: Optional[float],
+    today: Optional[date] = None,
 ) -> Optional[dict]:
-    """S1: observed threshold speed from quality/race laps, reconciled with the TP setting."""
+    """S1: observed threshold speed from quality/race key sessions, reconciled with the TP setting."""
     quality = [
         s for s in summaries
-        if classify_run(s | {"distance_actual_km": s.get("distance_km")}, goal_label) in ("quality", "race")
+        if _summary_kind(s, goal_label) in ("quality", "race")
+        or (
+            _summary_kind(s, goal_label) != "long"
+            and has_quality_kms(
+                s.get("laps"),
+                title=str(s.get("title") or ""),
+                distance_km=s.get("distance_km"),
+                lthr=lthr,
+                threshold_speed=tp_speed,
+                work_intervals=s.get("work_intervals"),
+            )
+        )
     ]
-    stats = threshold_lap_stats(quality, lthr, tp_speed)
+    stats = threshold_lap_stats(quality, lthr, tp_speed, today=today)
 
     tp_str = f"TP setting {format_pace(tp_speed)}" if tp_speed else "no TP threshold pace"
     if stats:
@@ -163,10 +191,15 @@ def goal_pace_segments(
     return segments
 
 
-def goal_pace_candidate(segments: list[dict]) -> Optional[dict]:
+def goal_pace_candidate(segments: list[dict], today: Optional[date] = None) -> Optional[dict]:
     if not segments:
         return None
-    weights = [seg["duration_s"] * (LATE_SEGMENT_WEIGHT if seg["late"] else 1.0) for seg in segments]
+    weights = [
+        seg["duration_s"]
+        * (LATE_SEGMENT_WEIGHT if seg["late"] else 1.0)
+        * recency_weight(seg.get("date"), today)
+        for seg in segments
+    ]
     speed = sum(seg["implied_speed"] * w for seg, w in zip(segments, weights)) / sum(weights)
     best = max(segments, key=lambda seg: (seg["date"] or date.min, seg["duration_s"]))
     parts = [f"{best['distance_km']:.1f} km @ {format_pace(best['speed'])}"]
@@ -189,11 +222,20 @@ def goal_pace_candidate(segments: list[dict]) -> Optional[dict]:
             "date": max(seg["date"] or date.min for seg in segments)}
 
 
-def hr_efficiency_candidate(summaries: list[dict], goal_label: str, lthr: Optional[float]) -> Optional[dict]:
-    """S3: weighted linear fit of speed vs HR over steady laps, evaluated at race HR."""
+def hr_efficiency_candidate(
+    summaries: list[dict],
+    goal_label: str,
+    lthr: Optional[float],
+    today: Optional[date] = None,
+) -> Optional[dict]:
+    """S3: weighted linear fit of speed vs HR over steady laps (key sessions weighted 2x), evaluated at race HR."""
     if not lthr:
         return None
-    pts = steady_lap_points(summaries, lthr)
+    tagged = [
+        s if "session_kind" in s else {**s, "session_kind": _summary_kind(s, goal_label)}
+        for s in summaries
+    ]
+    pts = steady_lap_points(tagged, lthr, today=today, key_session_weight=KEY_SESSION_WEIGHT)
     fit = fit_speed_vs_hr(pts, lthr)
     if not fit:
         return None
@@ -260,6 +302,20 @@ def _fitness_adjust(candidate: Optional[dict], daily_pmc, ctl_now) -> Optional[d
     return candidate
 
 
+def count_key_sessions(runs: list[dict], summaries: list[dict], goal_label: str) -> int:
+    """Number of distinct key runs (race, quality, long) in the 12-week window."""
+    key_ids = {
+        str(s.get("workout_id"))
+        for s in summaries
+        if s.get("workout_id") and _summary_kind(s, goal_label) in ("race", "quality", "long")
+    }
+    for w in runs:
+        wid = str(w.get("id") or "")
+        if wid and classify_run(w, goal_label) in ("race", "quality", "long"):
+            key_ids.add(wid)
+    return len(key_ids)
+
+
 def project_race(
     goal_label: str,
     goal_minutes: Optional[float],
@@ -274,7 +330,7 @@ def project_race(
     block_start: Any = None,
     race_dates: Any = (),
 ) -> Optional[dict]:
-    """Blends all signals into 'today' and 'race-day' projections with drivers and confidence."""
+    """Blends all signals across the last 12 weeks into 'today' and 'race-day' projections."""
     prof = DISTANCE_PROFILES[goal_label]
     km = prof["km"]
     lthr = thresholds.get("lthr")
@@ -286,7 +342,7 @@ def project_race(
     ctl_ref = max(ctl_now or 0.0, info.get("pre_taper_ctl") or 0.0) if in_taper else ctl_now
 
     dur = durability(runs, summaries, goal_label)
-    anchor = threshold_anchor(summaries, goal_label, lthr, thresholds.get("threshold_speed"))
+    anchor = threshold_anchor(summaries, goal_label, lthr, thresholds.get("threshold_speed"), today=today)
     candidates: dict[str, Optional[dict]] = {}
     if anchor:
         candidates["threshold"] = _fitness_adjust(
@@ -296,8 +352,10 @@ def project_race(
     goal_speed = km * 1000 / (goal_minutes * 60) if goal_minutes else None
     refs = [goal_speed, candidates.get("threshold", {}).get("speed") if candidates.get("threshold") else None]
     segments = goal_pace_segments(summaries, goal_label, [r for r in refs if r], lthr)
-    candidates["goal_pace"] = _fitness_adjust(goal_pace_candidate(segments), daily_pmc, ctl_ref)
-    candidates["hr_efficiency"] = _fitness_adjust(hr_efficiency_candidate(summaries, goal_label, lthr), daily_pmc, ctl_ref)
+    candidates["goal_pace"] = _fitness_adjust(goal_pace_candidate(segments, today=today), daily_pmc, ctl_ref)
+    candidates["hr_efficiency"] = _fitness_adjust(
+        hr_efficiency_candidate(summaries, goal_label, lthr, today=today), daily_pmc, ctl_ref
+    )
     candidates["race"] = _fitness_adjust(race_effort_candidate(runs, goal_label), daily_pmc, ctl_ref)
     active = {k: c for k, c in candidates.items() if c and c.get("speed")}
     if not active:
@@ -376,6 +434,8 @@ def project_race(
         "signals": sorted(active),
         "drivers": drivers,
         "drivers_text": drivers_text,
+        "key_sessions_count": count_key_sessions(runs, summaries, goal_label),
+        "window_weeks": PROJECTION_WINDOW_DAYS // 7,
         # Evidence facts for the coach (it judges trustworthiness itself; no confidence label).
         "n_signals": len(active),
         "newest_evidence_days": (today - newest).days if newest else None,
@@ -454,17 +514,35 @@ async def build_goal_projection(
     dated_metrics: Optional[dict],
     today_date: Any,
     refresh_cache: bool = False,
+    training_records: Optional[list[dict]] = None,
 ) -> dict:
-    """Builds the evidence-based goal-race projection payload for compile_checkin_summary."""
+    """Builds the evidence-based 12-week goal-race projection payload."""
     if not goal_label:
-        return {"goal_label": None, "projection": None}
+        return {"goal_label": None, "projection": None, "key_sessions_count": 0}
     fitness_data = fitness_data or {}
-    runs = completed_runs(
-        all_workouts, today_date - timedelta(days=PROJECTION_WINDOW_DAYS), today_date
-    )
+    user_id = profile_user_id(profile)
+    window_start = today_date - timedelta(days=PROJECTION_WINDOW_DAYS)
+    if training_records is None and user_id and not refresh_cache:
+        try:
+            training_records = await firestore.list_training_records(
+                user_id, iso_date(window_start), iso_date(today_date)
+            )
+        except Exception as exc:
+            logger.info("Training-log lookup skipped in build_goal_projection for %s: %s", user_id, exc)
+            training_records = []
+    records_by_id = {
+        str(r.get("workout_id")): r
+        for r in (training_records or [])
+        if isinstance(r, dict) and r.get("workout_id")
+    }
+    runs = completed_runs(all_workouts, window_start, today_date)
     summaries = await load_workout_summaries(
-        tool_context, select_for_analysis(runs, goal_label), profile_user_id(profile),
+        tool_context,
+        select_for_analysis(runs, goal_label, records_by_id=records_by_id),
+        user_id,
         refresh=refresh_cache,
+        training_records=training_records,
+        goal_label=goal_label,
     )
     goal = current_goal(profile, today_date)
     projection = project_race(
@@ -481,5 +559,10 @@ async def build_goal_projection(
         block_start=goal["goal_set_date"],
         race_dates=goal_race_dates(profile),
     )
-    return {"goal_label": goal_label, "projection": projection}
+    key_count = (
+        projection["key_sessions_count"]
+        if projection
+        else count_key_sessions(runs, summaries, goal_label)
+    )
+    return {"goal_label": goal_label, "projection": projection, "key_sessions_count": key_count}
 

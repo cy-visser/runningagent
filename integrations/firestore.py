@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from google.cloud import firestore
@@ -9,6 +8,12 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from .config import firestore_database, gcp_project_id
 
 _client: Optional[firestore.AsyncClient] = None
+_known_runner_ids: set[str] = set()
+
+
+def clear_known_runners_cache() -> None:
+    """Clears the in-memory set of verified runner IDs (used in tests)."""
+    _known_runner_ids.clear()
 
 
 def make_async_client(project: Optional[str] = None) -> firestore.AsyncClient:
@@ -56,17 +61,32 @@ async def update_document(collection_path: str, doc_id: str, data: dict[str, Any
     await doc_ref.update(data)
 
 
-# ==============================================================================
-# Profiles, projection cache and training log
-# ==============================================================================
+async def delete_document(collection_path: str, doc_id: str) -> None:
+    """Asynchronously deletes a document from Firestore (no-op if absent)."""
+    doc_ref = _get_doc_ref(collection_path, doc_id)
+    await doc_ref.delete()
 
-# Projection cache entries expire this long after the workout date (Firestore TTL on `expire_at`).
-CACHE_TTL_DAYS = 90
 
+# ==============================================================================
+# Profiles, caches and training log
+# ==============================================================================
 
 async def get_user_profile(user_id: str) -> Optional[dict[str, Any]]:
     """Asynchronously reads the user profile document from the 'users' collection."""
-    return await read_document("users", user_id)
+    doc = await read_document("users", user_id)
+    if doc is not None and user_id:
+        _known_runner_ids.add(user_id)
+    return doc
+
+
+async def user_profile_exists(user_id: str) -> bool:
+    """True when `users/{user_id}` exists as a persisted runner profile (blocks eval/phantom writes)."""
+    clean_id = str(user_id or "").strip()
+    if not clean_id:
+        return False
+    if clean_id in _known_runner_ids:
+        return True
+    return (await get_user_profile(clean_id)) is not None
 
 
 async def find_user_profile_by_email(email: str) -> Optional[tuple[str, dict[str, Any]]]:
@@ -90,12 +110,16 @@ async def find_user_profile_by_email(email: str) -> Optional[tuple[str, dict[str
     if len(matches) > 1:
         ids = ", ".join(doc_id for doc_id, _ in matches)
         raise RuntimeError(f"Multiple runner profiles match email {clean_email!r}: {ids}")
-    return matches[0]
+    runner_id, profile = matches[0]
+    _known_runner_ids.add(runner_id)
+    return runner_id, profile
 
 
 async def save_user_profile(user_id: str, profile_data: dict[str, Any]) -> None:
     """Asynchronously persists the user profile document into the 'users' collection."""
     await write_document("users", user_id, profile_data)
+    if user_id:
+        _known_runner_ids.add(user_id)
 
 
 async def update_user_profile(user_id: str, updates: dict[str, Any]) -> None:
@@ -103,27 +127,8 @@ async def update_user_profile(user_id: str, updates: dict[str, Any]) -> None:
     await update_document("users", user_id, updates)
 
 
-async def get_cached_workout_analysis(user_id: str, workout_id: str) -> Optional[dict[str, Any]]:
-    """Reads a cached workout-analysis summary from 'users/{user_id}/workout_analyses/{workout_id}'."""
-    return await read_document(f"users/{user_id}/workout_analyses", str(workout_id))
-
-
-def cache_expiry(workout_date: Optional[str]) -> datetime:
-    """TTL timestamp for a cache entry: workout date (or now) + CACHE_TTL_DAYS, timezone-aware."""
-    try:
-        start = datetime.fromisoformat(str(workout_date)[:10]).replace(tzinfo=timezone.utc)
-    except ValueError:
-        start = datetime.now(timezone.utc)
-    return start + timedelta(days=CACHE_TTL_DAYS)
-
-
-async def save_workout_analysis(user_id: str, workout_id: str, summary: dict[str, Any]) -> None:
-    """Persists a workout-analysis summary to 'users/{user_id}/workout_analyses/{workout_id}' with its TTL."""
-    data = {**summary, "expire_at": cache_expiry(summary.get("date"))}
-    await write_document(f"users/{user_id}/workout_analyses", str(workout_id), data)
-
-
 VOLUME_HISTORY_DOC_ID = "volume_history"
+RACE_PROJECTION_DOC_ID = "race_projection"
 
 
 async def get_cached_volume_history(user_id: str) -> Optional[dict[str, Any]]:
@@ -133,11 +138,32 @@ async def get_cached_volume_history(user_id: str) -> Optional[dict[str, Any]]:
 
 async def save_volume_history(user_id: str, payload: dict[str, Any]) -> None:
     """Writes 12-week completed volume history + `fetched_at` timestamp to 'users/{user_id}/cache/volume_history'."""
+    if not await user_profile_exists(user_id):
+        return
     await write_document(f"users/{user_id}/cache", VOLUME_HISTORY_DOC_ID, payload)
 
 
+async def get_cached_race_projection(user_id: str) -> Optional[dict[str, Any]]:
+    """Reads the cached 12-week race projection from 'users/{user_id}/cache/race_projection'."""
+    return await read_document(f"users/{user_id}/cache", RACE_PROJECTION_DOC_ID)
+
+
+async def save_race_projection(user_id: str, payload: dict[str, Any]) -> None:
+    """Writes the cached 12-week race projection to 'users/{user_id}/cache/race_projection'."""
+    if not await user_profile_exists(user_id):
+        return
+    await write_document(f"users/{user_id}/cache", RACE_PROJECTION_DOC_ID, payload)
+
+
+async def delete_race_projection(user_id: str) -> None:
+    """Deletes the cached race projection at 'users/{user_id}/cache/race_projection'."""
+    await delete_document(f"users/{user_id}/cache", RACE_PROJECTION_DOC_ID)
+
+
 async def save_training_record(user_id: str, workout_id: str, record: dict[str, Any]) -> None:
-    """Writes (fully replaces) 'users/{user_id}/training_log/{workout_id}'."""
+    """Writes (fully replaces) 'users/{user_id}/training_log/{workout_id}' for persisted runner profiles."""
+    if not await user_profile_exists(user_id):
+        return
     await write_document(f"users/{user_id}/training_log", str(workout_id), record)
 
 
@@ -154,17 +180,21 @@ async def list_training_records(user_id: str, start: str, end: str) -> list[dict
 
 __all__ = [
     "make_async_client",
+    "clear_known_runners_cache",
     "read_document",
     "write_document",
     "update_document",
+    "delete_document",
     "get_user_profile",
+    "user_profile_exists",
     "find_user_profile_by_email",
     "save_user_profile",
     "update_user_profile",
-    "get_cached_workout_analysis",
-    "save_workout_analysis",
     "get_cached_volume_history",
     "save_volume_history",
+    "get_cached_race_projection",
+    "save_race_projection",
+    "delete_race_projection",
     "save_training_record",
     "list_training_records",
 ]

@@ -19,6 +19,7 @@ from ...shared.workout_status import partition_workouts_by_date
 from .helpers.checkin_summary_text import compile_checkin_summary
 from ...shared.goal_projection.goal_trajectory import summarize_fitness
 from ...shared.goal_projection.health_flag import health_readiness, recent_hard_effort
+from ...shared.goal_projection.projection_cache import save_projection_to_cache
 from .helpers.lt_paces import checkin_lt_paces
 from .helpers.north_star_progress import north_star_progress
 from ...shared.goal_projection.projection_evidence import PROJECTION_WINDOW_DAYS
@@ -36,14 +37,7 @@ async def fetch_checkin_data(
     end_date: Optional[str] = None,
     refresh_analysis_cache: bool = False,
 ) -> str:
-    """Check-in data, last 14 days + next 7: workouts, weekly totals, recovery, PMC, goal-race
-    projection and calendar notes.
-
-    Args:
-        start_date: YYYY-MM-DD; default 14 days ago.
-        end_date: YYYY-MM-DD; default 7 days ahead.
-        refresh_analysis_cache: Re-analyse key workouts instead of using cached summaries.
-    """
+    """Short-horizon check-in report (default: last 14d + next 7d ISO YYYY-MM-DD)."""
     profile = tool_context.state.get("user_profile")
     if not profile:
         return "Error: User profile not found in state."
@@ -74,9 +68,10 @@ async def fetch_checkin_data(
     }
     user_id = profile_user_id(profile)
     if user_id:
-        # Training log (laps + start_position) for LT1/LT2 fits and per-workout weather; no gap-fill here.
+        # Training log (12w laps + start_position) for goal projection, LT1/LT2 fits and run weather.
+        records_start = min(workouts_start, today_date - timedelta(weeks=2 * LT_FIT_WEEKS))
         fetches["training records"] = firestore.list_training_records(
-            user_id, iso_date(min(q_start, today_date - timedelta(weeks=2 * LT_FIT_WEEKS))), iso_date(today_date)
+            user_id, iso_date(records_start), iso_date(today_date)
         )
     raw = await gather_labeled(fetches)
 
@@ -126,9 +121,11 @@ async def fetch_checkin_data(
             tool_context, goal_label, profile, all_workouts, fitness_data,
             raw.get("athlete settings"), dated_metrics, today_date,
             refresh_cache=refresh_analysis_cache,
+            training_records=raw.get("training records"),
         ),
         fetch_checkin_weather_map(profile, workouts_past, raw.get("training records")),
     )
+    await save_projection_to_cache(profile, race_projection, today_date, trigger="check_in")
 
     # LT1 (top of TP HR zone 2) / LT2 (LTHR) paces, same fit as the trend report.
     zones = extract_hr_zones(raw["athlete settings"])

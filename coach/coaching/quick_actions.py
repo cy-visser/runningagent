@@ -13,8 +13,10 @@ Everything is scoped to the dispatching invocation: typed chat turns (no action)
 instruction, the skill catalog and tool calling.
 """
 
+from datetime import date, timedelta
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from google.adk.agents.callback_context import CallbackContext
@@ -26,6 +28,9 @@ from google.genai import types
 from opentelemetry import trace
 
 from ...features.check_in_report.fetch_checkin_data_tool import fetch_checkin_data_tool
+from ...features.check_in_report.refresh_race_projection_tool import (
+    refresh_race_projection_tool,
+)
 from ...features.plan_builder.apply_training_plan_tool import apply_training_plan_tool
 from ...features.plan_builder.fetch_plan_context_tool import fetch_plan_context_tool
 from ...features.plan_audit.fetch_plan_audit_data_tool import (
@@ -34,6 +39,7 @@ from ...features.plan_audit.fetch_plan_audit_data_tool import (
 from ...features.trend_analysis.fetch_trend_data_tool import fetch_trend_data_tool
 from ...features.workout_analysis.analyze_workout_tool import analyze_workout_tool
 from ...features.workout_creator.apply_staged_changes_tool import apply_staged_changes_tool
+from ...shared.dates import get_today_date, iso_date
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +52,17 @@ DISPATCHED_STATE_KEY = "temp:quick_action_invocation"
 # Skill of that dispatched action (the plan-builder:intake opener gets its own rules and LOW thinking).
 DISPATCHED_SKILL_STATE_KEY = "temp:quick_action_skill"
 PLAN_INTAKE = "plan-builder:intake"
+PROJECT_RACE = "check-in-report:project"
+BIKE_WORKOUT_SKILL = "bike-workout-analysis"
+RUN_WORKOUT_SKILL = "workout-analysis"
 
 # skill -> (data tool, arguments the web app may set)
 QUICK_ACTIONS = {
     "check-in-report": (fetch_checkin_data_tool, frozenset({"start_date", "end_date"})),
+    PROJECT_RACE: (refresh_race_projection_tool, frozenset({"refresh_analysis_cache"})),
     "trend-analysis": (fetch_trend_data_tool, frozenset({"weeks"})),
     "plan-audit": (fetch_plan_audit_data_tool, frozenset({"start_date", "end_date"})),
-    "workout-analysis": (analyze_workout_tool, frozenset({"date_str", "sport"})),
+    RUN_WORKOUT_SKILL: (analyze_workout_tool, frozenset({"date_str", "sport"})),
     # "Update TrainingPeaks" button: applies the staged changes in code. The follow-up model call is
     # answered by `write_confirmation_reply`, so this action makes no LLM call at all.
     "workout-creator": (apply_staged_changes_tool, frozenset({"staged_id"})),
@@ -62,8 +72,13 @@ QUICK_ACTIONS = {
     # Apply to TrainingPeaks on a staged plan: one silent action per week, written in code (zero LLM calls).
     "plan-builder:apply": (apply_training_plan_tool, frozenset({"staged_id", "week"})),
 }
+# Internal dispatch table adds bike-workout-analysis for typed chat pre-dispatch while keeping Dashboard run-only.
+_TYPED_DISPATCH_ACTIONS = {
+    **QUICK_ACTIONS,
+    BIKE_WORKOUT_SKILL: (analyze_workout_tool, frozenset({"date_str", "sport"})),
+}
 # Actions that only execute code: no skill instructions are loaded for them.
-SKILL_FREE_ACTIONS = frozenset({"workout-creator", "plan-builder:apply", PLAN_INTAKE})
+SKILL_FREE_ACTIONS = frozenset({"workout-creator", "plan-builder:apply", PLAN_INTAKE, PROJECT_RACE})
 
 LOAD_SKILL = "load_skill"
 # Gemini 3 validates thought signatures on the current turn's function calls; calls that were not
@@ -73,6 +88,137 @@ SYNTHETIC_THOUGHT_SIGNATURE = b"skip_thought_signature_validator"
 NO_TOOL_CALLS = types.ToolConfig(
     function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.NONE)
 )
+
+_MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6,
+    "jul": 7, "july": 7, "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+_EXACT_TYPED_REPORTS = {
+    "check in": "check-in-report",
+    "check-in": "check-in-report",
+    "checkin": "check-in-report",
+    "checking in": "check-in-report",
+    "check in report": "check-in-report",
+    "check-in report": "check-in-report",
+    "weekly check in": "check-in-report",
+    "weekly check-in": "check-in-report",
+    "how was my week": "check-in-report",
+    "am i on track": "check-in-report",
+    "audit my plan": "plan-audit",
+    "audit plan": "plan-audit",
+    "plan audit": "plan-audit",
+    "audit my schedule": "plan-audit",
+    "trend analysis": "trend-analysis",
+    "analyze my trends": "trend-analysis",
+    "analyse my trends": "trend-analysis",
+    "training trends": "trend-analysis",
+}
+_ANALYZE_LEAD_RE = re.compile(r"^(?:please\s+)?(?:analy[sz]e|review)\b\s*(?P<rest>.+)$", re.IGNORECASE)
+_ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+_MONTH_DAY_RE = re.compile(
+    r"\b(?P<m>[a-z]{3,9})\.?\s+(?P<d>\d{1,2})(?:st|nd|rd|th)?(?:[,\s]+(?P<y>\d{4}))?\b",
+    re.IGNORECASE,
+)
+_DAY_MONTH_RE = re.compile(
+    r"\b(?P<d>\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+(?P<m>[a-z]{3,9})\.?(?:[,\s]+(?P<y>\d{4}))?\b",
+    re.IGNORECASE,
+)
+_RUN_WORDS = frozenset({"run", "running", "jog"})
+_BIKE_WORDS = frozenset({"bike", "biking", "ride", "cycling", "spin", "zwift", "trainer"})
+_WORKOUT_NOUNS = _RUN_WORDS | _BIKE_WORDS | frozenset({"workout", "session", "activity"})
+_ALLOWED_FILLER = frozenset({
+    "my", "the", "a", "an", "of", "on", "from", "for", "today", "todays",
+    "yesterday", "yesterdays", "st", "nd", "rd", "th",
+    "indoor", "outdoor", "morning", "evening", "afternoon",
+})
+
+
+def _resolve_month_day(month_str: str, day_str: str, year_str: Optional[str], today: date) -> Optional[str]:
+    month = _MONTHS.get(month_str.lower())
+    if not month:
+        return None
+    day = int(day_str)
+    year = int(year_str) if year_str else today.year
+    try:
+        parsed = date(year, month, day)
+        if not year_str and parsed > today:
+            parsed = date(today.year - 1, month, day)
+        return iso_date(parsed)
+    except ValueError:
+        return None
+
+
+def infer_typed_quick_action(text: Optional[str], today: Optional[date] = None) -> Optional[dict[str, Any]]:
+    """Infers a deterministic action for unambiguous standalone typed report/workout prompts (None otherwise)."""
+    if not text or "\n" in text or ";" in text:
+        return None
+    cleaned = text.strip()
+    if len(cleaned.split()) > 10:
+        return None
+    norm = re.sub(r"\s+", " ", cleaned.rstrip(".!?" ).strip()).lower()
+    if norm in _EXACT_TYPED_REPORTS and ("?" not in cleaned or norm in ("how was my week", "am i on track")):
+        return {"skill": _EXACT_TYPED_REPORTS[norm], "args": {}}
+    if "?" in cleaned:
+        return None
+
+    m = _ANALYZE_LEAD_RE.match(norm)
+    if not m:
+        return None
+    rest = m.group("rest").replace("'s", " ").replace("’s", " ").strip()
+    today = today or get_today_date()
+
+    date_str: Optional[str] = None
+    residual = rest
+    iso_m = _ISO_DATE_RE.search(residual)
+    if iso_m:
+        try:
+            date.fromisoformat(iso_m.group(1))
+            date_str = iso_m.group(1)
+            residual = (residual[:iso_m.start()] + " " + residual[iso_m.end():]).strip()
+        except ValueError:
+            return None
+    else:
+        for regex in (_MONTH_DAY_RE, _DAY_MONTH_RE):
+            dm = regex.search(residual)
+            if dm and dm.group("m").lower() in _MONTHS:
+                resolved = _resolve_month_day(dm.group("m"), dm.group("d"), dm.group("y"), today)
+                if not resolved:
+                    return None
+                date_str = resolved
+                residual = (residual[:dm.start()] + " " + residual[dm.end():]).strip()
+                break
+
+    tokens = [t for t in re.split(r"[\s,]+", residual) if t]
+    if any(t in ("today", "todays") for t in tokens):
+        if date_str is not None:
+            return None
+        date_str = "today"
+    elif any(t in ("yesterday", "yesterdays") for t in tokens):
+        if date_str is not None:
+            return None
+        date_str = iso_date(today - timedelta(days=1))
+
+    # Every remaining word must be a known workout noun or benign preposition/article; any extra clause
+    # (e.g. 'and move Thursday', 'calf hurt', 'plan', 'marathon goal') falls back to normal LLM routing.
+    if any(t not in _WORKOUT_NOUNS and t not in _ALLOWED_FILLER for t in tokens):
+        return None
+    has_workout_noun = any(t in _WORKOUT_NOUNS for t in tokens)
+    if not has_workout_noun and date_str is None:
+        return None
+
+    has_bike = any(t in _BIKE_WORDS for t in tokens)
+    has_run = any(t in _RUN_WORDS for t in tokens)
+    if has_bike and has_run:
+        return None
+    args: dict[str, Any] = {"date_str": date_str or "today"}
+    if has_bike:
+        args["sport"] = "bike"
+        return {"skill": BIKE_WORKOUT_SKILL, "args": args}
+    if has_run:
+        args["sport"] = "run"
+    return {"skill": RUN_WORKOUT_SKILL, "args": args}
 
 
 def is_quick_action_report(state: Any, invocation_id: Optional[str]) -> bool:
@@ -94,6 +240,12 @@ def _is_turn_start(llm_request: LlmRequest) -> bool:
     return last.role == "user" and any(p.text for p in parts) and not any(p.function_response for p in parts)
 
 
+def _turn_start_text(llm_request: LlmRequest) -> Optional[str]:
+    if not _is_turn_start(llm_request):
+        return None
+    return " ".join(p.text for p in (llm_request.contents[-1].parts or []) if p.text).strip() or None
+
+
 def _no_model_step_yet(callback_context: CallbackContext) -> bool:
     """No event of this agent in this invocation yet: covers silent actions whose message has no text
     (e.g. the per-week plan apply), which leave no runner content in the request."""
@@ -103,16 +255,19 @@ def _no_model_step_yet(callback_context: CallbackContext) -> bool:
         e.invocation_id == invocation_id and e.author == agent for e in session.events or [])
 
 
-def quick_action_calls(action: Any, llm_request: LlmRequest) -> list[types.Part]:
+def quick_action_calls(
+    action: Any, llm_request: LlmRequest, *, allow_typed: bool = False
+) -> list[types.Part]:
     """The function-call parts for a valid action ([] when the action is unknown).
 
     A quick action starts a turn, and skill instructions from earlier turns are stubs in the request
     (`report_memory.keep_latest_reports_and_skills`), so the skill is always loaded with its data tool.
     """
-    if not isinstance(action, dict) or action.get("skill") not in QUICK_ACTIONS:
+    registry = _TYPED_DISPATCH_ACTIONS if allow_typed else QUICK_ACTIONS
+    if not isinstance(action, dict) or action.get("skill") not in registry:
         return []
     skill = action["skill"]
-    tool, allowed = QUICK_ACTIONS[skill]
+    tool, allowed = registry[skill]
     raw_args = action.get("args") if isinstance(action.get("args"), dict) else {}
     args = {k: v for k, v in raw_args.items() if k in allowed and v is not None}
     calls = [] if skill in SKILL_FREE_ACTIONS else [(LOAD_SKILL, {"skill_name": skill})]
@@ -129,8 +284,8 @@ def quick_action_calls(action: Any, llm_request: LlmRequest) -> list[types.Part]
 def dispatch_quick_action(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-    """before_model_callback: runs a web quick action's skill + data tool without a routing LLM call,
-    then disables tool calling for that turn's report call. No-op for typed chat turns."""
+    """before_model_callback: runs a web quick action (or unambiguous standalone typed report/workout prompt)
+    without a routing LLM call, then disables tool calling for that turn's report call."""
     state = callback_context.state
     invocation_id = callback_context.invocation_id
     if is_quick_action_report(state, invocation_id):
@@ -139,14 +294,23 @@ def dispatch_quick_action(
         llm_request.config.tools = []
         return None
     action = state.get(QUICK_ACTION_STATE_KEY)
-    if not action or not (_is_turn_start(llm_request) or _no_model_step_yet(callback_context)):
+    inferred = False
+    if action:
+        if not (_is_turn_start(llm_request) or _no_model_step_yet(callback_context)):
+            return None
+        state[QUICK_ACTION_STATE_KEY] = None  # consumed: never dispatched twice
+    elif _is_turn_start(llm_request):
+        action = infer_typed_quick_action(_turn_start_text(llm_request))
+        inferred = action is not None
+    if not action:
         return None
-    state[QUICK_ACTION_STATE_KEY] = None  # consumed: never dispatched twice
-    parts = quick_action_calls(action, llm_request)
+    parts = quick_action_calls(action, llm_request, allow_typed=inferred)
     if not parts:
         return None  # unknown action: fall back to normal LLM routing of the message
     state[DISPATCHED_STATE_KEY] = invocation_id
     state[DISPATCHED_SKILL_STATE_KEY] = action["skill"]
+    if inferred:
+        trace.get_current_span().set_attribute("coach.typed_pre_dispatch", action["skill"])
     return LlmResponse(content=types.Content(role="model", parts=parts))
 
 

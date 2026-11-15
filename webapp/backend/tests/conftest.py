@@ -13,7 +13,12 @@ if os.path.dirname(__file__) not in sys.path:
     sys.path.insert(0, os.path.dirname(__file__))
 
 from app.main import create_app
-from app.profile_model import ProfileUpdatePayload, apply_profile_edit, profile_state_for
+from app.profile_model import (
+    ProfileUpdatePayload,
+    apply_profile_edit,
+    profile_state_for,
+    resolve_active_race_goal,
+)
 from app.profiles import ConnectConflictError
 from app.settings import Settings
 from app.trainingpeaks import ValidatedTpAccount
@@ -26,6 +31,7 @@ class FakeProfileStore:
     def __init__(self) -> None:
         self.users: dict[str, dict[str, Any]] = {}
         self.creds: dict[str, dict[str, Any]] = {}
+        self.race_projections: dict[str, dict[str, Any]] = {}
 
     async def find_by_email(self, email: str) -> Optional[tuple[str, dict[str, Any]]]:
         for rid, doc in self.users.items():
@@ -38,6 +44,16 @@ class FakeProfileStore:
         if not cred:
             return {"connected": False, "tp_name": None, "updated_at": None}
         return {"connected": True, "tp_name": cred["tp_name"], "updated_at": cred["updated_at"]}
+
+    async def get_race_projection_cache(self, runner_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not runner_id:
+            return None
+        doc = self.race_projections.get(runner_id)
+        return dict(doc) if doc else None
+
+    async def delete_race_projection_cache(self, runner_id: Optional[str]) -> None:
+        if runner_id:
+            self.race_projections.pop(runner_id, None)
 
     async def connect_trainingpeaks(self, email: str, account: ValidatedTpAccount) -> dict[str, Any]:
         by_email = await self.find_by_email(email)
@@ -70,22 +86,45 @@ class FakeProfileStore:
         if not found:
             raise LookupError("Not found")
         rid, existing = found
+        old_key = resolve_active_race_goal(existing)["goal_key"]
         updates, deleted = apply_profile_edit(existing, edit, today_iso="2026-11-05")
         merged = {**existing, **updates}
         for k in deleted:
             merged.pop(k, None)
         self.users[rid] = merged
+        if resolve_active_race_goal(merged)["goal_key"] != old_key:
+            await self.delete_race_projection_cache(rid)
         return rid, dict(merged)
 
 
 class FakeAgentClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.ephemeral_calls: list[dict[str, Any]] = []
+        self.on_ephemeral_action: Any = None
         self.created_sessions: int = 0
 
     async def create_session(self, adk_user_id: str, auth_email: str) -> dict[str, Any]:
         self.created_sessions += 1
         return {"id": f"sess-new-{self.created_sessions}", "events": []}
+
+    async def run_ephemeral_quick_action(
+        self,
+        adk_user_id: str,
+        auth_email: str,
+        quick_action: dict[str, Any],
+        message: str = "Refresh race projection",
+    ) -> list[dict[str, Any]]:
+        call = {
+            "user_id": adk_user_id,
+            "auth_email": auth_email,
+            "quick_action": quick_action,
+            "message": message,
+        }
+        self.ephemeral_calls.append(call)
+        if callable(self.on_ephemeral_action):
+            self.on_ephemeral_action(call)
+        return []
 
     async def stream_run_sse(
         self,

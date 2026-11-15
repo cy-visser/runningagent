@@ -26,6 +26,8 @@ def needs_onboarding(profile: Optional[dict]) -> bool:
     """True when a profile is missing or is a web skeleton (TrainingPeaks connected, no goal yet)."""
     if not profile or profile.get("onboarding_pending"):
         return True
+    if profile.get("goal_type") == "none":
+        return False
     has_single = bool(profile.get("training_goal") or profile.get("timeline"))
     has_plan = bool((profile.get("north_star") or {}).get("goal"))
     return not (has_single or has_plan)

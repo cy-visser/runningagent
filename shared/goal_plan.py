@@ -8,10 +8,12 @@ from .goal_distance import resolve_goal_distance
 
 GOAL_TYPE_SINGLE = "single"
 GOAL_TYPE_PLAN = "plan"
+GOAL_TYPE_NONE = "none"
 
 KIND_SINGLE = "single"
 KIND_SUB_GOAL = "sub_goal"
 KIND_NORTH_STAR = "north_star"
+KIND_NONE = "none"
 
 
 def normalize_timeline(timeline: Optional[str]) -> Optional[str]:
@@ -25,7 +27,12 @@ def is_plan(profile: Optional[dict]) -> bool:
     return (profile or {}).get("goal_type") == GOAL_TYPE_PLAN
 
 
-def _iso(day: Optional[date]) -> Optional[str]:
+def is_no_goal(profile: Optional[dict]) -> bool:
+    """True when the runner explicitly has no active goal set."""
+    return (profile or {}).get("goal_type") == GOAL_TYPE_NONE
+
+
+def _iso(day: Optional[date]) -> Optional[date | str]:
     return day.isoformat() if day else None
 
 
@@ -70,6 +77,18 @@ def blocks(profile: Optional[dict]) -> list[dict]:
 
 
 def _single_goal(profile: dict) -> dict:
+    if is_no_goal(profile):
+        return {
+            "kind": KIND_NONE,
+            "index": None,
+            "training_goal": None,
+            "race_name": None,
+            "goal_set_date": None,
+            "timeline": None,
+            "taper_weeks": None,
+            "result": None,
+            "planned": False,
+        }
     return {
         "kind": KIND_SINGLE,
         "index": None,
@@ -100,9 +119,40 @@ def current_goal(profile: Optional[dict], today: Optional[date] = None) -> dict:
     return {**active, "before_start": bool(start and today < start)}
 
 
+def goal_key(block: Optional[dict]) -> str:
+    """Canonical cache key '{kind}:{training_goal}:{timeline}' for an active goal block."""
+    if not block:
+        return ""
+    kind = str(block.get("kind") or "").strip()
+    goal = str(block.get("training_goal") or "").strip().lower()
+    tl = normalize_timeline(block.get("timeline")) or ""
+    return f"{kind}:{goal}:{tl}"
+
+
+def active_race_goal(profile: Optional[dict], today: Optional[date] = None) -> tuple[dict, Optional[str], str]:
+    """Resolves `(goal_block, goal_label, status)` for Race Predictor.
+
+    `status` is `'ok'` when an upcoming supported race goal (single, sub-goal or north star) is active;
+    otherwise `'no_goal'`, `'race_passed'` or `'non_race_goal'`.
+    """
+    today = today or get_today_date()
+    goal = current_goal(profile, today)
+    goal_text = str(goal.get("training_goal") or "").strip()
+    if is_no_goal(profile) or not goal_text:
+        return goal, None, "no_goal"
+    if final_race_passed(profile, today) is not None:
+        return goal, None, "race_passed"
+    label = resolve_goal_distance(goal_text)
+    if not label:
+        return goal, None, "non_race_goal"
+    return goal, label, "ok"
+
+
 def goal_list(profile: Optional[dict]) -> list[dict]:
     """Every goal in race order: the plan's blocks, or the single goal (when it has a target)."""
     profile = profile or {}
+    if is_no_goal(profile):
+        return []
     if is_plan(profile):
         return blocks(profile)
     single = _single_goal(profile)
@@ -151,6 +201,8 @@ def planned_update(profile: Optional[dict], start: date, end: date) -> Optional[
     """Firestore update marking every unplanned goal whose race falls in [start, end] as planned
     (None when nothing changes)."""
     profile = profile or {}
+    if is_no_goal(profile):
+        return None
     if not is_plan(profile):
         race = parse_date(profile.get("timeline"))
         if race and start <= race <= end and not profile.get("planned"):
@@ -173,6 +225,8 @@ def planned_update(profile: Optional[dict], start: date, end: date) -> Optional[
 def goal_race_dates(profile: Optional[dict]) -> set[date]:
     """Race days of every goal: the single goal's timeline, or each sub goal and the north star."""
     profile = profile or {}
+    if is_no_goal(profile):
+        return set()
     if is_plan(profile):
         days = {race_day(b) for b in blocks(profile)}
     else:
@@ -193,6 +247,8 @@ def final_race_passed(profile: Optional[dict], today: Optional[date] = None) -> 
 
     Sub-goal races never count: they are steps of the plan, not its end.
     """
+    if is_no_goal(profile):
+        return None
     today = today or get_today_date()
     goal = current_goal(profile, today)
     if goal["kind"] == KIND_SUB_GOAL:

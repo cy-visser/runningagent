@@ -7,14 +7,7 @@ from ...shared.key_events import SOURCE_COACH, make_event, save_key_event
 
 
 async def record_key_event(tool_context: ToolContext, event_type: str, date_str: str, summary: str) -> str:
-    """Saves an event that changes the runner's training to your coach memory (the runner never sees it).
-
-    Args:
-        event_type: race | injury | illness | break | life | other.
-        date_str: YYYY-MM-DD the event happened or started, or 'today'.
-        summary: One factual line with the numbers, e.g. "Left calf strain, no running for ~2 weeks" or
-            "Parkrun Kralingen 19:42 (tune-up race)".
-    """
+    """Silently saves a key event (`event_type`: race|injury|illness|break|life|other; `date_str`: YYYY-MM-DD|'today'; `summary`: 1 factual line with numbers)."""
     day = get_today_date() if str(date_str or "").strip().lower() == "today" else date_str
     try:
         event = make_event(event_type, day, summary, SOURCE_COACH)

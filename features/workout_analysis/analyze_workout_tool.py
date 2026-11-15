@@ -6,8 +6,16 @@ from typing import Any, Optional
 from google.adk.tools import FunctionTool, ToolContext
 
 from ...integrations.trainingpeaks import tp_calls
+from ...shared.analysis_summary import summarize_analysis
 from ...shared.athlete_settings import extract_hr_zones, extract_thresholds, sport_thresholds
 from ...shared.dates import get_today_date, iso_date, parse_date
+from ...shared.goal_distance import DISTANCE_PROFILES, parse_target_time_minutes
+from ...shared.goal_plan import active_race_goal, goal_race_dates
+from ...shared.goal_projection.projection_cache import recompute_and_cache_race_projection
+from ...shared.goal_projection.projection_evidence import (
+    has_quality_kms,
+    quality_distance_km,
+)
 from ...shared.health_metrics import (
     extract_health_metrics,
     extract_health_metrics_dated,
@@ -15,6 +23,7 @@ from ...shared.health_metrics import (
 )
 from ...shared.parallel_fetch import gather_labeled, result_or_none
 from ...shared.runner_weather import fetch_weather_text, weather_at
+from ...shared.sports import RUN_SPORTS
 from ...shared.tp_payloads import coerce_mcp_payload, parse_mcp_response
 from ...shared.ui_channel import reply
 from ...shared.training_log.record_writer import record_workout
@@ -43,6 +52,109 @@ RECOVERY_LOOKBACK_DAYS = 7
 NO_WORKOUT_LOOKBACK_DAYS = 7
 
 
+async def _maybe_refresh_race_projection(
+    tool_context: ToolContext,
+    profile: dict,
+    *,
+    workout_id: str,
+    workout_date: Any,
+    sport: str,
+    title: str,
+    meta: dict,
+    data: dict,
+    recorded: Optional[dict],
+    settings_raw: Any,
+    thresholds: dict,
+    today_date: Any,
+) -> None:
+    """Recomputes the cached race projection when the completed run contains quality km's."""
+    if str(sport or "").strip().lower() not in RUN_SPORTS:
+        return
+    try:
+        metrics = meta.get("metrics") or {}
+        summary = summarize_analysis(
+            data,
+            {
+                "id": workout_id,
+                "date": iso_date(workout_date),
+                "title": title,
+                "distance_actual_km": metrics.get("distance_actual_km"),
+                "duration_actual": metrics.get("duration_actual"),
+            },
+        )
+
+        active_goal, goal_label, goal_status = active_race_goal(profile, today_date)
+        goal_speed = None
+        if goal_status == "ok" and goal_label:
+            goal_mins = parse_target_time_minutes(active_goal.get("training_goal"))
+            if goal_mins and goal_mins > 0:
+                goal_speed = DISTANCE_PROFILES[goal_label]["km"] * 1000.0 / (goal_mins * 60.0)
+
+        laps = (summary or {}).get("laps") or (recorded or {}).get("laps")
+        dist_km = (summary or {}).get("distance_km") or (recorded or {}).get("distance_km")
+        work_ivs = (recorded or {}).get("work_intervals")
+        is_race = workout_date in goal_race_dates(profile)
+
+        if not has_quality_kms(
+            laps,
+            title=title,
+            distance_km=dist_km,
+            lthr=thresholds.get("lthr"),
+            threshold_speed=thresholds.get("threshold_speed"),
+            goal_speed=goal_speed,
+            work_intervals=work_ivs,
+            is_race=is_race,
+        ):
+            return
+
+        if goal_status != "ok" or not goal_label:
+            return
+
+        q_km = quality_distance_km(
+            laps,
+            title=title,
+            distance_km=dist_km,
+            lthr=thresholds.get("lthr"),
+            threshold_speed=thresholds.get("threshold_speed"),
+            goal_speed=goal_speed,
+            work_intervals=work_ivs,
+            is_race=is_race,
+        )
+        await recompute_and_cache_race_projection(
+            tool_context,
+            profile,
+            today_date,
+            trigger="workout_analysis",
+            settings_raw=settings_raw,
+            trigger_workout={
+                "workout_id": str(workout_id),
+                "date": iso_date(workout_date),
+                "title": title,
+                "quality_km": round(q_km, 1),
+            },
+        )
+    except Exception as exc:
+        logger.warning("Race-projection cache update skipped after workout %s: %s", workout_id, exc)
+
+
+def _is_indoor_workout(
+    sport: Optional[str], title: Optional[str], data: dict, start_pos: Optional[dict]
+) -> bool:
+    """True when the session has no GPS start position and is clearly indoor (trainer/treadmill or 0m gain/loss ride)."""
+    if start_pos:
+        return False
+    label = f"{sport or ''} {title or ''}".lower()
+    if any(k in label for k in ("indoor", "trainer", "zwift", "treadmill", "rouvy")):
+        return True
+    totals = data.get("totals") if isinstance(data.get("totals"), dict) else {}
+    gain = totals.get("El. Gain", totals.get("ElevationGain"))
+    loss = totals.get("El. Loss", totals.get("ElevationLoss"))
+    gain_v = gain.get("value") if isinstance(gain, dict) else gain
+    loss_v = loss.get("value") if isinstance(loss, dict) else loss
+    is_bike = "bike" in label or "cycl" in label or "ride" in label or "spin" in label
+    return is_bike and gain_v in (0, 0.0, "0") and loss_v in (0, 0.0, "0")
+
+
 async def analyze_workout(
     tool_context: ToolContext,
     workout_id: Optional[str] = None,
@@ -51,15 +163,7 @@ async def analyze_workout(
     include_weather: bool = True,
     include_recovery: bool = True,
 ) -> str:
-    """Physiological, telemetry, recovery and weather analysis of one completed workout.
-
-    Args:
-        workout_id: Workout to analyze; omit to use the completed workout on date_str.
-        date_str: YYYY-MM-DD or 'today' (default).
-        sport: Optional 'run' or 'bike' to prefer when resolving by date.
-        include_weather: Hourly weather at the start time (default True).
-        include_recovery: Morning HRV, sleep and RHR (default True).
-    """
+    """Analyzes one completed workout (`workout_id`, or `date_str` YYYY-MM-DD/'today' + optional `sport` 'run'|'bike')."""
     profile = tool_context.state.get("user_profile") or {}
     today_date = get_today_date()
 
@@ -130,6 +234,7 @@ async def analyze_workout(
         is_structured = has_structure(structured)
 
         series, start_pos = await asyncio.to_thread(load_analysis_file, data.get("data_file"))
+        indoor = _is_indoor_workout(sport, title, data, start_pos)
 
         # Thresholds, recovery and PMC are always fetched: the training-log record needs them
         # regardless of what this reply displays.
@@ -144,7 +249,7 @@ async def analyze_workout(
                 tool_context, "tp_get_fitness", start_date=iso_date(workout_date), end_date=iso_date(workout_date),
             ),
         }
-        if include_weather:
+        if include_weather and not indoor:
             extras["weather"] = fetch_weather_text(
                 profile, [str(start)], position=start_pos, utc=start_is_utc,
             )
@@ -175,7 +280,7 @@ async def analyze_workout(
             sections.insert(0, format_other_sessions(other_sessions, target_iso))
         if structure_section:
             sections.append(structure_section)
-        notes = planned_notes(meta)
+        notes = planned_notes(meta, structured=alignment is not None)
         if notes:
             sections.append(f"**Planned session notes:** {notes}")
         feedback = format_athlete_feedback(meta)
@@ -195,10 +300,11 @@ async def analyze_workout(
         if goal_context:
             sections.append(goal_context)
         await save_goal_race_event(tool_context, profile, workout_date, workout_id, sport, meta, data)
+        latest_profile = tool_context.state.get("user_profile") or profile
         try:  # web banner only: never let it break the analysis
             tool_context.state[WORKOUT_REPORT_STATE_KEY] = workout_report_data(
                 data, meta,
-                profile=profile, sport=sport, title=title, workout_date=workout_date,
+                profile=latest_profile, sport=sport, title=title, workout_date=workout_date,
                 local_start=local_start, series=series, alignment=alignment,
                 hr_zones=extract_hr_zones(extra.get("athlete settings"), sport),
                 weather=extra.get("start conditions"),
@@ -207,15 +313,30 @@ async def analyze_workout(
             )
         except Exception as e:
             logger.warning("Workout banner payload failed for %s: %s", workout_id, e)
-        await record_workout(
-            profile, meta, data, series,
-            thresholds=extract_thresholds(extra.get("athlete settings")),
+        extracted_thresholds = extract_thresholds(extra.get("athlete settings"))
+        recorded = await record_workout(
+            latest_profile, meta, data, series,
+            thresholds=extracted_thresholds,
             daily_pmc=(coerce_mcp_payload(extra["fitness PMC"]).get("daily_data") if extra.get("fitness PMC") else None),
             dated_metrics=dated_metrics,
             start=str(start),
             start_position=start_pos,
             start_is_utc=start_is_utc,
             weather=extra.get("start conditions"),
+        )
+        await _maybe_refresh_race_projection(
+            tool_context,
+            latest_profile,
+            workout_id=workout_id,
+            workout_date=workout_date,
+            sport=sport,
+            title=title,
+            meta=meta,
+            data=data,
+            recorded=recorded,
+            settings_raw=extra.get("athlete settings"),
+            thresholds=extracted_thresholds,
+            today_date=today_date,
         )
         return "\n\n".join(sections)
     except Exception as e:

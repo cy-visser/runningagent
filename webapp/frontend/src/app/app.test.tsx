@@ -10,7 +10,12 @@ import {
   Dashboard,
   auditPlanAction,
 } from "./Dashboard";
-import { DEMO_ME_ONBOARDING, DEMO_ME_READY, DEMO_PLAN } from "../demo/fixtures";
+import {
+  DEMO_ME_ONBOARDING,
+  DEMO_ME_READY,
+  DEMO_PLAN,
+  DEMO_RACE_PREDICTOR_RESPONSE,
+} from "../demo/fixtures";
 import * as api from "../shared/api";
 import { ApiError, fetchMe, onSessionExpired, parseSseFrame } from "../shared/api";
 import type { AppliedTrainingPlan, QuickAction, StagedTrainingPlan } from "../shared/types";
@@ -83,6 +88,9 @@ describe("app shell & conversation lifecycle", () => {
 
     // 4. App ready state & conversation lifecycle across quick actions, follow-ups, and New conversation
     vi.spyOn(api, "fetchMe").mockResolvedValue(DEMO_ME_READY);
+    const fetchRacePredictorSpy = vi
+      .spyOn(api, "fetchRacePredictor")
+      .mockResolvedValue(DEMO_RACE_PREDICTOR_RESPONSE);
 
     let sessionCounter = 0;
     const createNewSessionSpy = vi
@@ -106,7 +114,7 @@ describe("app shell & conversation lifecycle", () => {
     await waitFor(() =>
       expect(screen.getByText("Check-In Report")).toBeInTheDocument(),
     );
-    expect(screen.getByText("Profile")).toBeInTheDocument();
+    expect(screen.getByText("Race Predictor")).toBeInTheDocument();
     expect(screen.getByText("Analyze Today's Run")).toBeInTheDocument();
     expect(screen.getByText("Trend Analysis")).toBeInTheDocument();
     expect(
@@ -115,9 +123,11 @@ describe("app shell & conversation lifecycle", () => {
     expect(
       screen.getByText(auditPlanAction(DEMO_ME_READY.summary).title),
     ).toBeInTheDocument();
-    // 6 equal cards: Profile, Analyze, Check-In, Trend, Audit Plan, Build Plan (no full-width CTA).
+    // 6 equal cards: Race Predictor, Analyze, Check-In, Trend, Audit Plan, Build Plan (no Profile card).
     const grid = screen.getByRole("region", { name: "Quick actions" });
     expect(within(grid).getAllByRole("button")).toHaveLength(6);
+    expect(within(grid).getByText("Race Predictor")).toBeInTheDocument();
+    expect(within(grid).queryByText("Profile")).not.toBeInTheDocument();
     expect(within(grid).getByText(/^Audit Plan – /)).toBeInTheDocument();
     expect(within(grid).getByText("Build Plan")).toBeInTheDocument();
     expect(within(grid).getByText(BUILD_PLAN_SUBTITLE)).toBeInTheDocument();
@@ -210,6 +220,14 @@ describe("app shell & conversation lifecycle", () => {
       { message: "And my easy pace?", sessionId: "fresh-1" },
       expect.any(Object),
     );
+
+    // Clicking Race Predictor opens the slide-over panel without clearing the active chat feed.
+    fireEvent.click(within(grid).getByText("Race Predictor"));
+    expect(await screen.findByRole("dialog", { name: "Race Predictor" })).toBeInTheDocument();
+    expect(fetchRacePredictorSpy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("1:26:08")).toBeInTheDocument();
+    expect(screen.getByText("And my easy pace?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close race predictor" }));
 
     // The top-left title goes home: scrolls to the top and focuses the coaching hub heading,
     // keeping the conversation.

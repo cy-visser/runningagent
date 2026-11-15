@@ -38,7 +38,7 @@ done
 PROJECT_ID="$GOOGLE_CLOUD_PROJECT"
 REGION="${DEPLOY_REGION:-europe-west4}"
 IDENTITY="running-coach-agent@${PROJECT_ID}.iam.gserviceaccount.com"
-SESSION_URI="firestore://${PROJECT_ID}"
+SESSION_URI="firestore://"
 KMS_KEY_RING="${KMS_KEY_RING:-running-coach}"
 KMS_KEY_NAME="${TP_COOKIE_KMS_KEY_NAME:-tp-cookie}"
 KMS_KEY="${TP_COOKIE_KMS_KEY:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEY_RING}/cryptoKeys/${KMS_KEY_NAME}}"

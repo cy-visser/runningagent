@@ -348,12 +348,24 @@ export function ProfilePanel({
                       </p>
                     </div>
                   </div>
+                ) : profile.goal_type === "none" || !profile.training_goal ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div className="flex items-center gap-2">
+                      <Flag className="h-4 w-4 text-slate-500" />
+                      <p className="font-display text-base font-bold text-slate-900">
+                        No active goal set
+                      </p>
+                    </div>
+                    <p className="mt-1.5 text-sm text-slate-600">
+                      Click <strong>Edit</strong> above to set a target race or sub-goal roadmap, then build a training plan.
+                    </p>
+                  </div>
                 ) : (
                   <div className="rounded-2xl border border-rose-300 bg-rose-50/80 p-4">
                     <div className="flex items-center gap-2">
                       <Trophy className="h-4 w-4 text-rose-700" />
                       <p className="font-display text-base font-bold text-slate-900">
-                        {profile.training_goal || "No active goal set"}
+                        {profile.training_goal}
                       </p>
                     </div>
                     <p className="mt-1.5 text-sm text-slate-600">
@@ -364,7 +376,7 @@ export function ProfilePanel({
                       {profile.taper_weeks != null
                         ? ` · ${profile.taper_weeks}w taper`
                         : ""}
-                      {profile.training_goal && <PlanStatusBadge planned={Boolean(profile.planned)} />}
+                      <PlanStatusBadge planned={Boolean(profile.planned)} />
                     </p>
                   </div>
                 )}

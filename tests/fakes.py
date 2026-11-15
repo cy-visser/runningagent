@@ -149,8 +149,9 @@ class FakeRunnerEnv:
         self.profiles: dict[str, dict] = {"cyrille_visser": json.loads(json.dumps(PLAN_PROFILE))}
         self.connected_runners: set[str] = {"cyrille_visser"}
         self.training_records: dict[str, dict] = {}
-        self.analysis_cache: dict[tuple[str, str], dict] = {}
         self.volume_history_cache: dict[str, dict] = {}
+        self.race_projection_cache: dict[str, dict] = {}
+        self.analysis_overrides: dict[str, dict] = {}
         self.profile_updates: list[tuple[str, dict]] = []
         self.tp_calls: list[tuple[str, dict]] = []
         self.rate_limited_workout_ids: set[str] = set()
@@ -281,6 +282,8 @@ class FakeRunnerEnv:
             wid = str(kw["workout_id"])
             if wid in self.rate_limited_workout_ids:
                 return envelope({"isError": True, "error_code": "API_ERROR", "message": "429 Too Many Requests"})
+            if wid in self.analysis_overrides:
+                return envelope(self.analysis_overrides[wid])
             return envelope({
                 "lapData": CANOVA["laps"],
                 "totals": {

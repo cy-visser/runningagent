@@ -11,12 +11,11 @@ from datetime import date
 from typing import Any, Optional
 
 from ....shared.athlete_settings import sport_family
+from ....shared.session_state import WORKOUT_REPORT_STATE_KEY
 from ....shared.units import as_float, pace_seconds, to_km
 from ....shared.web_report_payload import REPORT_DATA_VERSION, iso_or_none, round_or_none
 from ....shared.workout_structure import pa_hr_window, series_end, windowed_decoupling
 from .workout_summary_text import _clean, _get_metric_unit, _get_metric_val
-
-WORKOUT_REPORT_STATE_KEY = "workout_report_data"
 
 MAX_TILES = 6
 ELEVATION_POINTS = 60

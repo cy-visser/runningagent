@@ -74,10 +74,14 @@ export function ProfileForm({
   onCancel,
   onSave,
 }: ProfileFormProps) {
-  const initialMode: "single" | "plan" =
-    profile.goal_type === "plan" && profile.north_star?.goal ? "plan" : "single";
+  const initialMode: "single" | "plan" | "none" =
+    profile.goal_type === "none"
+      ? "none"
+      : profile.goal_type === "plan" && profile.north_star?.goal
+        ? "plan"
+        : "single";
 
-  const [goalType, setGoalType] = useState<"single" | "plan">(initialMode);
+  const [goalType, setGoalType] = useState<"single" | "plan" | "none">(initialMode);
   const [age, setAge] = useState(profile.age ?? "");
   const [height, setHeight] = useState(profile.height ?? "");
   const [weight, setWeight] = useState(profile.weight ?? "");
@@ -182,6 +186,20 @@ export function ProfileForm({
       strength_time_of_day: strengthTime,
       shoe_rotation: toShoeRotationPayload(shoeRotation),
     };
+
+    if (goalType === "none") {
+      await onSave({
+        ...contextFields,
+        goal_type: "none",
+        training_goal: null,
+        timeline: null,
+        taper_weeks: null,
+        planned: false,
+        north_star: null,
+        sub_goals: [],
+      });
+      return;
+    }
 
     if (goalType === "single") {
       if (!trainingGoal.trim()) {
@@ -353,7 +371,7 @@ export function ProfileForm({
 
       {/* Goal Structure */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-500">
             Goal Structure
           </h3>
@@ -380,10 +398,25 @@ export function ProfileForm({
             >
               Goal Plan
             </button>
+            <button
+              type="button"
+              onClick={() => setGoalType("none")}
+              className={`rounded-lg px-3 py-1 font-semibold transition cursor-pointer ${
+                goalType === "none"
+                  ? "bg-white text-slate-900 shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              No Goal
+            </button>
           </div>
         </div>
 
-        {goalType === "single" ? (
+        {goalType === "none" ? (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-600">
+            No active race goal set. You can still analyze workouts and audit aerobic consistency, and set a target race whenever you&apos;re ready to build your next plan.
+          </div>
+        ) : goalType === "single" ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
             <div>
               <div className="flex items-center justify-between mb-1">

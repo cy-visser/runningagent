@@ -70,24 +70,14 @@ def race_result_update(
 def format_workout_goal_context(
     profile: Optional[dict], workout_date: Any, duration_s: Optional[float], result_saved: bool
 ) -> str:
-    """Goal-plan context for a workout analysis. '' for single goals.
-
-    On a sub-goal race day: the result, its north-star equivalent and gap. Otherwise a one-line
-    reference to the current block and the north star.
-    """
+    """Sub-goal race result + north-star equivalent/gap on race day ('' otherwise; <runner_profile> holds the plan)."""
     ns = north_star(profile)
     if not ns:
         return ""
     ns_goal = ns["training_goal"]
     block = sub_goal_for_date(profile, workout_date)
     if not block:
-        current = current_goal(profile, parse_date(workout_date))
-        if current["kind"] == KIND_NORTH_STAR:
-            return f"**Goal plan:** north-star block ({ns_goal}, race {ns['timeline']})."
-        return (
-            f"**Goal plan:** current block {current['training_goal']} (race {current['timeline']}) "
-            f"-> north star {ns_goal} (race {ns['timeline']})."
-        )
+        return ""
     equiv = north_star_equivalent(duration_s, block["training_goal"], ns_goal)
     target_s = goal_target_s(ns_goal)
     parts = [

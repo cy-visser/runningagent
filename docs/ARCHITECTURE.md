@@ -110,9 +110,9 @@ running_coach/
   - `users/{runner_id}`: runner profile + `email` (indexed via `google_firestore_index.users_by_email`).
   - `users/{runner_id}/private/trainingpeaks`: KMS ciphertext + metadata (`tp_athlete_id`, `tp_name`, `kms_key_version`).
   - `users/{runner_id}/training_log/{workout_id}`: structured workout history indexed by date (`google_firestore_index.training_log_by_date`).
-  - `users/{runner_id}/workout_analyses/{workout_id}`: 90-day TTL projection cache (`google_firestore_field.workout_analyses_ttl`).
-  - `users/{runner_id}/cache/volume_history`: 28-day freshness cache of 12-week completed weekly volume & long-run totals (`fetched_at` + `weeks`), shared by `plan_audit` and `plan_builder`.
-  - `<root>/running_coach/users/{user_id}/sessions/{session_id}` (+ `events` subcollection): ADK sessions with 7-day TTL (`google_firestore_field.sessions_ttl`, `google_firestore_field.session_events_ttl`).
+  - `users/{runner_id}/cache/{volume_history, race_projection}`: 28-day freshness cache of 12-week completed weekly volume & long-run totals (`volume_history`, shared by `plan_audit` and `plan_builder`) and the cached 12-week Race Predictor payload (`race_projection`).
+  - `adk-session/running_coach/users/{user_id}/sessions/{session_id}` (+ `events` subcollection): ADK sessions with 7-day TTL (`google_firestore_field.sessions_ttl`, `google_firestore_field.session_events_ttl`). Ephemeral background sessions (`/api/race-predictor`) are deleted immediately on completion.
+  - `user_states/running_coach/users/web_<email>`: ADK user-scoped state storing `auth_email`.
 
 ---
 

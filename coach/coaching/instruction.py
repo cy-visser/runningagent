@@ -166,7 +166,7 @@ def format_profile_summary(profile: dict, today: Optional[date] = None) -> str:
         f"Name: {name}{age}" if name or age else "",
         f"Location: {profile['location']}" if _present(profile.get("location")) else "",
         f"Stats: {stats}" if stats else "",
-        _goal_line(profile, today),
+        "" if north_star(profile) else _goal_line(profile, today),
         _block_line(profile, today),
     ]
     prs = format_personal_records(profile.get("personal_records"))
@@ -303,8 +303,7 @@ _PLAN_INTAKE_RULES = """
 
 
 def build_coach_instruction(ctx: ReadonlyContext) -> str:
-    """InstructionProvider: role, date and rules. The profile block is added by `ensure_profile_context`."""
-    sections = [_COACH_ROLE, f"Today's date is {get_today_str(with_weekday=True)}."]
+    """InstructionProvider: static role + rules first for prefix caching, then today's date."""
     state, invocation_id = ctx.state, getattr(ctx, "invocation_id", None)
     # A web quick action's report call already holds its skill and data and cannot call tools,
     # so the routing rules are omitted there (typed chat turns always get them).
@@ -314,4 +313,4 @@ def build_coach_instruction(ctx: ReadonlyContext) -> str:
         routing = ""
     else:
         routing = _ROUTING_RULES
-    return "\n\n".join(sections) + "\n" + routing + _CONTRACT_RULES
+    return f"{_COACH_ROLE}\n{routing}{_CONTRACT_RULES}\nToday's date is {get_today_str(with_weekday=True)}."

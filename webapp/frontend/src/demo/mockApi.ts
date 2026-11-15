@@ -5,6 +5,7 @@ import type {
   MeResponse,
   ProfileResponse,
   ProfileUpdatePayload,
+  RacePredictorResponse,
   SessionResponse,
 } from "../shared/types";
 import {
@@ -18,6 +19,7 @@ import {
   DEMO_PLAN,
   DEMO_PLAN_MARKDOWN,
   DEMO_PROFILE_RESPONSE,
+  DEMO_RACE_PREDICTOR_RESPONSE,
   DEMO_TREND_DATA,
   DEMO_TREND_MARKDOWN,
   DEMO_WORKOUT_DATA,
@@ -32,6 +34,7 @@ function currentDemoPreset(): string {
 
 let demoMeState: MeResponse | null = null;
 let demoProfileState: ProfileResponse = structuredClone(DEMO_PROFILE_RESPONSE);
+let demoPredictorState: RacePredictorResponse = structuredClone(DEMO_RACE_PREDICTOR_RESPONSE);
 
 function ensureDemoState(): MeResponse {
   if (!demoMeState) {
@@ -66,17 +69,60 @@ export async function demoUpdateProfile(
   updated.profile.strength_time_of_day = payload.strength_time_of_day ?? null;
   updated.profile.shoe_rotation = payload.shoe_rotation ?? null;
 
-  if (payload.goal_type === "single") {
+  if (payload.goal_type === "none") {
+    updated.profile.training_goal = null;
+    updated.profile.timeline = null;
+    updated.profile.taper_weeks = null;
+    updated.profile.planned = false;
+    updated.profile.north_star = null;
+    updated.profile.sub_goals = [];
+    if (updated.summary) {
+      updated.summary.goal_type = "none";
+      updated.summary.active_goal = null;
+      updated.summary.active_goal_kind = null;
+      updated.summary.active_goal_planned = false;
+      updated.summary.has_active_race_goal = false;
+      updated.summary.active_race_name = null;
+      updated.summary.active_date = null;
+      updated.summary.weeks_remaining = null;
+      updated.summary.north_star = null;
+      updated.summary.all_goals_planned = false;
+    }
+    demoPredictorState = {
+      status: "no_goal",
+      reason: "no_goal",
+      tp_connected: true,
+      cached: false,
+      active_goal: null,
+      data: null,
+    };
+  } else if (payload.goal_type === "single") {
     updated.profile.training_goal = payload.training_goal ?? null;
     updated.profile.timeline = payload.timeline ?? null;
     updated.profile.taper_weeks = payload.taper_weeks ?? null;
+    updated.profile.planned = payload.planned ?? false;
     updated.profile.north_star = null;
     updated.profile.sub_goals = [];
     if (updated.summary) {
       updated.summary.goal_type = "single";
       updated.summary.active_goal = payload.training_goal ?? null;
+      updated.summary.active_goal_kind = "single";
+      updated.summary.active_goal_planned = Boolean(payload.planned);
+      updated.summary.has_active_race_goal = Boolean(payload.training_goal);
       updated.summary.active_date = payload.timeline ?? null;
       updated.summary.north_star = null;
+    }
+    demoPredictorState = structuredClone(DEMO_RACE_PREDICTOR_RESPONSE);
+    demoPredictorState.active_goal = {
+      kind: "single",
+      training_goal: payload.training_goal ?? null,
+      race_date: payload.timeline ?? null,
+      planned: Boolean(payload.planned),
+      goal_label: "Half Marathon",
+    };
+    if (demoPredictorState.data) {
+      demoPredictorState.data.active_goal = demoPredictorState.active_goal;
+      demoPredictorState.data.north_star = null;
     }
   } else {
     updated.profile.north_star = payload.north_star ?? null;
@@ -93,10 +139,14 @@ export async function demoUpdateProfile(
       };
       if (payload.sub_goals.length > 0) {
         updated.summary.active_goal = payload.sub_goals[0].goal;
+        updated.summary.active_goal_kind = "sub_goal";
+        updated.summary.active_goal_planned = Boolean(payload.sub_goals[0].planned);
+        updated.summary.has_active_race_goal = true;
         updated.summary.active_race_name = payload.sub_goals[0].race_name ?? null;
         updated.summary.active_date = payload.sub_goals[0].race_date;
       }
     }
+    demoPredictorState = structuredClone(DEMO_RACE_PREDICTOR_RESPONSE);
   }
   demoProfileState = updated;
   if (demoMeState) {
@@ -104,6 +154,22 @@ export async function demoUpdateProfile(
     demoMeState.profile_state = "ready";
   }
   return structuredClone(updated);
+}
+
+export async function demoFetchRacePredictor(): Promise<RacePredictorResponse> {
+  return structuredClone(demoPredictorState);
+}
+
+export async function demoRefreshRacePredictor(): Promise<RacePredictorResponse> {
+  await new Promise((r) => setTimeout(r, 250));
+  const next = structuredClone(demoPredictorState);
+  next.cached = false;
+  if (next.data) {
+    next.data.updated_at = new Date().toISOString();
+    next.data.trigger = "manual_refresh";
+  }
+  demoPredictorState = next;
+  return structuredClone(next);
 }
 
 export async function demoConnectTrainingPeaks(

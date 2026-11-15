@@ -29,16 +29,7 @@ async def fetch_plan_audit_data(
     weeks_forward: int = 4,
     weeks_back: int = 1,
 ) -> str:
-    """Per-ISO-week plan audit: volume, week-over-week change, TSS, easy/quality split, cross-training,
-    calendar notes, long-run facts, and 12-week historical volume/long-run context. Past weeks use
-    completed values.
-
-    Args:
-        start_date: YYYY-MM-DD; default weeks_back weeks ago.
-        end_date: YYYY-MM-DD; default weeks_forward weeks ahead.
-        weeks_forward: Weeks ahead when end_date is omitted (default 4).
-        weeks_back: Completed weeks to include when start_date is omitted (default 1).
-    """
+    """Per-ISO-week plan audit report (YYYY-MM-DD `start_date`/`end_date`, or `weeks_back=1`, `weeks_forward=4`)."""
     profile = tool_context.state.get("user_profile") or {}
     user_id = profile_user_id(profile)
     today_date = get_today_date()

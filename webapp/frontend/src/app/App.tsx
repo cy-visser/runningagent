@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { ConnectTrainingPeaksDialog } from "../features/profile/ConnectTrainingPeaksDialog";
-import { Dashboard } from "./Dashboard";
+import { BUILD_PLAN_ACTION, BUILD_PLAN_PROMPT, Dashboard } from "./Dashboard";
 import { ProfilePanel } from "../features/profile/ProfilePanel";
+import { RacePredictorPanel } from "../features/race_predictor/RacePredictorPanel";
 import { TopBar } from "./TopBar";
 import type { PlanApplying } from "./ChatFeed";
 import {
@@ -37,6 +38,7 @@ export function App() {
   const [profileDrawerMode, setProfileDrawerMode] = useState<"view" | "edit">(
     "view",
   );
+  const [racePredictorOpen, setRacePredictorOpen] = useState(false);
   const [tpDialogOpen, setTpDialogOpen] = useState(false);
   const [appliedStagedIds, setAppliedStagedIds] = useState<ReadonlySet<string>>(new Set());
   const [applyingStagedId, setApplyingStagedId] = useState<string | null>(null);
@@ -80,6 +82,8 @@ export function App() {
         } else if (demoView === "profile") {
           setProfileDrawerMode("view");
           setProfileDrawerOpen(true);
+        } else if (demoView === "predictor") {
+          setRacePredictorOpen(true);
         }
       }
     } catch (err) {
@@ -327,6 +331,7 @@ export function App() {
   const handleHome = () => {
     // "Home" = the Daily Coaching Hub at the top of the page; the conversation is kept.
     setProfileDrawerOpen(false);
+    setRacePredictorOpen(false);
     setTpDialogOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
     document.getElementById("coaching-hub")?.focus({ preventScroll: true });
@@ -405,10 +410,12 @@ export function App() {
         onHome={handleHome}
         onNewSession={handleNewSession}
         onViewProfile={() => {
+          setRacePredictorOpen(false);
           setProfileDrawerMode("view");
           setProfileDrawerOpen(true);
         }}
         onEditProfile={() => {
+          setRacePredictorOpen(false);
           setProfileDrawerMode("edit");
           setProfileDrawerOpen(true);
         }}
@@ -430,10 +437,43 @@ export function App() {
         planFailedIds={planFailedIds}
         onApplyPlan={(stagedId) => void handleApplyPlan(stagedId)}
         onViewProfile={() => {
+          setRacePredictorOpen(false);
           setProfileDrawerMode("view");
           setProfileDrawerOpen(true);
         }}
+        onOpenRacePredictor={() => {
+          setProfileDrawerOpen(false);
+          setRacePredictorOpen(true);
+        }}
         onOpenTrainingPeaks={() => setTpDialogOpen(true)}
+      />
+
+      <RacePredictorPanel
+        open={racePredictorOpen}
+        onClose={() => setRacePredictorOpen(false)}
+        onSetGoalInProfile={() => {
+          setRacePredictorOpen(false);
+          setProfileDrawerMode("edit");
+          setProfileDrawerOpen(true);
+        }}
+        onBuildPlan={() => {
+          setRacePredictorOpen(false);
+          const noActiveGoal =
+            me.summary?.goal_type === "none" || !me.summary?.active_goal;
+          if (noActiveGoal) {
+            setProfileDrawerMode("edit");
+            setProfileDrawerOpen(true);
+            return;
+          }
+          if (me.tp.connected && !busy) {
+            setDraft("");
+            void handleSendPrompt(BUILD_PLAN_PROMPT, true, BUILD_PLAN_ACTION);
+          }
+        }}
+        onOpenTrainingPeaks={() => {
+          setRacePredictorOpen(false);
+          setTpDialogOpen(true);
+        }}
       />
 
       <ProfilePanel

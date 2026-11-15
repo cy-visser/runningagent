@@ -9,7 +9,12 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from .auth import normalize_email
-from .profile_model import ProfileUpdatePayload, apply_profile_edit, profile_state_for
+from .profile_model import (
+    ProfileUpdatePayload,
+    apply_profile_edit,
+    profile_state_for,
+    resolve_active_race_goal,
+)
 from .settings import Settings
 from .trainingpeaks import (
     ConnectConflictError,
@@ -19,6 +24,7 @@ from .trainingpeaks import (
 )
 
 CREDENTIAL_DOC_ID = "trainingpeaks"
+RACE_PROJECTION_DOC_ID = "race_projection"
 # Never sent to the browser. `key_events` is the coach's hidden memory: not shown and not editable (edits
 # patch only the payload's fields, so it is preserved).
 INTERNAL_PROFILE_FIELDS = ("latitude", "longitude", "key_events")
@@ -70,6 +76,19 @@ class ProfileStore:
             "tp_name": data.get("tp_name") if connected else None,
             "updated_at": data.get("updated_at") if connected else None,
         }
+
+    async def get_race_projection_cache(self, runner_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not runner_id:
+            return None
+        snap = await self._db().document(f"users/{runner_id}/cache/{RACE_PROJECTION_DOC_ID}").get()
+        if not snap.exists:
+            return None
+        return snap.to_dict() or None
+
+    async def delete_race_projection_cache(self, runner_id: Optional[str]) -> None:
+        if not runner_id:
+            return
+        await self._db().document(f"users/{runner_id}/cache/{RACE_PROJECTION_DOC_ID}").delete()
 
     async def connect_trainingpeaks(
         self,
@@ -142,6 +161,7 @@ class ProfileStore:
         if not found:
             raise LookupError("No runner profile is linked to this account yet.")
         runner_id, existing = found
+        old_key = resolve_active_race_goal(existing)["goal_key"]
         updates, deleted = apply_profile_edit(existing, edit)
         firestore_patch: dict[str, Any] = dict(updates)
         for field_name in deleted:
@@ -150,5 +170,7 @@ class ProfileStore:
         user_ref = self._db().document(f"users/{runner_id}")
         await user_ref.update(firestore_patch)
         refreshed = (await user_ref.get()).to_dict() or {}
+        if resolve_active_race_goal(refreshed)["goal_key"] != old_key:
+            await self.delete_race_projection_cache(runner_id)
         clean = {k: v for k, v in refreshed.items() if k not in INTERNAL_PROFILE_FIELDS}
         return runner_id, clean

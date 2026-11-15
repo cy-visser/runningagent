@@ -98,7 +98,7 @@ terraform apply
     *   `running-coach-agent@...` (Agent Runtime — `roles/cloudkms.cryptoKeyDecrypter`, Firestore, Vertex AI, Trace/Logs).
     *   `running-coach-web@...` (Cloud Run Web App — `roles/cloudkms.cryptoKeyEncrypter`, Firestore, `aiplatform.user`).
 *   **Cloud KMS**: Keyring `running-coach` and symmetric key `tp-cookie` (90-day rotation).
-*   **Firestore Indexes & TTL**: `training_log` date index, `users.email` index, and `workout_analyses` TTL policy.
+*   **Firestore Indexes & TTL**: `training_log` date index, `users.email` index, and ADK `sessions` / `events` 7-day TTL policies.
 *   **Traces Bucket**: `gs://traces_runningagent` for GenAI prompt/response completion logs.
 
 ### Phase 2: Deploy Agent Runtime & Cloud Run Web App

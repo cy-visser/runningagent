@@ -23,6 +23,17 @@ MAX_EXTRAPOLATION = 0.05
 
 HEAT_FEELS_LIKE_C = 20.0
 LT_FIT_WEEKS = 4             # rolling window for the weekly HR->pace fit
+RECENCY_HALF_LIFE_DAYS = 42.0
+MIN_RECENCY_WEIGHT = 0.25
+KEY_SESSION_WEIGHT = 2.0
+
+
+def recency_weight(session_date: Optional[date], today: Optional[date]) -> float:
+    """Smooth exponential decay (half-life 6 weeks, floor 0.25 at 12 weeks); 1.0 when `today` is omitted."""
+    if not session_date or not today or session_date >= today:
+        return 1.0
+    days = (today - session_date).days
+    return max(MIN_RECENCY_WEIGHT, 0.5 ** (days / RECENCY_HALF_LIFE_DAYS))
 
 
 def is_run(record: dict) -> bool:
@@ -43,18 +54,23 @@ def pct_of_lthr(hr: Optional[float], lthr: Optional[float]) -> Optional[float]:
 
 
 def threshold_lap_stats(
-    summaries: list[dict], lthr: Optional[float], tp_speed: Optional[float]
+    summaries: list[dict],
+    lthr: Optional[float],
+    tp_speed: Optional[float],
+    today: Optional[date] = None,
 ) -> Optional[dict]:
-    """Duration-weighted speed and %LTHR of threshold laps (goal-independent).
+    """Duration- and recency-weighted speed and %LTHR of threshold laps (goal-independent).
 
     Threshold laps: 8-40 min at 88-102% LTHR and, when a TP threshold pace is set,
     within 10% of it. Callers pass only the summaries that may contain them.
     """
     if not lthr:
         return None
-    total_s = weighted = hr_weighted = 0.0
+    total_s = weight_sum = weighted = hr_weighted = 0.0
     latest: Optional[date] = None
     for s in summaries:
+        ed = evidence_date(s)
+        rw = recency_weight(ed, today)
         for lap in s.get("laps", []):
             pct = pct_of_lthr(lap.get("hr"), lthr)
             d = lap.get("duration_s") or 0
@@ -63,26 +79,41 @@ def threshold_lap_stats(
                     or not THRESHOLD_HR_BAND[0] <= pct <= THRESHOLD_HR_BAND[1]
                     or (tp_speed and abs(lap["speed_ms"] / tp_speed - 1) > THRESHOLD_PACE_BAND)):
                 continue
+            w = d * rw
             total_s += d
-            weighted += lap["speed_ms"] * d
-            hr_weighted += pct * d
-            ed = evidence_date(s)
+            weight_sum += w
+            weighted += lap["speed_ms"] * w
+            hr_weighted += pct * w
             latest = max(latest, ed) if latest and ed else (ed or latest)
-    if not total_s:
+    if not total_s or not weight_sum:
         return None
-    return {"speed": weighted / total_s, "pct": hr_weighted / total_s, "total_s": total_s, "latest": latest}
+    return {"speed": weighted / weight_sum, "pct": hr_weighted / weight_sum, "total_s": total_s, "latest": latest}
 
 
-def steady_lap_points(summaries: list[dict], lthr: Optional[float]) -> list[tuple[float, float, float, Optional[date]]]:
-    """(hr, speed_ms, duration_s, date) for steady laps: >= 8 min and >= 70% LTHR."""
+def steady_lap_points(
+    summaries: list[dict],
+    lthr: Optional[float],
+    today: Optional[date] = None,
+    key_session_weight: float = 1.0,
+) -> list[tuple[float, float, float, Optional[date]]]:
+    """(hr, speed_ms, weight, date) for steady laps: >= 8 min and >= 70% LTHR."""
     if not lthr:
         return []
     pts = []
     for s in summaries:
+        if today is not None and is_hot(s):
+            continue
+        ed = evidence_date(s)
+        session_mult = (
+            key_session_weight
+            if s.get("session_kind") in ("race", "quality", "long")
+            else 1.0
+        )
+        mult = recency_weight(ed, today) * session_mult
         for lap in s.get("laps", []):
             hr, speed, d = lap.get("hr"), lap.get("speed_ms"), lap.get("duration_s") or 0
             if hr and speed and d >= STEADY_LAP_MIN_S and hr >= STEADY_MIN_HR * lthr:
-                pts.append((hr, speed, d, evidence_date(s)))
+                pts.append((hr, speed, d * mult, ed))
     return pts
 
 

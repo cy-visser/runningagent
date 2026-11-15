@@ -24,13 +24,18 @@ export interface NorthStarSummary {
   race_date?: string | null;
 }
 
+export type GoalMode = "single" | "plan" | "none";
+
 export interface ProfileSummary {
   firstname: string;
   lastname: string;
   full_name: string;
   location?: string | null;
-  goal_type: "single" | "plan";
+  goal_type: GoalMode;
   active_goal?: string | null;
+  active_goal_kind?: "single" | "sub_goal" | "north_star" | null;
+  active_goal_planned?: boolean;
+  has_active_race_goal?: boolean;
   active_race_name?: string | null;
   active_date?: string | null;
   weeks_remaining?: number | null;
@@ -98,7 +103,7 @@ export interface RunnerProfile {
   height?: string | null;
   weight?: string | null;
   location?: string | null;
-  goal_type?: "single" | "plan" | null;
+  goal_type?: GoalMode | null;
   training_goal?: string | null;
   timeline?: string | null;
   taper_weeks?: number | null;
@@ -127,7 +132,7 @@ export interface ProfileUpdatePayload {
   height?: string | null;
   weight?: string | null;
   location?: string | null;
-  goal_type: "single" | "plan";
+  goal_type: GoalMode;
   training_goal?: string | null;
   timeline?: string | null;
   taper_weeks?: number | null;
@@ -637,4 +642,81 @@ export interface ChatStreamHandlers {
   onMessage?: (payload: { text: string; kind: MessageKind }) => void;
   onError?: (message: string) => void;
   onDone?: (sessionId: string) => void;
+}
+
+export interface RacePredictorActiveGoal {
+  kind?: "single" | "sub_goal" | "north_star" | null;
+  training_goal?: string | null;
+  race_name?: string | null;
+  race_date?: string | null;
+  start_date?: string | null;
+  goal_label?: string | null;
+  planned?: boolean;
+  before_start?: boolean;
+  weeks_remaining?: number | null;
+  sub_goal_step?: number | null;
+  sub_goal_total?: number | null;
+}
+
+export interface RacePredictorNorthStar {
+  training_goal?: string | null;
+  goal_label?: string | null;
+  race_name?: string | null;
+  race_date?: string | null;
+  target_s?: number | null;
+  equivalent_s?: number | null;
+  gap_s?: number | null;
+}
+
+export interface RacePredictorProjection {
+  goal_label?: string | null;
+  today_s?: number | null;
+  race_day_s?: number | null;
+  today_pace_s_per_km?: number | null;
+  race_pace_s_per_km?: number | null;
+  goal_s?: number | null;
+  gap_s?: number | null;
+  range_s?: [number, number] | null;
+  confidence?: string | null;
+  stale: boolean;
+  readiness?: string | null;
+  durability?: string | null;
+  signals?: string[];
+  drivers?: CheckinDriver[];
+}
+
+export interface RacePredictorTriggerWorkout {
+  workout_id: string;
+  date: string;
+  title: string;
+  quality_km: number;
+}
+
+export interface RaceProjectionCacheDoc {
+  version: number;
+  updated_at: string;
+  as_of_date: string;
+  trigger: string;
+  trigger_workout?: RacePredictorTriggerWorkout | null;
+  goal_key: string;
+  active_goal: RacePredictorActiveGoal;
+  north_star?: RacePredictorNorthStar | null;
+  window_weeks: number;
+  key_sessions_count: number;
+  projection?: RacePredictorProjection | null;
+}
+
+export type RacePredictorStatus =
+  | "ready"
+  | "no_goal"
+  | "insufficient_data"
+  | "tp_not_connected";
+
+export interface RacePredictorResponse {
+  status: RacePredictorStatus;
+  reason?: string | null;
+  tp_connected: boolean;
+  cached: boolean;
+  active_goal?: RacePredictorActiveGoal | null;
+  data?: RaceProjectionCacheDoc | null;
 }

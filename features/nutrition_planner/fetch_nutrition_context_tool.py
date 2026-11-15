@@ -18,12 +18,7 @@ async def fetch_nutrition_context(
     tool_context: ToolContext,
     days_forward: int = 3,
 ) -> str:
-    """Upcoming training and the weather forecast for fueling and hydration guidance (biometrics and
-    goal are in the runner profile).
-
-    Args:
-        days_forward: Days ahead to plan (default 3).
-    """
+    """Upcoming workouts and weather forecast for fueling/hydration (`days_forward` default 3)."""
     profile = tool_context.state.get("user_profile") or {}
     today_date = get_today_date()
     end_date = today_date + timedelta(days=days_forward)

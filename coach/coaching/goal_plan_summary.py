@@ -39,9 +39,7 @@ def format_goal_plan(profile: Optional[dict], today: Optional[date] = None) -> s
         "GOAL PLAN (north star with sub goals):",
         f"- North star: {ns_goal}{race_name}, race {ns['timeline']}{weeks}; "
         f"marathon-block start {ns['goal_set_date'] or 'not set'}; planned: {'yes' if ns['planned'] else 'no'}.",
-        "- Sub goals (each a full training block; results are progress toward the north star, "
-        "never pass/fail). Times shown as 'time -> north-star equivalent' (Riegel). Planned = its training "
-        "plan is already in TrainingPeaks:",
+        "- Sub goals ('time -> north-star Riegel equiv'; Planned = already in TrainingPeaks):",
         "",
         "| Sub goal | Block | Status | Planned | Target | Result | Result gap to north star |",
         "|---|---|---|---|---|---|---|",
@@ -73,8 +71,6 @@ def format_goal_plan(profile: Optional[dict], today: Optional[date] = None) -> s
     lines.append("")
     if current["kind"] == KIND_NORTH_STAR:
         lines.append(f"- Current block: the north-star block ({ns_goal}).")
-    else:
-        lines.append(f"- Current block: {current['training_goal']}, race {current['timeline']}.")
     if current["before_start"]:
         lines.append(
             f"- Between blocks: the next block starts {current['goal_set_date']}; "

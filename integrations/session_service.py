@@ -91,6 +91,7 @@ class CoachFirestoreSessionService(FirestoreSessionService):
             session_id=session_id
         )
         
+        await self._stamp_session_expiry(session)
         session.state = desanitize_state(session.state)
         return session
 
@@ -137,6 +138,17 @@ class CoachFirestoreSessionService(FirestoreSessionService):
         if not event.partial:
             await self._refresh_expiry(session, event)
         return event
+
+    async def _stamp_session_expiry(self, session: Session) -> None:
+        """Stamps initial Firestore TTL on a newly created session document."""
+        if getattr(self, "client", None) is None:
+            return
+        expire_at = datetime.now(timezone.utc) + STORAGE_TTL
+        session_ref = self._get_sessions_ref(session.app_name, session.user_id).document(session.id)
+        try:
+            await session_ref.update({EXPIRE_AT_FIELD: expire_at})
+        except Exception as e:
+            logger.warning(f"Failed to set initial expire_at for session '{session.id}': {e}")
 
     async def _refresh_expiry(self, session: Session, event: Event) -> None:
         """Pushes the session's Firestore TTL forward and stamps the new event (TTL never cascades)."""

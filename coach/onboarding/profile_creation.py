@@ -220,6 +220,10 @@ async def create_profile_step(ctx: Context) -> str:
         profile[KEY_EVENTS_FIELD] = existing[KEY_EVENTS_FIELD]
 
     await firestore.save_user_profile(user_id, profile)
+    try:
+        await firestore.delete_race_projection(user_id)
+    except Exception as exc:
+        logger.debug("Ignoring race projection cache delete error for %s: %s", user_id, exc)
     sync_profile_to_state(ctx, profile)
 
     ctx.state["temp_onboarding_data"] = None

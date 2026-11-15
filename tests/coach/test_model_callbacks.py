@@ -102,12 +102,17 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
         r.tools_dict.update({d.name: d for d in decls})
         return r
 
-    # 1. Plain chat: internal tools AND stage_training_plan hidden; apply_staged_changes stays declared.
+    # 1. Plain chat without staged changes: internal tools, stage_training_plan AND apply_staged_changes hidden.
     req = make_req([_user("hi")])
     hide_internal_tools(None, req)
     declared = {d.name for t in req.config.tools for d in t.function_declarations}
-    assert declared == {"load_skill", "apply_staged_changes", "get_weather"}
-    assert {"fetch_plan_context", "apply_training_plan", "stage_training_plan"} <= set(req.tools_dict)
+    assert declared == {"load_skill", "get_weather"}
+    assert {"fetch_plan_context", "apply_training_plan", "stage_training_plan", "apply_staged_changes"} <= set(req.tools_dict)
+
+    # 1b. Pending staged_workout_changes -> apply_staged_changes becomes declared for chat approval.
+    with_staged = make_req([_user("yes do it")])
+    hide_internal_tools(SimpleNamespace(state={"staged_workout_changes": {"changes": [{"title": "E 8"}]}}), with_staged)
+    assert "apply_staged_changes" in {d.name for t in with_staged.config.tools for d in t.function_declarations}
 
     # 2. Current turn loaded plan-builder -> stage_training_plan is declared for Step 2.
     plan_turn = make_req([
@@ -385,4 +390,79 @@ def test_drop_premature_staging_strips_blind_parallel_call_but_keeps_coded_call(
         ),
     ]))
     assert after_coach_model(SimpleNamespace(state={}, invocation_id="inv-coded"), coded) is None
+
+
+def test_create_session_stamps_initial_expire_at(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from google.adk.integrations.firestore.firestore_session_service import FirestoreSessionService
+    from google.adk.sessions.session import Session
+    from running_coach.integrations.session_service import EXPIRE_AT_FIELD, CoachFirestoreSessionService
+
+    updates: list[tuple[str, dict]] = []
+
+    class FakeDocRef:
+        def __init__(self, doc_id: str):
+            self.doc_id = doc_id
+
+        async def update(self, payload: dict):
+            updates.append((self.doc_id, payload))
+
+    svc = object.__new__(CoachFirestoreSessionService)
+    svc.client = SimpleNamespace()
+    monkeypatch.setattr(svc, "_get_sessions_ref", lambda app_name, user_id: SimpleNamespace(document=FakeDocRef))
+
+    async def fake_super_create(self, *, app_name, user_id, state=None, session_id=None):
+        return Session(id=session_id or "s-empty", app_name=app_name, user_id=user_id, state=state or {})
+
+    monkeypatch.setattr(FirestoreSessionService, "create_session", fake_super_create)
+
+    session = asyncio.run(svc.create_session(app_name="running_coach", user_id="web_u1"))
+    assert session.id == "s-empty"
+    assert len(updates) == 1
+    assert updates[0][0] == "s-empty"
+    assert EXPIRE_AT_FIELD in updates[0][1]
+
+
+def test_firestore_subcollection_writes_skip_phantom_eval_profiles(monkeypatch):
+    import asyncio
+    from running_coach.integrations import firestore as fs
+
+    fs.clear_known_runners_cache()
+    persisted_users = {"cyrille_visser": {"firstname": "Cyrille", "lastname": "Visser"}}
+    writes: list[tuple[str, str, dict]] = []
+    reads: list[tuple[str, str]] = []
+
+    async def fake_read(collection_path: str, doc_id: str):
+        reads.append((collection_path, doc_id))
+        if collection_path == "users":
+            return persisted_users.get(doc_id)
+        return None
+
+    async def fake_write(collection_path: str, doc_id: str, data: dict):
+        writes.append((collection_path, doc_id, data))
+
+    monkeypatch.setattr(fs, "read_document", fake_read)
+    monkeypatch.setattr(fs, "write_document", fake_write)
+
+    try:
+        # 1. Synthetic eval profile ("alex_runner") has no `users/alex_runner` doc -> all subcollection writes blocked.
+        asyncio.run(fs.save_training_record("alex_runner", "w1", {"date": "2026-11-12"}))
+        asyncio.run(fs.save_volume_history("alex_runner", {"weeks": []}))
+        asyncio.run(fs.save_race_projection("alex_runner", {"version": 1}))
+        assert writes == []
+
+        # 2. Real persisted runner ("cyrille_visser") -> verified once, cached in-memory, and writes proceed.
+        asyncio.run(fs.save_training_record("cyrille_visser", "w1", {"date": "2026-11-12"}))
+        asyncio.run(fs.save_volume_history("cyrille_visser", {"weeks": []}))
+        asyncio.run(fs.save_race_projection("cyrille_visser", {"version": 1}))
+        assert [w[:2] for w in writes] == [
+            ("users/cyrille_visser/training_log", "w1"),
+            ("users/cyrille_visser/cache", "volume_history"),
+            ("users/cyrille_visser/cache", "race_projection"),
+        ]
+        assert reads.count(("users", "cyrille_visser")) == 1
+    finally:
+        fs.clear_known_runners_cache()
+
 

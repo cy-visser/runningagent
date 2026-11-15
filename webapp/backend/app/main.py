@@ -16,7 +16,12 @@ from pydantic import BaseModel, Field
 from .agent_client import AgentRuntimeClient
 from .auth import AuthenticatedUser, current_user, derive_initials
 from .events import TurnEventTranslator, format_sse
-from .profile_model import ProfileUpdatePayload, profile_state_for, summarize_profile
+from .profile_model import (
+    ProfileUpdatePayload,
+    profile_state_for,
+    resolve_active_race_goal,
+    summarize_profile,
+)
 from .profiles import ProfileStore
 from .quick_actions import QuickAction
 from .settings import Settings, load_settings, validate_startup_settings
@@ -187,6 +192,111 @@ def create_app(
             "profile": updated,
             "summary": summarize_profile(updated),
         }
+
+    async def _resolve_race_predictor(
+        request: Request,
+        user: AuthenticatedUser,
+        *,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        store = _store(request)
+        found = await store.find_by_email(user.email)
+        runner_id = found[0] if found else None
+        profile = found[1] if found else None
+        tp = await store.get_tp_status(runner_id)
+
+        if not found or not runner_id:
+            return {
+                "status": "no_goal",
+                "reason": "no_profile",
+                "tp_connected": tp["connected"],
+                "cached": False,
+                "active_goal": None,
+                "data": None,
+            }
+
+        goal_info = resolve_active_race_goal(profile)
+        if goal_info["status"] != "ok":
+            return {
+                "status": "no_goal",
+                "reason": goal_info["status"],
+                "tp_connected": tp["connected"],
+                "cached": False,
+                "active_goal": goal_info["active_goal"],
+                "data": None,
+            }
+
+        if not force_refresh:
+            cached = await store.get_race_projection_cache(runner_id)
+            if (
+                isinstance(cached, dict)
+                and cached.get("version") == 1
+                and cached.get("goal_key") == goal_info["goal_key"]
+            ):
+                return {
+                    "status": "ready" if cached.get("projection") else "insufficient_data",
+                    "reason": None,
+                    "tp_connected": tp["connected"],
+                    "cached": True,
+                    "active_goal": cached.get("active_goal") or goal_info["active_goal"],
+                    "data": cached,
+                }
+
+        if not tp["connected"]:
+            return {
+                "status": "tp_not_connected",
+                "reason": "tp_not_connected",
+                "tp_connected": False,
+                "cached": False,
+                "active_goal": goal_info["active_goal"],
+                "data": None,
+            }
+
+        try:
+            await _agent(request).run_ephemeral_quick_action(
+                adk_user_id=user.adk_user_id,
+                auth_email=user.email,
+                quick_action={"skill": "check-in-report:project", "args": {}},
+            )
+        except Exception as exc:
+            logger.exception("Failed to compute 12-week race projection via Agent Runtime")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not compute race projection right now: {exc}",
+            ) from None
+
+        fresh = await store.get_race_projection_cache(runner_id)
+        if isinstance(fresh, dict) and fresh.get("goal_key") == goal_info["goal_key"]:
+            return {
+                "status": "ready" if fresh.get("projection") else "insufficient_data",
+                "reason": None,
+                "tp_connected": True,
+                "cached": False,
+                "active_goal": fresh.get("active_goal") or goal_info["active_goal"],
+                "data": fresh,
+            }
+        return {
+            "status": "insufficient_data",
+            "reason": None,
+            "tp_connected": True,
+            "cached": False,
+            "active_goal": goal_info["active_goal"],
+            "data": None,
+        }
+
+    @app.get("/api/race-predictor")
+    async def get_race_predictor(
+        request: Request,
+        user: AuthenticatedUser = Depends(current_user),
+    ) -> dict[str, Any]:
+        return await _resolve_race_predictor(request, user, force_refresh=False)
+
+    @app.post("/api/race-predictor/refresh")
+    async def refresh_race_predictor(
+        request: Request,
+        user: AuthenticatedUser = Depends(current_user),
+    ) -> dict[str, Any]:
+        return await _resolve_race_predictor(request, user, force_refresh=True)
 
     @app.post("/api/session/new")
     async def create_new_session(

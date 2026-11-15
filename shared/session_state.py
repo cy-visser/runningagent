@@ -8,6 +8,7 @@ AUTH_EMAIL_STATE_KEY = "user:auth_email"
 PLAN_CONTEXT_STATE_KEY = "plan_context_cache"
 STAGED_PLAN_STATE_KEY = "staged_training_plan"
 APPLIED_PLAN_STATE_KEY = "applied_training_plan"
+WORKOUT_REPORT_STATE_KEY = "workout_report_data"
 
 
 def sync_profile_to_state(ctx: Any, profile: dict) -> None:

@@ -157,21 +157,9 @@ resource "google_firestore_database" "default_db" {
   depends_on = [google_project_service.services]
 }
 
-# 7b. TTL policy on the workout-analysis cache (projection cache): Firestore deletes each
-#     document after its `expire_at` (workout date + 90 days, set by save_workout_analysis).
-#     No index_config: Enterprise-edition databases have no built-in single-field indexes.
-resource "google_firestore_field" "workout_analyses_ttl" {
-  project    = var.project_id
-  database   = google_firestore_database.default_db.name
-  collection = "workout_analyses"
-  field      = "expire_at"
-
-  ttl_config {}
-}
-
-# 7b-sessions. TTL on ADK session data: the agent stamps `expire_at` (last activity + 7 days)
-#              on every session doc and event doc; Firestore deletes both. TTL never cascades
-#              to subcollections, so `events` needs its own policy.
+# 7b. TTL on ADK session data: the agent stamps `expire_at` (last activity + 7 days)
+#     on every session doc and event doc; Firestore deletes both. TTL never cascades
+#     to subcollections, so `events` needs its own policy.
 resource "google_firestore_field" "sessions_ttl" {
   project    = var.project_id
   database   = google_firestore_database.default_db.name

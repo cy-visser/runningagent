@@ -35,12 +35,6 @@ def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
 
     env = FakeRunnerEnv(data_file_path=str(data_file))
 
-    async def fake_get_cached_analysis(user_id: str, workout_id: str) -> Any:
-        return env.analysis_cache.get((user_id, str(workout_id)))
-
-    async def fake_save_cached_analysis(user_id: str, workout_id: str, summary: dict) -> None:
-        env.analysis_cache[(user_id, str(workout_id))] = summary
-
     async def fake_list_records(user_id: str, start: str, end: str) -> list[dict]:
         return [
             r for r in env.training_records.values()
@@ -103,12 +97,23 @@ def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
     async def fake_save_volume_history(user_id: str, payload: dict) -> None:
         env.volume_history_cache[user_id] = json.loads(json.dumps(payload))
 
+    async def fake_get_race_projection(user_id: str) -> dict | None:
+        doc = env.race_projection_cache.get(user_id)
+        return json.loads(json.dumps(doc)) if doc else None
+
+    async def fake_save_race_projection(user_id: str, payload: dict) -> None:
+        env.race_projection_cache[user_id] = json.loads(json.dumps(payload))
+
+    async def fake_delete_race_projection(user_id: str) -> None:
+        env.race_projection_cache.pop(user_id, None)
+
     monkeypatch.setattr(dates, "_now", lambda: env.now)
 
-    monkeypatch.setattr(firestore, "get_cached_workout_analysis", fake_get_cached_analysis)
-    monkeypatch.setattr(firestore, "save_workout_analysis", fake_save_cached_analysis)
     monkeypatch.setattr(firestore, "get_cached_volume_history", fake_get_volume_history)
     monkeypatch.setattr(firestore, "save_volume_history", fake_save_volume_history)
+    monkeypatch.setattr(firestore, "get_cached_race_projection", fake_get_race_projection)
+    monkeypatch.setattr(firestore, "save_race_projection", fake_save_race_projection)
+    monkeypatch.setattr(firestore, "delete_race_projection", fake_delete_race_projection)
     monkeypatch.setattr(firestore, "list_training_records", fake_list_records)
     monkeypatch.setattr(firestore, "save_training_record", fake_save_record)
     monkeypatch.setattr(firestore, "get_user_profile", fake_get_profile)

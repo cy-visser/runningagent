@@ -353,3 +353,65 @@ def test_apply_plan_button_writes_one_week_without_any_llm_call(runner, monkeypa
     assert s.state["applied_training_plan"]["weeks_done"] == [1]
     assert events[-1].actions.skip_summarization
     assert not [w for e in events for w in e.actions.render_ui_widgets or []]    # intermediate week: no bubble
+
+
+def test_typed_standalone_workout_and_report_prompts_pre_dispatch_and_auto_align_sport_skill(runner, monkeypatch):
+    from datetime import date
+    from running_coach.coach.coaching.quick_actions import infer_typed_quick_action
+
+    today = date(2026, 11, 15)
+    assert infer_typed_quick_action("Analyze todays bike session", today) == {
+        "skill": "bike-workout-analysis",
+        "args": {"date_str": "today", "sport": "bike"},
+    }
+    assert infer_typed_quick_action("Analyze oct 15th", today) == {
+        "skill": "workout-analysis",
+        "args": {"date_str": "2026-10-15"},
+    }
+    assert infer_typed_quick_action("Audit my plan", today) == {"skill": "plan-audit", "args": {}}
+    # Nuanced, multi-clause, non-workout or question prompts stay on normal LLM routing.
+    for non_match in (
+        "Analyze today's run and move Thursday's tempo",
+        "Analyze oct 15th — why was my HR so high?",
+        "Analyze my marathon goal",
+        "My calf hurt on today's run",
+        "What should I do tomorrow?",
+    ):
+        assert infer_typed_quick_action(non_match, today) is None, non_match
+
+    llm = RecordingLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        # 1. Explicit bike typed prompt -> 1 LLM call, bike-workout-analysis loaded, zero tool schemas on synthesis.
+        bike_events = await _turn(r, session.id, "Analyze oct 22nd bike session")
+        # 2. Date-only typed prompt on a bike-only day (2026-10-22 is Z2 Spin) -> pre-dispatches without sport,
+        #    then align_workout_skill swaps the loaded instructions from workout-analysis -> bike-workout-analysis!
+        date_only_events = await _turn(r, session.id, "Analyze oct 22nd")
+        return bike_events, date_only_events
+
+    bike_events, date_only_events = asyncio.run(scenario())
+    assert _calls(bike_events) == [
+        ("load_skill", {"skill_name": "bike-workout-analysis"}),
+        ("analyze_workout", {"date_str": "2026-10-22", "sport": "bike"}),
+    ]
+    assert _calls(date_only_events) == [
+        ("load_skill", {"skill_name": "workout-analysis"}),
+        ("analyze_workout", {"date_str": "2026-10-22"}),
+    ]
+    assert len(llm.requests) == 2
+    for req in llm.requests:
+        assert req.config.tools == []
+        assert "SKILL ROUTING" not in _system_text(req)
+    # Date-only synthesis request received the swapped bike-workout-analysis protocol:
+    swapped_resps = [
+        p.function_response.response
+        for p in llm.requests[1].contents[-1].parts or []
+        if p.function_response and p.function_response.name == "load_skill"
+    ]
+    assert len(swapped_resps) == 1 and swapped_resps[0]["skill_name"] == "bike-workout-analysis"
+    assert "# Bike Workout Analysis Skill" in swapped_resps[0]["instructions"]
+

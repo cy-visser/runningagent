@@ -157,7 +157,7 @@ class ProfileUpdatePayload(BaseModel):
     height: Optional[str] = Field(default=None, max_length=40)
     weight: Optional[str] = Field(default=None, max_length=40)
     location: Optional[str] = Field(default=None, max_length=120)
-    goal_type: Literal["single", "plan"]
+    goal_type: Literal["single", "plan", "none"]
     training_goal: Optional[str] = Field(default=None, max_length=160)
     timeline: Optional[str] = None
     taper_weeks: Optional[float] = Field(default=None, ge=0.5, le=6.0)
@@ -175,7 +175,14 @@ class ProfileUpdatePayload(BaseModel):
         for attr in ("age", "height", "weight", "location", "injuries"):
             setattr(self, attr, _opt_str(getattr(self, attr)))
 
-        if self.goal_type == "single":
+        if self.goal_type == "none":
+            self.training_goal = None
+            self.timeline = None
+            self.taper_weeks = None
+            self.planned = False
+            self.north_star = None
+            self.sub_goals = []
+        elif self.goal_type == "single":
             self.training_goal = _opt_str(self.training_goal)
             if not self.training_goal:
                 raise ValueError("training_goal is required for a single goal.")
@@ -197,6 +204,33 @@ class ProfileUpdatePayload(BaseModel):
             self.training_goal = None
             self.timeline = None
         return self
+
+
+# Mirrors running_coach/shared/goal_distance.py so the standalone web BFF resolves race distances identically.
+_WEB_DISTANCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("ultra", re.compile(r"\bultra\b|\b(50|100)\s?(k|km|mi|miles?)\b")),
+    ("half", re.compile(r"\bhalf\b|\b21(\.1)?\s?km?\b")),
+    ("10mi", re.compile(r"\b(10|ten)[\s-]?mi(les?)?\b|\b16(\.1)?\s?km?\b")),
+    ("marathon", re.compile(r"\bmarathon\b|\b42(\.2)?\s?km?\b")),
+    ("10k", re.compile(r"\b10\s?km?\b")),
+    ("5k", re.compile(r"\b5\s?km?\b")),
+)
+_WEB_GOAL_LABELS = {
+    "5k": "5K",
+    "10k": "10K",
+    "10mi": "10 Mile",
+    "half": "Half Marathon",
+    "marathon": "Marathon",
+}
+
+
+def resolve_web_goal_distance(goal_text: Optional[str]) -> Optional[str]:
+    """Returns '5K' | '10K' | '10 Mile' | 'Half Marathon' | 'Marathon' for supported race goals, else None."""
+    text = str(goal_text or "").lower()
+    for key, pattern in _WEB_DISTANCE_PATTERNS:
+        if pattern.search(text):
+            return _WEB_GOAL_LABELS.get(key)
+    return None
 
 
 def _sub_goal_key(goal: Optional[str], race_date: Optional[str]) -> tuple[str, str]:
@@ -241,7 +275,14 @@ def apply_profile_edit(
         "goal_type": edit.goal_type,
     }
 
-    if edit.goal_type == "single":
+    if edit.goal_type == "none":
+        updates["training_goal"] = None
+        updates["timeline"] = None
+        updates["taper_weeks"] = None
+        for cleared in ("north_star", "sub_goals", "planned", "goal_set_date"):
+            if cleared in existing:
+                delete_fields.append(cleared)
+    elif edit.goal_type == "single":
         goal_changed = (
             existing.get("goal_type") != "single"
             or (existing.get("training_goal") or "").strip() != (edit.training_goal or "").strip()
@@ -301,73 +342,11 @@ def profile_state_for(profile: Optional[dict[str, Any]]) -> Literal["none", "nee
         return "none"
     if profile.get("onboarding_pending"):
         return "needs_onboarding"
+    if profile.get("goal_type") == "none":
+        return "ready"
     has_single = bool(profile.get("training_goal") or profile.get("timeline"))
     has_plan = bool((profile.get("north_star") or {}).get("goal"))
     return "ready" if (has_single or has_plan) else "needs_onboarding"
-
-
-def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] = None) -> Optional[dict[str, Any]]:
-    """Compact summary for dashboard chips and header greeting."""
-    if not profile:
-        return None
-    ref = today or date.today()
-    fn = str(profile.get("firstname") or "").strip()
-    ln = str(profile.get("lastname") or "").strip()
-    goal_type = "plan" if profile.get("goal_type") == "plan" and isinstance(profile.get("north_star"), dict) else "single"
-
-    active_goal = profile.get("training_goal")
-    active_race_name = None
-    active_date = profile.get("timeline")
-    north_star_summary = None
-
-    if goal_type == "plan":
-        ns = profile.get("north_star") or {}
-        north_star_summary = {
-            "goal": ns.get("goal"),
-            "race_name": ns.get("race_name"),
-            "race_date": ns.get("race_date"),
-        }
-        chosen = None
-        for sg in profile.get("sub_goals") or []:
-            if not isinstance(sg, dict):
-                continue
-            try:
-                rd = date.fromisoformat(str(sg.get("race_date") or "")[:10])
-            except ValueError:
-                continue
-            if rd >= ref:
-                chosen = sg
-                break
-        if chosen:
-            active_goal = chosen.get("goal")
-            active_race_name = chosen.get("race_name")
-            active_date = chosen.get("race_date")
-        else:
-            active_goal = ns.get("goal")
-            active_race_name = ns.get("race_name")
-            active_date = ns.get("race_date")
-
-    weeks_remaining: Optional[float] = None
-    if active_date:
-        try:
-            days = (date.fromisoformat(str(active_date)[:10]) - ref).days
-            weeks_remaining = max(0.0, round(days / 7.0, 1))
-        except ValueError:
-            weeks_remaining = None
-
-    return {
-        "firstname": fn,
-        "lastname": ln,
-        "full_name": f"{fn} {ln}".strip(),
-        "location": profile.get("location"),
-        "goal_type": goal_type,
-        "active_goal": active_goal,
-        "active_race_name": active_race_name,
-        "active_date": active_date,
-        "weeks_remaining": weeks_remaining,
-        "north_star": north_star_summary,
-        "all_goals_planned": all_goals_planned(profile, ref),
-    }
 
 
 def _race(goal_date: Any) -> Optional[date]:
@@ -377,10 +356,135 @@ def _race(goal_date: Any) -> Optional[date]:
         return None
 
 
+def _norm_iso(goal_date: Any) -> str:
+    parsed = _race(goal_date)
+    return parsed.isoformat() if parsed else str(goal_date or "").strip()
+
+
+def resolve_active_race_goal(
+    profile: Optional[dict[str, Any]],
+    today: Optional[date] = None,
+) -> dict[str, Any]:
+    """Resolves the active goal/sub-goal and cache `goal_key` (mirrors `running_coach.shared.goal_plan`)."""
+    ref = today or date.today()
+    if not profile or profile.get("goal_type") == "none":
+        return {"status": "no_goal", "goal_key": "none::", "active_goal": None, "north_star": None}
+
+    is_plan_mode = profile.get("goal_type") == "plan" and isinstance(profile.get("north_star"), dict)
+    if is_plan_mode:
+        subs = [s for s in (profile.get("sub_goals") or []) if isinstance(s, dict)]
+        subs.sort(key=lambda s: _race(s.get("race_date")) or date.max)
+        ns = profile.get("north_star") or {}
+        chosen_idx: Optional[int] = None
+        for idx, sg in enumerate(subs):
+            rd = _race(sg.get("race_date"))
+            if (rd or date.max) >= ref:
+                chosen_idx = idx
+                break
+        if chosen_idx is not None:
+            sg = subs[chosen_idx]
+            kind = "sub_goal"
+            goal_text = sg.get("goal")
+            race_name = sg.get("race_name")
+            race_date_raw = sg.get("race_date")
+            start_date_raw = sg.get("start_date")
+            planned = bool(sg.get("planned"))
+            step, total_subs = chosen_idx + 1, len(subs)
+        else:
+            kind = "north_star"
+            goal_text = ns.get("goal")
+            race_name = ns.get("race_name")
+            race_date_raw = ns.get("race_date")
+            start_date_raw = ns.get("start_date")
+            planned = bool(ns.get("planned"))
+            step, total_subs = None, len(subs) or None
+        ns_summary = {
+            "goal": ns.get("goal"),
+            "race_name": ns.get("race_name"),
+            "race_date": ns.get("race_date"),
+        }
+    else:
+        kind = "single"
+        goal_text = profile.get("training_goal")
+        race_name = None
+        race_date_raw = profile.get("timeline")
+        start_date_raw = profile.get("goal_set_date")
+        planned = bool(profile.get("planned"))
+        step, total_subs = None, None
+        ns_summary = None
+
+    clean_goal = str(goal_text or "").strip()
+    norm_race = _norm_iso(race_date_raw)
+    g_key = f"{kind}:{clean_goal.lower()}:{norm_race}"
+    r_day = _race(race_date_raw)
+    s_day = _race(start_date_raw)
+    weeks_remaining = round(max(0.0, (r_day - ref).days / 7.0), 1) if r_day else None
+    label = resolve_web_goal_distance(clean_goal)
+
+    active_payload = {
+        "kind": kind,
+        "training_goal": clean_goal or None,
+        "race_name": race_name,
+        "race_date": norm_race or None,
+        "start_date": s_day.isoformat() if s_day else (str(start_date_raw).strip() or None),
+        "goal_label": label,
+        "planned": planned,
+        "before_start": bool(s_day and ref < s_day),
+        "weeks_remaining": weeks_remaining,
+        "sub_goal_step": step,
+        "sub_goal_total": total_subs,
+    }
+
+    if not clean_goal:
+        return {"status": "no_goal", "goal_key": g_key, "active_goal": None, "north_star": ns_summary}
+    if kind != "sub_goal" and r_day and ref > r_day:
+        return {"status": "race_passed", "goal_key": g_key, "active_goal": active_payload, "north_star": ns_summary}
+    if not label:
+        return {"status": "non_race_goal", "goal_key": g_key, "active_goal": active_payload, "north_star": ns_summary}
+    return {"status": "ok", "goal_key": g_key, "active_goal": active_payload, "north_star": ns_summary}
+
+
+def summarize_profile(profile: Optional[dict[str, Any]], today: Optional[date] = None) -> Optional[dict[str, Any]]:
+    """Compact summary for dashboard chips and header greeting."""
+    if not profile:
+        return None
+    ref = today or date.today()
+    fn = str(profile.get("firstname") or "").strip()
+    ln = str(profile.get("lastname") or "").strip()
+    if profile.get("goal_type") == "none":
+        goal_type: Literal["single", "plan", "none"] = "none"
+    elif profile.get("goal_type") == "plan" and isinstance(profile.get("north_star"), dict):
+        goal_type = "plan"
+    else:
+        goal_type = "single"
+
+    resolved = resolve_active_race_goal(profile, ref)
+    active = resolved["active_goal"] or {}
+
+    return {
+        "firstname": fn,
+        "lastname": ln,
+        "full_name": f"{fn} {ln}".strip(),
+        "location": profile.get("location"),
+        "goal_type": goal_type,
+        "active_goal": active.get("training_goal"),
+        "active_goal_kind": active.get("kind"),
+        "active_goal_planned": bool(active.get("planned")),
+        "has_active_race_goal": resolved["status"] == "ok",
+        "active_race_name": active.get("race_name"),
+        "active_date": active.get("race_date"),
+        "weeks_remaining": active.get("weeks_remaining"),
+        "north_star": resolved["north_star"],
+        "all_goals_planned": all_goals_planned(profile, ref),
+    }
+
+
 def all_goals_planned(profile: Optional[dict[str, Any]], today: Optional[date] = None) -> bool:
     """At least one goal races today or later and every such goal is planned (Build Plan has nothing to do).
     Mirrors `running_coach.shared.goal_plan.all_future_goals_planned`."""
     profile = profile or {}
+    if profile.get("goal_type") == "none":
+        return False
     ref = today or date.today()
     if profile.get("goal_type") == "plan" and isinstance(profile.get("north_star"), dict):
         goals = [(s.get("race_date"), s.get("planned")) for s in profile.get("sub_goals") or [] if isinstance(s, dict)]

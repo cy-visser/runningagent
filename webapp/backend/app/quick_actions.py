@@ -15,8 +15,8 @@ QUICK_ACTION_STATE_KEY = "temp:quick_action"
 # Message part carrying the action (Agent Runtime's /api/run_sse drops state_delta): prefix + JSON.
 QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
 QUICK_ACTION_SKILLS = (
-    "check-in-report", "trend-analysis", "plan-audit", "workout-analysis", "workout-creator",
-    "plan-builder:intake", "plan-builder:apply",
+    "check-in-report", "check-in-report:project", "trend-analysis", "plan-audit", "workout-analysis",
+    "workout-creator", "plan-builder:intake", "plan-builder:apply",
 )
 
 IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
@@ -33,6 +33,13 @@ class _Action(BaseModel):
 
 class CheckinAction(_Action):
     skill: Literal["check-in-report"]
+
+
+class ProjectRaceAction(_Action):
+    """Internal zero-LLM 12-week race projection calculation writing to Firestore."""
+
+    skill: Literal["check-in-report:project"]
+    refresh_analysis_cache: Optional[bool] = None
 
 
 class TrendAction(_Action):
@@ -75,7 +82,7 @@ class PlanApplyAction(_Action):
 
 
 QuickAction = Annotated[
-    Union[CheckinAction, TrendAction, AuditAction, WorkoutAction, ApplyStagedAction, PlanIntakeAction,
-          PlanApplyAction],
+    Union[CheckinAction, ProjectRaceAction, TrendAction, AuditAction, WorkoutAction, ApplyStagedAction,
+          PlanIntakeAction, PlanApplyAction],
     Field(discriminator="skill"),
 ]

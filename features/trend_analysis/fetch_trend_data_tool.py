@@ -11,6 +11,7 @@ from ...shared.dates import get_today_date, iso_date
 from ...shared.goal_distance import resolve_goal_distance
 from ...shared.goal_plan import current_goal
 from ...shared.goal_projection.goal_trajectory import summarize_fitness
+from ...shared.goal_projection.projection_cache import save_projection_to_cache
 from ...shared.goal_projection.race_projection import build_goal_projection
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.runner_identity import profile_user_id
@@ -47,12 +48,7 @@ TREND_MIN_WEEKS, TREND_MAX_WEEKS = 6, 52
 
 
 async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
-    """Long-horizon training-log trends: progress, weekly load capacity, pacing, training patterns and
-    progress toward the goal / north star.
-
-    Args:
-        weeks: Weeks to analyse (6-52, default 26).
-    """
+    """Long-horizon training trend report (`weeks`: 6-52, default 26)."""
     profile = tool_context.state.get("user_profile")
     if not profile:
         return "Error: User profile not found in state."
@@ -115,8 +111,9 @@ async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
     try:
         race_projection = await build_goal_projection(
             tool_context, goal_label, profile, raw["workouts"] or [], fitness,
-            raw["athlete settings"], dated_metrics, today,
+            raw["athlete settings"], dated_metrics, today, training_records=records,
         )
+        await save_projection_to_cache(profile, race_projection, today, trigger="trend_analysis")
     except Exception:  # the projection must never break the trend report
         logger.exception("Goal projection failed in fetch_trend_data")
         race_projection = {"goal_label": goal_label, "projection": None}

@@ -206,23 +206,13 @@ async def _current_workouts(tool_context: ToolContext, workout_ids: list[str], c
 async def stage_workout_changes(
     tool_context: ToolContext, changes: list[dict[str, Any]], message: str = ""
 ) -> str:
-    """Stages <= 10 workout/note changes for the Update TrainingPeaks button.
+    """Stages <= 10 workout/note changes for Update TrainingPeaks.
 
-    `message`: 2-4 sentence coaching rationale + numeric risks (never list changes; shown above the table
-    and ends the turn; omit for plain moves/renames). Replaces any prior staged set.
-    Each item in `changes`:
-    - Workout: `date_str` (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS) and prefer compact `code` (`'E 8'`, `'R 6'`,
-      `'L 22 +6@M'`, `'T 2x15\\' r2\\''`, `'I 6x1k r2\\''`, `'Rp 10x200 r200'`, `'M 12k'`, `'P 4x2k@HM r2\\''`,
-      `'H 8x60" r90"'`, `'B 60\\' Z2'`, `'B 4x8\\' @SS r4\\''`, `'S 40\\' heavy-lower'` [`full`|`core-hips`|`plyo`|
-      `mobility`], `'X 40\\' swim'` [`walk`|`crosstrain`]) — builds exact builder, paces, strides, description &
-      totals automatically (omit `distance_km`/`duration_minutes`/`tss_planned`; optional `title`/`description`
-      override, `workout_id` or `create=true`, `strides=false` only to drop strides). Use `structure` only for
-      custom multi-step builders or surgical edits to `current_structure`; plain move/rename needs only
-      `workout_id` + `date_str` [+ `title`].
-    - Note: `kind='note'`, `date_str`, `title`, `description`.
-    - Delete: `delete=true` + `workout_id` or `date_str` + `sport` (note: `kind='note'`, `date_str`, `title`).
-    If `needs_structure` is returned, re-send ONLY the flagged items with `code` or complete `structure`
-    (ready items from this turn are kept automatically) without asking the runner.
+    `message`: 2-4 sentence rationale + numeric risks (ends turn; omit on plain move/rename).
+    `changes` items: move/rename (`workout_id` + `date_str` [+ `title`]); delete (`delete=true` + `workout_id`
+    or `date_str` + `sport`); note (`kind='note'`, `date_str`, `title`, `description`); create/edit (`date_str`
+    + compact `code` e.g. `'E 8'`, `'T 2x15\\' r2\\''`, `'L 22 +6@M'`, `'B 60\\' Z2'`, `'S 40\\' heavy-lower'`,
+    optional `workout_id`/`create=true`; load `workout-creator` first for full code/structure rules).
     """
     invocation = getattr(tool_context, "invocation_id", None)
     saved_cache = tool_context.state.get(_TP_CACHE_STATE_KEY)
