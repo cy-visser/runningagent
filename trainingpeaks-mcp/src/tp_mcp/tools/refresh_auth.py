@@ -89,6 +89,10 @@ async def tp_refresh_auth(browser: str = "auto") -> dict[str, Any]:
             "action_needed": "Run 'tp-mcp auth' manually.",
         }
 
+    from tp_mcp.client.http import TPClient
+
+    TPClient.reset_auth_cache()
+
     # SECURITY: Sanitize before returning to ensure no cookie leakage
     return _sanitize_result({
         "success": True,

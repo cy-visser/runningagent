@@ -14,9 +14,9 @@ COACH_THINKING_LEVEL = os.getenv("COACH_THINKING_LEVEL", "MEDIUM").upper()
 COACH_FALLBACK_MODEL = os.getenv("COACH_FALLBACK_MODEL", "gemini-3.8-flash")
 ONBOARDING_MODEL = os.getenv("ONBOARDING_MODEL", "gemini-3.1-flash-lite")
 
-# Retry 429s at the model call so tool side effects are never replayed (3 attempts = 2 retries).
+# Retry 429s once at the model call so tool side effects are never replayed (2 attempts = 1 retry).
 MODEL_RETRY_OPTIONS = types.HttpRetryOptions(
-    attempts=3, initial_delay=2, exp_base=4, http_status_codes=[429]
+    attempts=2, initial_delay=2, exp_base=4, http_status_codes=[429]
 )
 # Documented Gemini 3 escape hatch: the fallback model cannot validate the primary model's signatures.
 SKIP_SIGNATURE = b"skip_thought_signature_validator"

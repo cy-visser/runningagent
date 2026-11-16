@@ -53,7 +53,7 @@ def test_format_key_events_window_and_limit():
     recent = [_ev(f"2026-{m:02d}-01", summary=f"Event {m}") for m in range(1, 11)] + [
         _ev(f"2025-{m:02d}-15", summary=f"Older {m}") for m in range(6, 13)]
     text = format_key_events({"key_events": [old, *recent]}, today)
-    assert text.startswith("KEY EVENTS") and "cannot see this list" in text
+    assert text.startswith("KEY EVENTS") and "hidden from runner" in text
     assert "Ancient history" not in text                     # outside the ~18-month window
     assert len(text.splitlines()) == 1 + CONTEXT_MAX          # header + the most recent CONTEXT_MAX events
     assert text.splitlines()[-1] == "- 2026-10-01 injury: Event 10"

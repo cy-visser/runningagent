@@ -195,7 +195,8 @@ def test_build_plan_intake_reads_the_next_unplanned_goal_in_code_and_writes_one_
     assert call.config.thinking_config.thinking_level == types.ThinkingLevel.LOW
     system = _system_text(call)
     assert "PLAN INTAKE" in system and "SKILL ROUTING" not in system
-    assert "NEXT UNPLANNED GOAL: Sub-3:15 Marathon (London Marathon 2028)" in system
+    assert "- North star: Sub-3:15 Marathon (London Marathon 2028)" in system
+    assert "NEXT UNPLANNED GOAL (window 2027-02-15..2028-04-23)" in system
 
 
 def test_turn_after_build_plan_intake_stages_in_one_llm_call_without_reading_history_twice(runner, monkeypatch):

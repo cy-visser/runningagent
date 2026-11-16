@@ -14,7 +14,7 @@ from mcp.types import (
     Tool,
 )
 
-from tp_mcp.auth import get_credential, validate_auth
+from tp_mcp.auth import get_credential
 from tp_mcp.client.context import athlete_override
 from tp_mcp.tools import (
     tp_add_note_comment,
@@ -1420,32 +1420,39 @@ server = Server("trainingpeaks-mcp", on_list_tools=_on_list_tools, on_call_tool=
 
 
 async def _validate_auth_on_startup() -> bool:
-    """Validate authentication on server startup."""
+    """Validate authentication on server startup and seed TPClient caches."""
+    from tp_mcp.client.http import TPClient
+
     cred = get_credential()
     if not cred.success or not cred.cookie:
         logger.warning("No credential stored. Run 'tp-mcp auth' to authenticate.")
         return False
 
-    result = await validate_auth(cred.cookie)
-    if result.is_valid:
-        logger.info("Authentication valid (athlete_id: %s)", result.athlete_id)
+    async with TPClient() as client:
+        is_valid, athlete_id, message = await client.warm_auth()
+    if is_valid:
+        logger.info("Authentication valid (athlete_id: %s)", athlete_id)
         return True
-    else:
-        logger.warning("Authentication invalid: %s", result.message)
-        return False
+    logger.warning("Authentication invalid: %s", message)
+    return False
 
 
 async def run_server_async() -> None:
     """Run the MCP server (async)."""
-    logger.info("Starting TrainingPeaks MCP Server")
-    await _validate_auth_on_startup()
+    from tp_mcp.client.http import TPClient
 
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+    logger.info("Starting TrainingPeaks MCP Server")
+    try:
+        await _validate_auth_on_startup()
+
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    finally:
+        await TPClient.close_shared_client()
 
 
 def run_server() -> int:

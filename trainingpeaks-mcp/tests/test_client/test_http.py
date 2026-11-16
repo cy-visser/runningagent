@@ -201,3 +201,49 @@ class TestHandleResponse:
 
         assert result.success is True
         assert result.data is None
+
+
+class TestSharedHttpPoolAndWarmup:
+    """Tests for persistent httpx.AsyncClient reuse and startup auth cache seeding."""
+
+    @pytest.fixture(autouse=True)
+    async def _cleanup(self):
+        TPClient.reset_auth_cache()
+        await TPClient.close_shared_client()
+        yield
+        TPClient.reset_auth_cache()
+        await TPClient.close_shared_client()
+
+    @pytest.mark.asyncio
+    async def test_shared_client_reused_across_context_managers(self):
+        """Exiting `async with TPClient()` keeps the shared httpx pool open for the next call."""
+        async with TPClient() as client1:
+            shared1 = client1._client
+            assert shared1 is not None and not shared1.is_closed
+
+        async with TPClient() as client2:
+            shared2 = client2._client
+            assert shared2 is shared1 and not shared2.is_closed
+
+        await TPClient.close_shared_client()
+        assert shared1.is_closed
+        assert TPClient._shared_client is None
+
+    @pytest.mark.asyncio
+    async def test_warm_auth_seeds_token_and_athlete_caches(self):
+        """warm_auth populates shared token + athlete caches so later TPClients make 0 auth calls."""
+        client = TPClient()
+        client._exchange_cookie_for_token = AsyncMock(
+            return_value=APIResponse(success=True, data={"token": {"access_token": "tok-1", "expires_in": 3600}})
+        )
+        client.get = AsyncMock(return_value=APIResponse(success=True, data={"user": {"personId": 777}}))
+
+        ok, athlete_id, _ = await client.warm_auth()
+        assert ok is True and athlete_id == 777
+
+        # A brand-new TPClient instance already has a valid token and cached athlete ID
+        later = TPClient()
+        assert later._token_cache.is_valid()
+        later.get = AsyncMock()
+        assert await later.ensure_athlete_id() == 777
+        later.get.assert_not_called()

@@ -1,4 +1,5 @@
 from datetime import date
+from textwrap import dedent
 from typing import Any, Optional
 
 from google.adk.agents.readonly_context import ReadonlyContext
@@ -27,10 +28,10 @@ _COACH_ROLE = (
 )
 
 # Static coaching rules. Everything derived from the runner's profile (summary, goal plan,
-# `_GOAL_PLAN_LENS`, notices) is built by `build_profile_context` and injected exactly once per
+# goal reasoning, notices) is built by `build_profile_context` and injected exactly once per
 # model call by the `ensure_profile_context` callback. Sent on every model call, so keep them
 # tight: task-specific analysis guidance belongs in the skills.
-_ROUTING_RULES = """
+_ROUTING_RULES = dedent("""
     SKILL ROUTING:
     - Plain coaching chat (recovery timelines, starting/resuming running or strength, physiology, race strategy,
       gear): NO skill and NO tool call. Answer concisely (~150-300 words unless asked for more) directly from
@@ -60,41 +61,34 @@ _ROUTING_RULES = """
       with numbers; never list changes). That one call shows your message and ends the turn. Only when the runner
       approves already-staged changes in chat, call apply_staged_changes.
     - Data-backed skills from earlier turns become a stub: to follow one again, call load_skill again
-    in the same step as its data tool. Never reload a skill within the same turn.
+      in the same step as its data tool. Never reload a skill within the same turn.
     - New goal accepted -> request_new_goal. Ad-hoc weather -> get_weather.
     - KEY EVENTS: when the runner shares a non-goal race result, injury, illness, training break/travel, or major
       life change not already in KEY EVENTS, call record_key_event alongside your reply without mentioning saving it.
     - REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data) each render a report card: call one
       only when the runner asks for that report. Never use one as a data lookup; use the profile block and this chat.
-"""
+""").strip()
 
-_GOAL_REASONING_HEAD = (
-    "GOAL REASONING (applies to every skill; tools return facts, you draw every conclusion):"
+_GOAL_REASONING_HEAD = "GOAL REASONING:"
+_GOAL_REASONING_NO_GOAL = (
+    "- No goal is set: reason toward aerobic development, consistency & injury-free progression; "
+    "offer request_new_goal once when useful."
 )
-_GOAL_REASONING_NO_GOAL = """
-    - No goal is set: reason toward aerobic development, consistency and injury-free progression; offer
-      request_new_goal once when useful.
-"""
-_GOAL_REASONING_GOAL = """
-    - Goal: judge every assessment and recommendation by what it does for {goal} on {race} ({weeks}). Weigh the
-      runner's profile, PRs, goal plan, background and any workout/report numbers in this conversation; no generic
-      rules, fixed cut-offs, or "10% rule".
-"""
-_GOAL_REASONING_NORTH_STAR = """
-    - North star: {ns} on {ns_race} ({ns_weeks}). Judge both levels: say what each finding means for the
-      current goal AND for the north star (long-run durability, volume toward north-star peak, and aerobic-base
-      trajectory: the north-star CTL range is where CTL peaks on race day, so judge it with the time left,
-      never today's CTL against it). When they pull apart, state which you prioritise and why; never
-      flag both sides as risks.
-    - Sub-goal results are progress, never pass/fail or a reason to offer onboarding; note Riegel marathon
-      equivalents are optimistic without marathon volume.
-"""
-_GOAL_REASONING_NUMBERS = """
-    - Numbers: tool numbers are measured facts; never alter or invent them. State when an estimate is yours and
-      how you derived it; literature values inform, never decide.
-"""
+_GOAL_REASONING_GOAL = (
+    "- Goal: judge every assessment & recommendation for {goal} on {race} ({weeks}) from profile, PRs & chat numbers; "
+    'no generic rules or "10% rule".'
+)
+_GOAL_REASONING_PLAN = (
+    "- Judge every finding for BOTH current goal ({goal}) & north star ({ns}: LR durability, volume, CTL: "
+    "judge it with the time left, never today's CTL against it); weigh profile/PRs/chat numbers, "
+    'no generic/"10%" rules; when they pull apart, state priority & why, never flag both sides as risks; '
+    "sub-goal results=progress (not pass/fail or re-onboard), Riegel M equivs need M volume."
+)
+_GOAL_REASONING_NUMBERS = (
+    "- Numbers: never alter or invent tool numbers; state estimate math; literature informs only."
+)
 
-_CONTRACT_RULES = """
+_CONTRACT_RULES = dedent("""
     CRITICAL COACHING CONTRACT:
     1. Coach, not assistant: protect long-term progression over short-term enthusiasm.
     2. Challenge before complying: when a request conflicts with load, recovery, ramp, injury or taper data, state
@@ -106,8 +100,9 @@ _CONTRACT_RULES = """
     5. No filler praise ("Great question", "Awesome work"). Lead with the assessment.
     6. State uncertainty plainly when data is missing, stale, or ambiguous.
     FORMATTING: clean Markdown, never LaTeX ($...$, \\rightarrow). Use -> or → and plain Pa:Hr, Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W. Prefix genuine issues, watchpoints, spacing/load conflicts, or pushbacks at the start of the bullet or paragraph with ⚠️ (caution/watch) or 🔴 (high risk/conflict); never prefix positive or normal items with ✅/🟢.
-"""
+""").strip()
 
+_NO_INJURY_TEXTS = frozenset({"no injuries", "no injuries.", "none", "none.", "n/a", "no", "nil"})
 
 # Delimiters of the profile block in the system instruction; `ensure_profile_context` replaces
 # an existing block instead of appending a second one.
@@ -117,6 +112,13 @@ PROFILE_CONTEXT_END = "</runner_profile>"
 
 def _present(value: Any) -> bool:
     return value is not None and str(value).strip() != ""
+
+
+def _meaningful_injuries(value: Any) -> str:
+    if not _present(value):
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in _NO_INJURY_TEXTS else text
 
 
 def _goal_line(profile: dict, today: Optional[date]) -> str:
@@ -137,7 +139,7 @@ def _goal_line(profile: dict, today: Optional[date]) -> str:
 
 
 def _block_line(profile: dict, today: Optional[date]) -> str:
-    """Current block details: race name, start date and taper override ('' when none are set)."""
+    """Current block details for single-goal profiles ('' when none are set)."""
     goal = current_goal(profile, today)
     parts = []
     if _present(goal.get("race_name")):
@@ -150,33 +152,31 @@ def _block_line(profile: dict, today: Optional[date]) -> str:
 
 
 def format_profile_summary(profile: dict, today: Optional[date] = None) -> str:
-    """Formats a token-efficient summary of every coaching-relevant profile field.
-
-    Empty fields are omitted. Identity plumbing (email, coordinates, onboarding flags) is left out.
-    """
+    """Formats a compact, lossless summary of coaching-relevant profile fields."""
     if not profile:
         return ""
     name = " ".join(str(profile[k]).strip() for k in ("firstname", "lastname") if _present(profile.get(k)))
-    age = f" (Age: {profile['age']})" if _present(profile.get("age")) else ""
-    stats = ", ".join(
-        f"{label}: {profile[key]}" for label, key in (("Height", "height"), ("Weight", "weight"))
-        if _present(profile.get(key))
-    )
+    meta = [
+        *([f"Age {profile['age']}"] if _present(profile.get("age")) else []),
+        *([str(profile[k]).strip() for k in ("height", "weight", "location") if _present(profile.get(k))]),
+    ]
+    who = f"{name} ({', '.join(meta)})" if name and meta else (name or ", ".join(meta))
+    times = training_times_text(profile)
+    if times:
+        who = f"{who} · Training times: {times}" if who else f"Training times: {times}"
+
+    has_plan = bool(north_star(profile))
     lines = [
-        f"Name: {name}{age}" if name or age else "",
-        f"Location: {profile['location']}" if _present(profile.get("location")) else "",
-        f"Stats: {stats}" if stats else "",
-        "" if north_star(profile) else _goal_line(profile, today),
-        _block_line(profile, today),
+        who,
+        "" if has_plan else _goal_line(profile, today),
+        "" if has_plan else _block_line(profile, today),
     ]
     prs = format_personal_records(profile.get("personal_records"))
     if prs:
         lines.append(f"PRs: {prs}")
-    if _present(profile.get("injuries")):
-        lines.append(f"Injuries: {profile['injuries']}")
-    times = training_times_text(profile)
-    if times:
-        lines.append(f"Training times: {times}")
+    injuries = _meaningful_injuries(profile.get("injuries"))
+    if injuries:
+        lines.append(f"Injuries: {injuries}")
     shoes = format_shoe_rotation(profile.get("shoe_rotation"))
     if shoes:
         lines.append(f"Shoes: {shoes}")
@@ -222,7 +222,7 @@ def _weeks_out(day: Optional[date], today: date) -> str:
     if not day:
         return "date not set"
     weeks = (day - today).days / 7
-    return f"{weeks:.0f} weeks out" if weeks >= 0 else "race passed"
+    return f"{weeks:.0f}w out" if weeks >= 0 else "race passed"
 
 
 def goal_reasoning(profile: dict, today: date) -> str:
@@ -231,38 +231,40 @@ def goal_reasoning(profile: dict, today: date) -> str:
     ns = north_star(profile)
     parts = [_GOAL_REASONING_HEAD]
     if not _present(goal.get("training_goal")):
-        parts.append(_GOAL_REASONING_NO_GOAL.strip("\n"))
+        parts.append(_GOAL_REASONING_NO_GOAL)
+    elif ns and goal["kind"] != KIND_NORTH_STAR:
+        parts.append(
+            _GOAL_REASONING_PLAN.format(
+                goal=goal["training_goal"],
+                ns=ns["training_goal"],
+            )
+        )
     else:
-        label = "the north-star block" if ns and goal["kind"] == KIND_NORTH_STAR else (
-            "the current block's goal" if ns else "the goal")
-        parts.append(_GOAL_REASONING_GOAL.format(
-            goal=f"{label} {goal['training_goal']}", race=goal.get("timeline") or "an unset date",
-            weeks=_weeks_out(race_day(goal), today),
-        ).strip("\n"))
-        if ns and goal["kind"] != KIND_NORTH_STAR:
-            parts.append(_GOAL_REASONING_NORTH_STAR.format(
-                ns=ns["training_goal"], ns_race=ns.get("timeline") or "an unset date",
-                ns_weeks=_weeks_out(race_day(ns), today),
-            ).strip("\n"))
-    parts.append(_GOAL_REASONING_NUMBERS.strip("\n"))
+        label = "the north-star block" if ns and goal["kind"] == KIND_NORTH_STAR else "the goal"
+        parts.append(
+            _GOAL_REASONING_GOAL.format(
+                goal=f"{label} {goal['training_goal']}",
+                race=goal.get("timeline") or "an unset date",
+                weeks=_weeks_out(race_day(goal), today),
+            )
+        )
+    parts.append(_GOAL_REASONING_NUMBERS)
     return "\n".join(parts)
 
 
 def planning_status(profile: dict, today: date) -> str:
-    """Which goal a new plan is for: the first unplanned goal and its block window ('' without future goals)."""
+    """Planning status line for single goals or when all future goals are already planned."""
     nxt = next_unplanned_goal(profile, today)
     if nxt:
+        if north_star(profile):
+            return ""  # already inlined on the matching goal bullet in `format_goal_plan`
         name = f" ({nxt['race_name']})" if _present(nxt.get("race_name")) else ""
         return (
-            f"NEXT UNPLANNED GOAL: {nxt['training_goal'] or 'goal race'}{name}, race {iso_date(nxt['window_end'])}; "
-            f"block window {iso_date(nxt['window_start'])} -> {iso_date(nxt['window_end'])}. A new plan is for this "
-            "goal only."
+            f"NEXT UNPLANNED GOAL: {nxt['training_goal'] or 'goal race'}{name}, "
+            f"window {iso_date(nxt['window_start'])}..{iso_date(nxt['window_end'])}."
         )
     if all_future_goals_planned(profile, today):
-        return (
-            "ALL GOALS ARE PLANNED: every upcoming goal already has its plan in TrainingPeaks. Do not plan an "
-            "existing block again unless the runner explicitly asks to rework it."
-        )
+        return "ALL GOALS ARE PLANNED: do not re-plan an existing block unless explicitly asked."
     return ""
 
 
@@ -273,25 +275,25 @@ def build_profile_context(profile: dict, today: Optional[date] = None) -> str:
     state or history. Injected only by `ensure_profile_context`.
     """
     today = today or get_today_date()
-    sections = [f"RUNNER PROFILE:\n{format_profile_summary(profile, today)}"]
-    goal_plan = format_goal_plan(profile, today)
-    if goal_plan:
-        sections.append(goal_plan)
-    planning = planning_status(profile, today)
-    if planning:
-        sections.append(planning)
-    key_events = format_key_events(profile, today)
-    if key_events:
-        sections.append(key_events)
-    sections.append(goal_reasoning(profile, today))
-    notice = goal_notice(profile, today)
-    if notice:
-        sections.append(notice)
-    return f"{PROFILE_CONTEXT_START}\n" + "\n\n".join(sections) + f"\n{PROFILE_CONTEXT_END}"
+    summary = format_profile_summary(profile, today)
+    first_lines = summary.splitlines()
+    runner_head = f"RUNNER PROFILE: {first_lines[0]}" if first_lines else "RUNNER PROFILE:"
+    runner_section = "\n".join([runner_head, *first_lines[1:]])
+    sections = [runner_section]
+    for block in (
+        format_goal_plan(profile, today),
+        planning_status(profile, today),
+        format_key_events(profile, today),
+        goal_reasoning(profile, today),
+        goal_notice(profile, today),
+    ):
+        if block:
+            sections.append(block)
+    return f"{PROFILE_CONTEXT_START}\n" + "\n".join(sections) + f"\n{PROFILE_CONTEXT_END}"
 
 
 # The Build Plan opener (plan-builder:intake quick action): the plan context is already in the request.
-_PLAN_INTAKE_RULES = """
+_PLAN_INTAKE_RULES = dedent("""
     PLAN INTAKE (this reply only; you cannot call tools): open the block definition for the NEXT UNPLANNED GOAL
     using the plan context above. At most ~180 words, in this order:
     1. One warm, personal line (profile, PRs, KEY EVENTS). No filler praise.
@@ -299,7 +301,7 @@ _PLAN_INTAKE_RULES = """
        long run (from the recent training), key session types, strength.
     3. At most 3 questions only the runner can answer (days available, long-run day, travel or constraints).
     No week-by-week phasing, no paces, no session lists, no plan yet: the plan is built once the runner agrees.
-"""
+""").strip()
 
 
 def build_coach_instruction(ctx: ReadonlyContext) -> str:
@@ -307,10 +309,11 @@ def build_coach_instruction(ctx: ReadonlyContext) -> str:
     state, invocation_id = ctx.state, getattr(ctx, "invocation_id", None)
     # A web quick action's report call already holds its skill and data and cannot call tools,
     # so the routing rules are omitted there (typed chat turns always get them).
+    parts = [_COACH_ROLE]
     if is_plan_intake(state, invocation_id):
-        routing = _PLAN_INTAKE_RULES
-    elif is_quick_action_report(state, invocation_id):
-        routing = ""
-    else:
-        routing = _ROUTING_RULES
-    return f"{_COACH_ROLE}\n{routing}{_CONTRACT_RULES}\nToday's date is {get_today_str(with_weekday=True)}."
+        parts.append(_PLAN_INTAKE_RULES)
+    elif not is_quick_action_report(state, invocation_id):
+        parts.append(_ROUTING_RULES)
+    parts.append(_CONTRACT_RULES)
+    parts.append(f"Today's date is {get_today_str(with_weekday=True)}.")
+    return "\n\n".join(parts)

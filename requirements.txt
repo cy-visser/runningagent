@@ -1,7 +1,7 @@
 google-adk[extensions,mcp,otel-gcp,gcp]==2.14.0
 google-cloud-firestore
 python-dotenv
-./agents/running_coach/tp_mcp-2.1.0-py3-none-any.whl
+./agents/running_coach/tp_mcp-2.1.1-py3-none-any.whl
 mcp>=2.3,<3
 google-cloud-kms
 opentelemetry-util-genai[upload]

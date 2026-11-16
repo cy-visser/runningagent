@@ -3,79 +3,128 @@
 from datetime import date
 from typing import Optional
 
-from ...shared.dates import get_today_date
+from ...shared.dates import get_today_date, iso_date
 from ...shared.goal_distance import resolve_target_peak_ctl
-from ...shared.goal_plan import KIND_NORTH_STAR, KIND_SUB_GOAL, blocks, current_goal, north_star, race_day
+from ...shared.goal_plan import (
+    KIND_NORTH_STAR,
+    KIND_SUB_GOAL,
+    blocks,
+    current_goal,
+    next_unplanned_goal,
+    north_star,
+    race_day,
+)
 from ...shared.race_equivalents import format_gap, goal_target_s, north_star_equivalent
 from ...shared.units import as_float, format_seconds_hms
 
 
-def _equivalent_cell(time_s: Optional[float], goal: Optional[str], ns_goal: Optional[str]) -> str:
-    if not time_s:
-        return "-"
-    equiv = north_star_equivalent(time_s, goal, ns_goal)
-    return f"{format_seconds_hms(time_s)} -> {format_seconds_hms(equiv)}" if equiv else format_seconds_hms(time_s)
+def _present(value: object) -> bool:
+    return value is not None and str(value).strip() != ""
 
 
-def _gap_cell(time_s: Optional[float], goal: Optional[str], ns_goal: Optional[str], ns_target_s: Optional[float]) -> str:
-    equiv = north_star_equivalent(time_s, goal, ns_goal)
-    return format_gap(equiv - ns_target_s) if equiv and ns_target_s else "-"
+def _block_details(block: dict, include_taper: bool = False) -> str:
+    parts = []
+    if _present(block.get("race_name")):
+        parts.append(str(block["race_name"]).strip())
+    if include_taper and _present(block.get("taper_weeks")):
+        taper = as_float(block.get("taper_weeks"))
+        parts.append(f"taper {taper:g}w" if taper is not None else f"taper {block['taper_weeks']}w")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+def _equiv_target(goal: Optional[str], ns_goal: Optional[str]) -> str:
+    target_s = goal_target_s(goal)
+    if not target_s:
+        return ""
+    equiv = north_star_equivalent(target_s, goal, ns_goal)
+    return f"->{format_seconds_hms(equiv)}" if equiv else format_seconds_hms(target_s)
+
+
+def _result_clause(result_s: Optional[float], goal: Optional[str], ns_goal: Optional[str], ns_target_s: Optional[float]) -> str:
+    if not result_s:
+        return ""
+    equiv = north_star_equivalent(result_s, goal, ns_goal)
+    rendered = f"{format_seconds_hms(result_s)}->{format_seconds_hms(equiv)}" if equiv else format_seconds_hms(result_s)
+    gap = format_gap(equiv - ns_target_s) if equiv and ns_target_s else ""
+    return f"result {rendered}" + (f" ({gap})" if gap else "")
+
+
+def _unplanned_tag(nxt: Optional[dict], block: dict) -> Optional[str]:
+    if not nxt or nxt["kind"] != block["kind"] or nxt.get("index") != block.get("index"):
+        return None
+    if block["kind"] == KIND_SUB_GOAL:
+        return "NEXT UNPLANNED GOAL"
+    return f"NEXT UNPLANNED GOAL (window {iso_date(nxt['window_start'])}..{iso_date(nxt['window_end'])})"
 
 
 def format_goal_plan(profile: Optional[dict], today: Optional[date] = None) -> str:
-    """Goal-plan block for the coach instruction and the check-in. '' for single goals."""
+    """Compact goal-plan block for the coach instruction. '' for single goals."""
     ns = north_star(profile)
     if not ns:
         return ""
     today = today or get_today_date()
     current = current_goal(profile, today)
+    nxt = next_unplanned_goal(profile, today)
     ns_goal = ns["training_goal"]
     ns_target_s = goal_target_s(ns_goal)
     ns_race = race_day(ns)
 
-    weeks = f", {max(0, (ns_race - today).days) / 7:.0f} weeks away" if ns_race else ""
-    race_name = f" ({ns['race_name']})" if ns.get("race_name") else ""
-    lines = [
-        "GOAL PLAN (north star with sub goals):",
-        f"- North star: {ns_goal}{race_name}, race {ns['timeline']}{weeks}; "
-        f"marathon-block start {ns['goal_set_date'] or 'not set'}; planned: {'yes' if ns['planned'] else 'no'}.",
-        "- Sub goals ('time -> north-star Riegel equiv'; Planned = already in TrainingPeaks):",
-        "",
-        "| Sub goal | Block | Status | Planned | Target | Result | Result gap to north star |",
-        "|---|---|---|---|---|---|---|",
-    ]
+    _, (lo, hi) = resolve_target_peak_ctl(ns_goal)
+    header_meta = ["equiv->NS", f"NS peak CTL {lo:.0f}-{hi:.0f}"]
+    if current["before_start"] and current.get("goal_set_date"):
+        header_meta.append(f"recovery until {current['goal_set_date']}")
+    lines = [f"GOAL PLAN ({'; '.join(header_meta)}):"]
+
+    ns_active = current["kind"] == KIND_NORTH_STAR
+    ns_meta = []
+    if ns_race:
+        ns_meta.append(f"{max(0, (ns_race - today).days) / 7:.0f}w")
+    if ns.get("goal_set_date"):
+        ns_meta.append(f"start {ns['goal_set_date']}")
+    if ns_active:
+        ns_meta.append("next" if current["before_start"] else "active")
+    ns_unplanned = _unplanned_tag(nxt, ns)
+    ns_meta.append(ns_unplanned if ns_unplanned else ("planned" if ns["planned"] else "unplanned"))
+    lines.append(
+        f"- North star: {ns_goal}{_block_details(ns, include_taper=ns_active)} "
+        f"{ns['timeline']} ({', '.join(ns_meta)})"
+    )
+
     for b in blocks(profile):
         if b["kind"] != KIND_SUB_GOAL:
             continue
         r_day = race_day(b)
-        if b["index"] == current["index"] and current["kind"] == KIND_SUB_GOAL:
-            status = "upcoming (next block)" if current["before_start"] else "active"
+        is_current = b["index"] == current["index"] and current["kind"] == KIND_SUB_GOAL
+        unplanned = _unplanned_tag(nxt, b)
+        tags = []
+        if is_current:
+            tags.append("next" if current["before_start"] else "active")
         elif r_day and r_day < today:
-            status = "done"
+            tags.append("done")
+        if unplanned:
+            tags.append(unplanned)
+        elif not (r_day and r_day < today):
+            tags.append("planned" if b["planned"] else "unplanned")
+
+        weeks = f" ({max(0, (r_day - today).days) / 7:.0f}w)" if is_current and r_day else ""
+        if unplanned and nxt is not None:
+            start_str, end_str = iso_date(nxt["window_start"]), iso_date(nxt["window_end"])
+            window = f"{start_str}..{end_str}{weeks}"
+        elif b.get("goal_set_date"):
+            window = f"{b['goal_set_date']}..{b['timeline']}{weeks}"
         else:
-            status = "upcoming"
+            window = f"{b['timeline']}{weeks}"
+        parts = [f"- {b['training_goal']}{_block_details(b, include_taper=is_current)}: {window}"]
+        if tags:
+            parts.append(", ".join(tags))
+        equiv = _equiv_target(b["training_goal"], ns_goal)
+        if equiv:
+            parts.append(equiv)
         result_s = as_float((b["result"] or {}).get("time_s"))
         if result_s:
-            result = _equivalent_cell(result_s, b["training_goal"], ns_goal)
-        elif status == "done":
-            result = "missing: ask the runner"
-        else:
-            result = "-"
-        lines.append(
-            f"| {b['training_goal']} | {b['goal_set_date']} -> {b['timeline']} | {status} | "
-            f"{'yes' if b['planned'] else 'no'} | "
-            f"{_equivalent_cell(goal_target_s(b['training_goal']), b['training_goal'], ns_goal)} | "
-            f"{result} | {_gap_cell(result_s, b['training_goal'], ns_goal, ns_target_s)} |"
-        )
+            parts.append(_result_clause(result_s, b["training_goal"], ns_goal, ns_target_s))
+        elif r_day and r_day < today:
+            parts.append("result missing: ask runner")
+        lines.append(" | ".join(parts))
 
-    lines.append("")
-    if current["kind"] == KIND_NORTH_STAR:
-        lines.append(f"- Current block: the north-star block ({ns_goal}).")
-    if current["before_start"]:
-        lines.append(
-            f"- Between blocks: the next block starts {current['goal_set_date']}; "
-            "treat this period as recovery/transition."
-        )
-    _, (lo, hi) = resolve_target_peak_ctl(ns_goal)
-    lines.append(f"- North-star peak CTL reference range: {lo:.0f}-{hi:.0f} (context for aerobic base).")
     return "\n".join(lines)

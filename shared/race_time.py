@@ -90,8 +90,28 @@ def format_personal_records(records: Any) -> str:
     return ", ".join(parts)
 
 
+_SHOE_PROMPT_LABELS: dict[str, str] = {
+    "easy": "Easy",
+    "tempo": "Tempo",
+    "interval": "Interval",
+    "long_run": "Long",
+    "race": "Race",
+}
+
+
 def format_shoe_rotation(shoes: Any) -> str:
-    """'Easy Superblast 2; Race Metaspeed Sky Paris' for prompts; empty string when nothing is set."""
+    """'Easy Superblast 2; Tempo/Interval Speed 5' for prompts; empty string when nothing is set."""
     if not isinstance(shoes, dict):
         return ""
-    return "; ".join(f"{label} {shoes[key]}" for key, label in SHOE_SLOTS if shoes.get(key))
+    grouped: dict[str, tuple[list[str], str]] = {}
+    for key, label in SHOE_SLOTS:
+        model = str(shoes.get(key) or "").strip()
+        if not model:
+            continue
+        short = _SHOE_PROMPT_LABELS.get(key, label)
+        norm = model.lower()
+        if norm in grouped:
+            grouped[norm][0].append(short)
+        else:
+            grouped[norm] = ([short], model)
+    return "; ".join(f"{'/'.join(labels)} {model}" for labels, model in grouped.values())

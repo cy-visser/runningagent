@@ -73,11 +73,10 @@ def test_planned_update_marks_goals_racing_inside_the_window():
 
 def test_profile_block_and_goal_plan_table_show_the_planning_status():
     block = build_profile_context(_plan(), TODAY)
-    assert ("NEXT UNPLANNED GOAL: Sub-43 10K (Schoorl 10K), race 2027-02-14; block window 2026-11-16 -> 2027-02-14"
-            in block)
-    assert "| Planned |" in format_goal_plan(_plan(sub1=True), TODAY)
-    assert "| Sub-43 10K | 2026-11-16 -> 2027-02-14 | upcoming (next block) | yes |" in format_goal_plan(
-        _plan(sub1=True), TODAY)
+    assert "- Sub-43 10K (Schoorl 10K): 2026-11-16..2027-02-14 (16w) | next, NEXT UNPLANNED GOAL" in block
+    plan_sub1 = format_goal_plan(_plan(sub1=True), TODAY)
+    assert "- Sub-43 10K (Schoorl 10K): 2026-11-16..2027-02-14 (16w) | next, planned |" in plan_sub1
+    assert "NEXT UNPLANNED GOAL (window 2027-02-15..2028-04-23)" in plan_sub1
     done = build_profile_context(_plan(sub1=True, ns=True), TODAY)
     assert "ALL GOALS ARE PLANNED" in done and "NEXT UNPLANNED GOAL" not in done
     assert "(Timeline: 2026-12-06; planned)" in build_profile_context({**SINGLE_PROFILE, "planned": True}, TODAY)

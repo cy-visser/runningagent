@@ -87,11 +87,7 @@ def format_key_events(profile: Optional[dict], today: Optional[date] = None) -> 
         return ""
     recent = sorted(recent, key=lambda e: str(e["date"]))[-CONTEXT_MAX:]
     lines = [f"- {e['date']} {e.get('type') or 'other'}: {e['summary']}" for e in recent]
-    return (
-        "KEY EVENTS (recorded by you, the coach, oldest first; the runner cannot see this list, so refer to the "
-        "events naturally, e.g. \"your calf strain in November\", never to a list or profile field):\n"
-        + "\n".join(lines)
-    )
+    return "KEY EVENTS (hidden from runner; refer naturally):\n" + "\n".join(lines)
 
 
 async def save_key_event(tool_context: Any, profile: Optional[dict], event: dict) -> bool:

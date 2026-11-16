@@ -69,8 +69,8 @@ def test_profile_is_in_every_model_call_exactly_once_and_never_in_history(runner
         si = _system_text(req)
         assert si.count(PROFILE_CONTEXT_START) == 1 and si.count(PROFILE_CONTEXT_END) == 1
         assert si.count("RUNNER PROFILE:") == 1 and si.count("GOAL REASONING") == 1
-        assert "Name: Cyrille Visser (Age: 38)" in si and "Past left Achilles tendinopathy" in si
-        assert "Current Block: Race: Schoorl 10K, Block start: 2026-11-16" in si
+        assert "Cyrille Visser (Age 38," in si and "Past left Achilles tendinopathy" in si
+        assert "Sub-43 10K (Schoorl 10K): 2026-11-16..2027-02-14" in si
         assert "None" not in si.split(PROFILE_CONTEXT_START)[1]                           # no empty fields
         # The profile is per-call system context only: it never piles up in conversation history.
         assert "RUNNER PROFILE" not in _contents_text(req)

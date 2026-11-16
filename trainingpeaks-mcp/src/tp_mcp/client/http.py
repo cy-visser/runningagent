@@ -117,6 +117,8 @@ class TPClient:
     _cached_user_data: dict | None = None
     _cached_user_data_future: asyncio.Future | None = None
     _shared_token_cache: TokenCache | None = None
+    _shared_client: httpx.AsyncClient | None = None
+    _shared_client_loop: asyncio.AbstractEventLoop | None = None
 
     @classmethod
     def _get_token_cache(cls) -> TokenCache:
@@ -124,6 +126,24 @@ class TPClient:
         if cls._shared_token_cache is None:
             cls._shared_token_cache = TokenCache()
         return cls._shared_token_cache
+
+    @classmethod
+    def reset_auth_cache(cls) -> None:
+        """Clear cached token, user data, and athlete ID (e.g. after cookie refresh)."""
+        cls._cached_athlete_id = None
+        cls._cached_user_data = None
+        cls._cached_user_data_future = None
+        if cls._shared_token_cache is not None:
+            cls._shared_token_cache.clear()
+
+    @classmethod
+    async def close_shared_client(cls) -> None:
+        """Close the shared process-level HTTP client pool if open."""
+        client = cls._shared_client
+        cls._shared_client = None
+        cls._shared_client_loop = None
+        if client is not None and not client.is_closed:
+            await client.aclose()
 
     def __init__(self, timeout: float = DEFAULT_TIMEOUT):
         """Initialize the client.
@@ -134,6 +154,7 @@ class TPClient:
         self.base_url = TP_API_BASE
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
+        self._owns_client: bool = False
         self._athlete_id: int | None = None
         self._last_request_time: float = 0.0
         self._token_cache = TPClient._get_token_cache()
@@ -148,9 +169,24 @@ class TPClient:
         await self.close()
 
     async def _ensure_client(self) -> None:
-        """Ensure the HTTP client is initialized."""
-        if self._client is None:
+        """Ensure the HTTP client is initialized, reusing the shared keep-alive pool."""
+        if self._client is not None:
+            return
+        if not isinstance(httpx.AsyncClient, type) or self.timeout != DEFAULT_TIMEOUT:
             self._client = httpx.AsyncClient(timeout=self.timeout)
+            self._owns_client = True
+            return
+        loop = asyncio.get_running_loop()
+        if (
+            TPClient._shared_client is None
+            or not isinstance(TPClient._shared_client, httpx.AsyncClient)
+            or TPClient._shared_client.is_closed
+            or TPClient._shared_client_loop is not loop
+        ):
+            TPClient._shared_client = httpx.AsyncClient(timeout=self.timeout)
+            TPClient._shared_client_loop = loop
+        self._client = TPClient._shared_client
+        self._owns_client = False
 
     async def _throttle(self) -> None:
         """Enforce minimum interval between requests to avoid rate limiting."""
@@ -160,10 +196,22 @@ class TPClient:
         self._last_request_time = time.monotonic()
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Detach from shared HTTP client, or close an instance-owned HTTP client."""
         if self._client is not None:
-            await self._client.aclose()
+            if self._owns_client:
+                await self._client.aclose()
             self._client = None
+            self._owns_client = False
+
+    async def warm_auth(self) -> tuple[bool, int | None, str]:
+        """Validate credentials and populate shared token, user, and athlete ID caches."""
+        token_result = await self._ensure_access_token()
+        if not token_result.success:
+            return False, None, token_result.message
+        athlete_id = await self.ensure_athlete_id()
+        if athlete_id is None:
+            return False, None, "Could not resolve athlete ID."
+        return True, athlete_id, "Authentication valid"
 
     def _get_headers(self) -> dict[str, str]:
         """Get request headers with Bearer token authentication.
