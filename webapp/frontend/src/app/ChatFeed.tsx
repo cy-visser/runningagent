@@ -186,9 +186,58 @@ export function ChatFeed({
                 onApply={onApplyPlan}
               />
             )}
+
+            {!msg.streaming && msg.usage && <TokenStatsBadge usage={msg.usage} />}
           </div>
         );
       })}
     </section>
+  );
+}
+
+function fmtTokens(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+function TokenStatsBadge({ usage }: { usage: NonNullable<ChatMessage["usage"]> }) {
+  const steps =
+    usage.steps && usage.steps.length > 0
+      ? usage.steps
+      : [
+          {
+            input_tokens: usage.input_tokens,
+            cached_tokens: usage.cached_tokens,
+            output_tokens: usage.output_tokens,
+          },
+        ];
+
+  return (
+    <div className="px-1">
+      <span
+        tabIndex={0}
+        className="group relative inline-flex items-center text-[11px] leading-tight text-slate-400 underline decoration-dotted decoration-slate-300 underline-offset-3 transition-colors hover:text-slate-600 focus-visible:text-slate-600 focus-visible:outline-none cursor-default"
+      >
+        Tokens
+        <span
+          role="tooltip"
+          className="pointer-events-none invisible opacity-0 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 focus:visible transition-opacity duration-100 absolute bottom-full left-0 mb-1.5 sm:bottom-auto sm:left-full sm:top-1/2 sm:-translate-y-1/2 sm:mb-0 sm:ml-2.5 z-30 flex flex-col gap-0.5 rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11px] leading-snug text-slate-50 shadow-lg tabular-nums whitespace-nowrap"
+        >
+          {steps.map((step, i) => (
+            <span key={i}>
+              Call {i + 1}: {fmtTokens(step.input_tokens)} in ·{" "}
+              {fmtTokens(step.cached_tokens)} cached ·{" "}
+              {fmtTokens(step.output_tokens)} out
+            </span>
+          ))}
+          {steps.length > 1 && (
+            <span className="mt-0.5 border-t border-slate-700/80 pt-0.5 text-slate-300">
+              Total: {fmtTokens(usage.input_tokens)} in ·{" "}
+              {fmtTokens(usage.cached_tokens)} cached ·{" "}
+              {fmtTokens(usage.output_tokens)} out
+            </span>
+          )}
+        </span>
+      </span>
+    </div>
   );
 }

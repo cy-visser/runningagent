@@ -35,7 +35,7 @@ from .model_callbacks import (
 from .profile_context import ensure_profile_context
 from .record_key_event_tool import record_key_event_tool
 from .quick_actions import dispatch_quick_action
-from .report_tool_guard import guard_report_tools
+from .report_tool_guard import guard_report_tools, mark_report_synthesis
 from .skill_toolset import skill_toolset
 
 coaching_agent_tools = [
@@ -59,7 +59,7 @@ coaching_agent_tools = [
 coaching_agent = Agent(
     model=build_coach_model(),
     name="coaching_agent",
-    description="Expert running coach and physiologist that analyzes workouts and guides runners with objective, data-driven feedback.",
+    description="Running coach and exercise physiologist.",
     instruction=build_coach_instruction,
     tools=coaching_agent_tools,
     # Runner profile once per call; quick actions without a routing LLM call; per-call thinking; hide
@@ -78,6 +78,7 @@ coaching_agent = Agent(
     # fetch_plan_context when plan-builder is loaded, and records turn calls for guard_report_tools.
     after_model_callback=[after_coach_model],
     before_tool_callback=[guard_report_tools],
+    after_tool_callback=[mark_report_synthesis],
     mode="chat",
 )
 

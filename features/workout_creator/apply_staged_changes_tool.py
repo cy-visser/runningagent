@@ -18,13 +18,7 @@ REPLACED_TEXT = (
 
 
 async def apply_staged_changes(tool_context: ToolContext, staged_id: Optional[str] = None) -> str:
-    """Applies the staged workout and note changes to TrainingPeaks. Call it only when the runner
-    approves the staged changes in chat (e.g. "update them", "yes, do it"). The app confirms the result
-    to the runner itself.
-
-    Args:
-        staged_id: Optional id of the staged set (set by the web button; omit in chat).
-    """
+    """Applies already-staged workout/note changes when the runner approves in chat (omit `staged_id`; never call to stage new edits)."""
     staged = tool_context.state.get(STAGED_CHANGES_STATE_KEY)
     if not isinstance(staged, dict) or not staged.get("changes"):
         reply(tool_context, NOTHING_STAGED_TEXT)

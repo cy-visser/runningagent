@@ -95,26 +95,58 @@ _MONTHS = {
     "jul": 7, "july": 7, "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
     "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
 }
-_EXACT_TYPED_REPORTS = {
-    "check in": "check-in-report",
-    "check-in": "check-in-report",
-    "checkin": "check-in-report",
-    "checking in": "check-in-report",
-    "check in report": "check-in-report",
-    "check-in report": "check-in-report",
-    "weekly check in": "check-in-report",
-    "weekly check-in": "check-in-report",
-    "how was my week": "check-in-report",
-    "am i on track": "check-in-report",
-    "audit my plan": "plan-audit",
-    "audit plan": "plan-audit",
-    "plan audit": "plan-audit",
-    "audit my schedule": "plan-audit",
-    "trend analysis": "trend-analysis",
-    "analyze my trends": "trend-analysis",
-    "analyse my trends": "trend-analysis",
-    "training trends": "trend-analysis",
-}
+_CHECKIN_LEADS = frozenset({
+    "check in", "check-in", "checkin", "checking in", "check in report", "check-in report",
+    "weekly check in", "weekly check-in", "how was my week", "am i on track",
+})
+_AUDIT_LEAD_RE = re.compile(r"^(?:please\s+|can\s+you\s+|could\s+you\s+)?audit\b\s+(?P<body>.+)$", re.IGNORECASE)
+_AUDIT_RANGE_RE = re.compile(
+    r"^(?:(?P<prefix>.*?)\s+)?(?:"
+    r"from\s+(?P<d1>.+?)\s+(?:to|until|through|till|up\s+to|[-–—])\s+(?P<d2>.+?)"
+    r"|between\s+(?P<b1>.+?)\s+and\s+(?P<b2>.+?)"
+    r")$",
+    re.IGNORECASE,
+)
+_AUDIT_NEXT_WEEKS_RE = re.compile(
+    r"^(?:(?P<prefix>.*?)\s+)?(?:for\s+|over\s+)?(?:the\s+)?next\s+(?P<n>\d{1,2})\s+weeks?$",
+    re.IGNORECASE,
+)
+_TREND_LEAD_RE = re.compile(
+    r"^(?:please\s+|can\s+you\s+|could\s+you\s+)?(?:"
+    r"(?:analy[sz]e|review|show)\s+(?:my\s+)?(?:training\s+|running\s+)?trends"
+    r"|(?:my\s+)?(?:training\s+|running\s+)?trend\s+analysis"
+    r"|(?:my\s+)?training\s+trends"
+    r")(?:\s+(?:for|over|in)\s+(?:the\s+)?(?:last|past)\s+(?P<w>\d{1,2})\s+weeks?)?$",
+    re.IGNORECASE,
+)
+_UNDATED_AUDIT_WORDS = frozenset({
+    "my", "the", "current", "upcoming", "training", "running", "plan", "schedule", "calendar",
+})
+_UNDATED_AUDIT_TARGETS = frozenset({"plan", "schedule", "calendar"})
+_DATED_AUDIT_TARGETS = _UNDATED_AUDIT_TARGETS | frozenset({"block", "weeks", "training", "prep", "build"})
+_HAS_ACTION_OR_EVENT_RE = re.compile(
+    r"\b(?:"
+    r"stag(?:e|ed|ing)|mov(?:e|ed|ing)|swap(?:ped|ping)?|shift(?:ed|ing)?|push(?:ed|ing)?|"
+    r"reschedul\w*|schedule\s+(?:a|an|the)|chang(?:e|ed|ing)|updat(?:e|ed|ing)|edit(?:ed|ing)?|"
+    r"modif(?:y|ied|ying)|replac(?:e|ed|ing)|delet(?:e|ed|ing)|remov(?:e|ed|ing)|drop(?:ped|ping)?|"
+    r"cancel\w*|skip(?:ped|ping)?|add(?:ed|ing)?|creat(?:e|ed|ing)|insert(?:ed|ing)?|"
+    r"appl(?:y|ied|ying)|build(?:ing)?|overhaul(?:ed|ing)?|adjust(?:ed|ing)?|"
+    r"weather|forecast|rain\w*|wind\w*|heat|humid\w*|temperature|"
+    r"injur\w*|hurt\w*|pain\w*|niggle\w*|sore\w*|ach(?:e|es|ing)|"
+    r"sick\w*|ill|illness|flu|cold|fever|covid|"
+    r"raced|finished\s+(?:my|the)\s+race|new\s+goal"
+    r")\b",
+    re.IGNORECASE,
+)
+_OTHER_SKILL_DOMAIN_RE = re.compile(
+    r"\b(?:nutrition|fuel\w*|carb\w*|hydrat\w*|sodium|gel|gels)\b",
+    re.IGNORECASE,
+)
+_TAIL_OTHER_REPORT_RE = re.compile(r"\b(?:trend|trends|check[- ]?in|audit)\b", re.IGNORECASE)
+_MONTH_DOT_RE = re.compile(
+    r"\b(jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\.(?=\s+\d)",
+    re.IGNORECASE,
+)
 _ANALYZE_LEAD_RE = re.compile(r"^(?:please\s+)?(?:analy[sz]e|review)\b\s*(?P<rest>.+)$", re.IGNORECASE)
 _ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 _MONTH_DAY_RE = re.compile(
@@ -135,6 +167,13 @@ _ALLOWED_FILLER = frozenset({
 })
 
 
+def has_action_or_event_intent(text: Optional[str]) -> bool:
+    """True when `text` expresses mutation, staging, plan-building, weather, nutrition, or key-event intent."""
+    if not text:
+        return False
+    return bool(_HAS_ACTION_OR_EVENT_RE.search(text) or _OTHER_SKILL_DOMAIN_RE.search(text))
+
+
 def _resolve_month_day(month_str: str, day_str: str, year_str: Optional[str], today: date) -> Optional[str]:
     month = _MONTHS.get(month_str.lower())
     if not month:
@@ -150,24 +189,133 @@ def _resolve_month_day(month_str: str, day_str: str, year_str: Optional[str], to
         return None
 
 
+def _parse_window_date(raw: str, today: date, *, after: Optional[date] = None) -> Optional[date]:
+    """Parses a single window boundary (`YYYY-MM-DD`, `Nov 30th`, `30 Nov`) with forward year rollover."""
+    s = raw.strip(" ,.")
+    if s.lower() == "today":
+        return today
+    if _ISO_DATE_RE.fullmatch(s):
+        try:
+            return date.fromisoformat(s)
+        except ValueError:
+            return None
+    for regex in (_MONTH_DAY_RE, _DAY_MONTH_RE):
+        dm = regex.fullmatch(s)
+        if not dm:
+            continue
+        month = _MONTHS.get(dm.group("m").lower())
+        if not month:
+            return None
+        day = int(dm.group("d"))
+        year_str = dm.group("y")
+        try:
+            if year_str:
+                return date(int(year_str), month, day)
+            if after is not None:
+                candidate = date(after.year, month, day)
+                return date(after.year + 1, month, day) if candidate < after else candidate
+            candidate = date(today.year, month, day)
+            if candidate < today - timedelta(days=60):
+                return date(today.year + 1, month, day)
+            if candidate > today + timedelta(days=305):
+                return date(today.year - 1, month, day)
+            return candidate
+        except ValueError:
+            return None
+    return None
+
+
+def _infer_typed_audit(lead: str, today: date) -> Optional[dict[str, Any]]:
+    if lead.lower() == "plan audit":
+        return {"skill": "plan-audit", "args": {}}
+    m = _AUDIT_LEAD_RE.match(lead)
+    if not m:
+        return None
+    body = m.group("body").strip()
+    if re.search(r"\b(?:and|also|plus|then)\b", body, re.IGNORECASE):
+        return None
+
+    rm = _AUDIT_RANGE_RE.match(body)
+    if rm:
+        prefix = (rm.group("prefix") or "").strip()
+        d1_raw = rm.group("d1") or rm.group("b1") or ""
+        d2_raw = rm.group("d2") or rm.group("b2") or ""
+        start = _parse_window_date(d1_raw, today)
+        end = _parse_window_date(d2_raw, today, after=start) if start else None
+        if not start or not end or not (0 <= (end - start).days <= 366):
+            return None
+        if prefix:
+            p_tokens = [t.lower() for t in re.split(r"[\s,]+", prefix) if t]
+            if len(p_tokens) > 6 or not any(t in _DATED_AUDIT_TARGETS for t in p_tokens):
+                return None
+        return {"skill": "plan-audit", "args": {"start_date": iso_date(start), "end_date": iso_date(end)}}
+
+    nm = _AUDIT_NEXT_WEEKS_RE.match(body)
+    if nm:
+        weeks = int(nm.group("n"))
+        prefix_tokens = [t.lower() for t in re.split(r"[\s,]+", (nm.group("prefix") or "").strip()) if t]
+        if not (1 <= weeks <= 26) or any(t not in _UNDATED_AUDIT_WORDS for t in prefix_tokens):
+            return None
+        if prefix_tokens and not any(t in _UNDATED_AUDIT_TARGETS for t in prefix_tokens):
+            return None
+        return {
+            "skill": "plan-audit",
+            "args": {"start_date": iso_date(today), "end_date": iso_date(today + timedelta(weeks=weeks))},
+        }
+
+    tokens = [t.lower() for t in re.split(r"[\s,]+", body) if t]
+    if tokens and all(t in _UNDATED_AUDIT_WORDS for t in tokens) and any(t in _UNDATED_AUDIT_TARGETS for t in tokens):
+        return {"skill": "plan-audit", "args": {}}
+    return None
+
+
+def _infer_typed_report_lead(lead: str, today: date) -> Optional[dict[str, Any]]:
+    low = lead.lower()
+    if low in _CHECKIN_LEADS:
+        return {"skill": "check-in-report", "args": {}}
+    audit = _infer_typed_audit(lead, today)
+    if audit is not None:
+        return audit
+    tm = _TREND_LEAD_RE.match(lead)
+    if tm:
+        w_str = tm.group("w")
+        if w_str is not None:
+            weeks = int(w_str)
+            if not (6 <= weeks <= 52):
+                return None
+            return {"skill": "trend-analysis", "args": {"weeks": weeks}}
+        return {"skill": "trend-analysis", "args": {}}
+    return None
+
+
 def infer_typed_quick_action(text: Optional[str], today: Optional[date] = None) -> Optional[dict[str, Any]]:
-    """Infers a deterministic action for unambiguous standalone typed report/workout prompts (None otherwise)."""
+    """Infers a deterministic action for unambiguous typed report/workout prompts (None otherwise)."""
     if not text or "\n" in text or ";" in text:
         return None
     cleaned = text.strip()
-    if len(cleaned.split()) > 10:
+    words = cleaned.split()
+    if len(words) > 45 or has_action_or_event_intent(cleaned):
         return None
-    norm = re.sub(r"\s+", " ", cleaned.rstrip(".!?" ).strip()).lower()
-    if norm in _EXACT_TYPED_REPORTS and ("?" not in cleaned or norm in ("how was my week", "am i on track")):
-        return {"skill": _EXACT_TYPED_REPORTS[norm], "args": {}}
-    if "?" in cleaned:
-        return None
+    today = today or get_today_date()
 
+    # Typed report prompts (plan-audit, trend-analysis, check-in-report), optionally followed by a read-only question.
+    norm_dots = _MONTH_DOT_RE.sub(r"\1", cleaned)
+    sentences = [re.sub(r"\s+", " ", s).strip() for s in re.split(r"[.!?]+(?:\s+|$)", norm_dots) if s.strip()]
+    if sentences:
+        report_action = _infer_typed_report_lead(sentences[0], today)
+        if report_action is not None:
+            tail = " ".join(sentences[1:]).strip()
+            if tail and _TAIL_OTHER_REPORT_RE.search(tail):
+                return None
+            return report_action
+
+    if len(words) > 10 or "?" in cleaned:
+        return None
+    norm = re.sub(r"\s+", " ", cleaned.rstrip(".!?").strip()).lower()
     m = _ANALYZE_LEAD_RE.match(norm)
     if not m:
         return None
     rest = m.group("rest").replace("'s", " ").replace("’s", " ").strip()
-    today = today or get_today_date()
 
     date_str: Optional[str] = None
     residual = rest

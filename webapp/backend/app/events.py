@@ -97,6 +97,33 @@ def _extract_state_delta(adk_event: dict[str, Any]) -> dict[str, Any]:
     return sd if isinstance(sd, dict) else {}
 
 
+def _int_field(mapping: dict[str, Any], *keys: str) -> Optional[int]:
+    for key in keys:
+        val = mapping.get(key)
+        if isinstance(val, int) and not isinstance(val, bool):
+            return val
+    return None
+
+
+def _extract_call_usage(adk_event: dict[str, Any]) -> Optional[dict[str, int]]:
+    """Extracts one LLM call's token counts from ADK `usageMetadata` / `usage_metadata`."""
+    raw = adk_event.get("usageMetadata") or adk_event.get("usage_metadata")
+    if not isinstance(raw, dict):
+        return None
+    prompt = _int_field(raw, "promptTokenCount", "prompt_token_count")
+    tool_prompt = _int_field(raw, "toolUsePromptTokenCount", "tool_use_prompt_token_count")
+    cached = _int_field(raw, "cachedContentTokenCount", "cached_content_token_count")
+    candidates = _int_field(raw, "candidatesTokenCount", "candidates_token_count")
+    thoughts = _int_field(raw, "thoughtsTokenCount", "thoughts_token_count")
+    if prompt is None and tool_prompt is None and candidates is None and thoughts is None:
+        return None
+    return {
+        "input_tokens": (prompt or 0) + (tool_prompt or 0),
+        "cached_tokens": cached or 0,
+        "output_tokens": (candidates or 0) + (thoughts or 0),
+    }
+
+
 class TurnEventTranslator:
     """Stateful per-turn translator turning raw ADK SSE JSON events into UI `(event_name, payload)` pairs."""
 
@@ -108,6 +135,34 @@ class TurnEventTranslator:
         # then the coded "changes staged" line), and the bubble shows all of them.
         self._final_texts: list[str] = []
         self._delta_open: bool = False
+        self._usage_steps: list[dict[str, int]] = []
+        self._seen_usage_ids: set[str] = set()
+
+    def _record_usage(self, adk_event: dict[str, Any], out: list[tuple[str, dict[str, Any]]]) -> None:
+        """Records token usage on finalized (`partial=False`) model events to avoid streaming double-counts."""
+        if bool(adk_event.get("partial")):
+            return
+        step = _extract_call_usage(adk_event)
+        if step is None:
+            return
+        event_id = str(adk_event.get("id") or "").strip()
+        if event_id:
+            if event_id in self._seen_usage_ids:
+                return
+            self._seen_usage_ids.add(event_id)
+        self._usage_steps.append(step)
+        out.append(
+            (
+                "usage",
+                {
+                    "input_tokens": sum(s["input_tokens"] for s in self._usage_steps),
+                    "cached_tokens": sum(s["cached_tokens"] for s in self._usage_steps),
+                    "output_tokens": sum(s["output_tokens"] for s in self._usage_steps),
+                    "calls": len(self._usage_steps),
+                    "steps": list(self._usage_steps),
+                },
+            )
+        )
 
     def feed(self, adk_event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         out: list[tuple[str, dict[str, Any]]] = []
@@ -138,7 +193,9 @@ class TurnEventTranslator:
         content = adk_event.get("content")
         parts = content.get("parts") if isinstance(content, dict) else None
         if not isinstance(parts, list):
-            return self._add_replies(adk_event, out)
+            self._add_replies(adk_event, out)
+            self._record_usage(adk_event, out)
+            return out
 
         is_partial = bool(adk_event.get("partial"))
         visible_texts: list[str] = []
@@ -190,7 +247,9 @@ class TurnEventTranslator:
                 out.append(("message", {"text": "\n\n".join(self._final_texts), "kind": kind}))
                 self._thinking_emitted = False
 
-        return self._add_replies(adk_event, out)
+        self._add_replies(adk_event, out)
+        self._record_usage(adk_event, out)
+        return out
 
     def _add_replies(self, adk_event: dict[str, Any], out: list) -> list[tuple[str, dict[str, Any]]]:
         """A tool's coded reply joins the turn's message, after any text the coach wrote."""

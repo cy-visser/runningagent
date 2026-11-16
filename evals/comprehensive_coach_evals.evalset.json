@@ -149,10 +149,8 @@
         "query": "Please schedule a 5x1000m VO2max workout on my calendar for this Thursday with 2km warmup and cooldown.",
         "expected_tool_use": [
           {
-            "tool_name": "load_skill",
-            "tool_input": {
-              "skill_name": "workout-creator"
-            }
+            "tool_name": "stage_workout_changes",
+            "tool_input": {}
           }
         ],
         "reference": "I've prepared your 5x1000m VO2max workout for this Thursday: a 2km warmup, 5x1000m at 5K target pace with 400m recovery jogs, and a 2km cooldown. Review it below and press Update TrainingPeaks to add it to your calendar."

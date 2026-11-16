@@ -236,6 +236,9 @@ export function App() {
           onMessage: ({ text, kind }) => {
             patchAssistant((m) => ({ ...m, thinking: false, text, kind }), true);
           },
+          onUsage: (usage) => {
+            patchAssistant((m) => ({ ...m, usage }));
+          },
           onError: (errMsg) => {
             failed = true;
             patchAssistant((m) => ({ ...m, thinking: false, streaming: false, error: errMsg }), true);

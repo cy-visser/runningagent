@@ -115,8 +115,14 @@ def _same_sport_planned(workouts: list[dict], day: str, sport: str) -> list[dict
 
 
 def staged_dates(raw_changes: list[dict]) -> list[date]:
-    """Parsed dates of the raw changes (unparseable dates are skipped)."""
-    return [d for d in (parse_date(str(c.get("date_str") or c.get("date") or "")) for c in raw_changes) if d]
+    """Parsed target and source (`from_date_str`) dates of the raw changes (unparseable dates are skipped)."""
+    raw_vals = (
+        val
+        for c in raw_changes
+        for val in (c.get("date_str") or c.get("date"), c.get("from_date_str"))
+        if val
+    )
+    return [d for d in (parse_date(str(v)) for v in raw_vals) if d]
 
 
 def description_summary(text: Any) -> Optional[str]:
@@ -300,7 +306,8 @@ def resolve_changes(
             continue
 
         inferred_sport = code_sport(raw_code) if raw_code else None
-        sport = str(raw.get("sport") or inferred_sport or "Run").strip() or "Run"
+        explicit_sport = str(raw.get("sport") or inferred_sport or "").strip()
+        sport = explicit_sport or "Run"
         change.update({"sport": sport, "workout_id": None})
         if title:
             change["_coach_title"] = True
@@ -318,6 +325,7 @@ def resolve_changes(
             change["strides"] = False  # the runner asked to drop strides: never keep or add them
 
         workout_id = str(raw.get("workout_id") or "").strip()
+        from_raw = str(raw.get("from_date_str") or "").strip()
         if workout_id:
             existing = by_id.get(workout_id)
             detail = existing_from_detail(details_by_id.get(workout_id))
@@ -327,10 +335,55 @@ def resolve_changes(
                 problems.append({"reason": "workout_not_found", "workout_id": workout_id,
                                  "date_str": iso_date(day), "sport": sport, "title": title})
                 continue
+            resolved_sport = str(existing.get("sport") or sport).strip() if not explicit_sport else sport
             change.update({"action": ACTION_UPDATE, "workout_id": workout_id,
+                           "sport": resolved_sport or sport,
                            "replaces_title": existing.get("title"),
                            "replaces": replaces_snapshot(existing)})
+            if not needs_builder(change["sport"]) and change.get("builder") == BUILDER_MISSING:
+                change.pop("builder", None)
             _mark_update_builder(change, existing)
+        elif from_raw and not raw.get("create"):
+            from_day = parse_date(from_raw)
+            if not from_day:
+                problems.append({"reason": "invalid_date", "date_str": from_raw, "title": title})
+                continue
+            from_iso = iso_date(from_day)
+            planned = [
+                w for w in workouts
+                if _item_day(w) == from_iso
+                and not is_workout_completed(w)
+                and (not explicit_sport or str(w.get("sport") or "").strip().lower() == explicit_sport.lower())
+            ]
+            if len(planned) > 1 and title:
+                planned = _title_matches(planned, title)
+            if not planned:
+                problems.append({
+                    "reason": "workout_not_found", "date_str": from_iso,
+                    "sport": explicit_sport or None, "title": title,
+                })
+                continue
+            if len(planned) > 1:
+                problems.append({
+                    "reason": "needs_workout_id", "date_str": from_iso,
+                    "sport": explicit_sport or None, "title": title or f"Planned {sport}",
+                    "candidates": [
+                        {"workout_id": str(w.get("id") or ""), "title": w.get("title"), "sport": w.get("sport")}
+                        for w in planned
+                    ],
+                })
+                continue
+            source = planned[0]
+            resolved_sport = str(source.get("sport") or sport).strip() or sport
+            change.update({
+                "action": ACTION_UPDATE, "workout_id": str(source.get("id") or ""),
+                "sport": resolved_sport,
+                "replaces_title": source.get("title"),
+                "replaces": replaces_snapshot(source),
+            })
+            if not needs_builder(resolved_sport) and change.get("builder") == BUILDER_MISSING:
+                change.pop("builder", None)
+            _mark_update_builder(change, source)
         elif not raw.get("create"):
             candidates = _same_sport_planned(workouts, iso_date(day), sport)
             if len(candidates) > 1:
@@ -347,7 +400,7 @@ def resolve_changes(
                 _mark_update_builder(change, candidates[0])
         # The builder rules above see only the coach's values; the card then shows the session it keeps.
         _inherit_unchanged(change)
-        change["title"] = change["title"] or f"Planned {sport}"
+        change["title"] = change["title"] or f"Planned {change['sport']}"
         if change.get("description"):
             change["description_summary"] = description_summary(change["description"])
         staged.append(change)
@@ -595,6 +648,25 @@ def workout_metrics(values: dict, show_sport: bool) -> str:
     if _number(values.get("tss_planned")) is not None:
         parts.append(f"TSS {_fmt(values['tss_planned'], field='tss_planned')}")
     return " · ".join(parts)
+
+
+def compact_staged_line(change: dict) -> str:
+    """Compact one-line summary of a staged item for the LLM tool response (web UI reads state directly)."""
+    if change.get("kind") == KIND_NOTE:
+        verb = "deleted" if change.get("action") == ACTION_DELETE else "created"
+        nid = f' [{change["note_id"]}]' if change.get("note_id") else ""
+        return f'{verb} {str(change.get("date") or "")[:10]} note "{change.get("title") or "Note"}"{nid}'
+    label = change_label(change).lower()
+    before_date = (change.get("replaces") or {}).get("date")
+    when = f"{before_date}->{change['date']}" if label == "moved" and before_date else str(change.get("date") or "")
+    sport = change.get("sport") or "Workout"
+    title = change.get("title") or sport
+    wid = f' [{change["workout_id"]}]' if change.get("workout_id") else ""
+    if change.get("action") == ACTION_DELETE:
+        return f'{label} {when} {sport} "{title}"{wid}'
+    metrics = workout_metrics(change, show_sport=False)
+    metrics_part = f" ({metrics})" if metrics else ""
+    return f'{label} {when} {sport} "{title}"{metrics_part}{wid}'
 
 
 def _workout_cell(title: Any, values: dict) -> str:

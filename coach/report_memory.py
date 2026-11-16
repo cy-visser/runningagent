@@ -453,21 +453,15 @@ def _compact_applied(part: types.Part, applied: set[str]) -> Optional[types.Part
     return None
 
 
-DATA_FREE_SKILLS = frozenset({"workout-creator"})
-
-
 def _stale_skill_stub(
     part: types.Part, ci: int, pi: int, turn_start: int, latest: dict, call_skills: dict[str, str]
 ) -> Optional[types.Part]:
-    """Skill instructions from a completed turn as a stub (data-backed skills reload with their data tool;
-    the latest copy of a data-free skill stays intact to preserve prefix caching and skip re-loading)."""
+    """Skill instructions from a completed turn as a stub (data-backed skills reload with their data tool)."""
     response = part.function_response
     if not response or response.name != LOAD_SKILL or ci >= turn_start:
         return None
     skill = _skill_name(part, call_skills)
     if not skill:
-        return None
-    if skill in DATA_FREE_SKILLS and latest.get(("skill", skill)) == (ci, pi, 0):
         return None
     stub = {"skill_name": skill, "instructions": STALE_SKILL_STUB}
     return part.model_copy(update={"function_response": response.model_copy(update={"response": stub})})

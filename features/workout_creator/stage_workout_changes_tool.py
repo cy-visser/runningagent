@@ -23,6 +23,8 @@ from .helpers.staged_changes import (
     BUILDER_CODE,
     KIND_WORKOUT,
     STAGED_CHANGES_STATE_KEY,
+    change_label,
+    compact_staged_line,
     finalize_builders,
     is_edit_only,
     resolve_changes,
@@ -37,8 +39,8 @@ _AMBIGUOUS_MESSAGE = (
 )
 _NOT_FOUND_MESSAGE = (
     "Some changes were not staged: the `not_found` items do not exist in TrainingPeaks. Use the [workout_id] of the "
-    "planned session from this conversation, or date_str + sport (a note: date_str + title), and stage the full set "
-    "again."
+    "planned session from this conversation, or date_str + sport (or from_date_str + sport to move; note: date_str + "
+    "title), and stage the full set again."
 )
 _REFUSED_MESSAGE = "Completed workouts are never deleted: tell the runner which `refused` entries stay."
 _NEEDS_STRUCTURE_MESSAGE = (
@@ -58,7 +60,7 @@ _READY_DRAFT_STATE_KEY = "temp:staging_ready_draft"
 
 
 def plan_builder_redirect(workout_changes: int, days: list[date]) -> Optional[dict]:
-    """The redirect result when the set is too big for workout-creator (> MAX_WORKOUT_CHANGES workout changes),
+    """The redirect result when the set is too big for stage_workout_changes (> MAX_WORKOUT_CHANGES workout changes),
     else None. Nothing is staged then."""
     if workout_changes <= MAX_WORKOUT_CHANGES:
         return None
@@ -68,7 +70,7 @@ def plan_builder_redirect(workout_changes: int, days: list[date]) -> Optional[di
         window = f'start_date="{iso_date(start)}", end_date="{iso_date(end)}", '
     return {"staged": 0, "use_plan_builder": True, "message": (
         f"Nothing was staged: {workout_changes} workout changes is a plan overhaul "
-        f"(workout-creator: <= {MAX_WORKOUT_CHANGES} workout changes). Use plan-builder: "
+        f"(stage_workout_changes: <= {MAX_WORKOUT_CHANGES} workout changes). Use plan-builder: "
         f'call load_skill(skill_name="plan-builder", {window}mode="overhaul"), then '
         "stage the plan with ONE stage_training_plan call.")}
 
@@ -130,6 +132,9 @@ def _slot_key(item: dict) -> tuple:
         return ("note", day, str(item.get("title") or "").strip().lower())
     inferred = code_sport(item.get("code")) if item.get("code") else None
     sport = str(item.get("sport") or inferred or "run").strip().lower()
+    from_day = str(item.get("from_date_str") or "")[:10]
+    if from_day:
+        return ("move", from_day, day, sport)
     return ("slot", day, sport)
 
 
@@ -206,14 +211,16 @@ async def _current_workouts(tool_context: ToolContext, workout_ids: list[str], c
 async def stage_workout_changes(
     tool_context: ToolContext, changes: list[dict[str, Any]], message: str = ""
 ) -> str:
-    """Stages <= 10 workout/note changes for Update TrainingPeaks.
-
-    `message`: 2-4 sentence rationale + numeric risks (ends turn; omit on plain move/rename).
-    `changes` items: move/rename (`workout_id` + `date_str` [+ `title`]); delete (`delete=true` + `workout_id`
-    or `date_str` + `sport`); note (`kind='note'`, `date_str`, `title`, `description`); create/edit (`date_str`
-    + compact `code` e.g. `'E 8'`, `'T 2x15\\' r2\\''`, `'L 22 +6@M'`, `'B 60\\' Z2'`, `'S 40\\' heavy-lower'`,
-    optional `workout_id`/`create=true`; load `workout-creator` first for full code/structure rules).
-    """
+    """Stages <= 10 workout/note changes (> 10 -> plan-builder). `message`: <= 80w rationale + ⚠️/🔴 numeric risks (omit on plain move/rename).
+    `changes` items (`date_str` YYYY-MM-DD[THH:MM:SS]):
+    - move/swap/rename: (workout_id | from_date_str + sport) + date_str [+ title].
+    - delete: delete=true + (workout_id | date_str + sport | kind='note' + date_str + title).
+    - note: kind='note', date_str, title [+ description].
+    - workout (`code` default; omit distance_km/duration_minutes/tss_planned/structure; create=true adds 2nd same-sport; strides=false drops strides):
+      lengths 8 / 1.5k / 400m / 50' / 90" / 1h30, reps 6x1k, rec r2' / r90" / r200, slot am|mid|pm.
+      Run: E 8 (+strides), R 6, L 22 (+6@M|@HM|@10K|@T); quality (auto 15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M), H 8x60" r90".
+      Other: B 60' Z2 (Z1-Z3) | B 4x8' @SS r4' (@SS|@T|@VO2), S 40' heavy-lower (full|core-hips|plyo|mobility), X 40' swim (walk|crosstrain).
+    - fallback `structure` (ONLY custom WU/CD, ladders, or current_structure edits): {"steps":[step|{"type":"repetition","reps":N,"steps":[work,rest]}]} (primaryIntensityMetric: "percentOfThresholdHr"|"percentOfFtp"); step={"name","intensityClass":"warmUp"|"active"|"rest"|"coolDown"|"other","distance_m"|"duration_seconds","pace":"M:SS-M:SS"|"intensity_min"+"intensity_max"}."""
     invocation = getattr(tool_context, "invocation_id", None)
     saved_cache = tool_context.state.get(_TP_CACHE_STATE_KEY)
     tp_cache: dict[str, Any] = (
@@ -235,9 +242,13 @@ async def stage_workout_changes(
     if redirect:
         return json.dumps(redirect)
     wants_settings = any(
-        (needs_builder(c.get("sport") or code_sport(c.get("code"))) or c.get("structure") or c.get("code"))
-        and not c.get("delete")
+        not c.get("delete")
         and normalize_code(c.get("code")).upper() != "REST"
+        and (
+            bool(c.get("structure"))
+            or needs_builder(code_sport(c.get("code")) or c.get("sport"))
+            or (not c.get("sport") and not c.get("code") and bool(c.get("from_date_str") or c.get("workout_id")))
+        )
         for c in workout_raw
     )
     # Explicit ids are read with the calendar (one parallel round): a move to another date still
@@ -251,12 +262,14 @@ async def stage_workout_changes(
     )
 
     staged, problems = resolve_changes(raw, workouts, details, notes)
-    # The current builder is needed to keep a session's strides when the coach rewrites a run.
+    # The current builder is needed to keep a session's strides when the coach rewrites a run,
+    # and to show `structure_summary` on the card for `from_date_str` Run/Bike moves.
     to_check = [str(c["workout_id"]) for c in staged
                 if c.get("workout_id") and str(c["workout_id"]) not in details
                 and (c.get("builder") == BUILDER_CHECK
                      or (c.get("builder") in (BUILDER_COACH, BUILDER_CODE)
-                         and str(c.get("sport") or "").lower() in RUN_SPORTS))]
+                         and str(c.get("sport") or "").lower() in RUN_SPORTS)
+                     or (change_label(c) == "Moved" and needs_builder(c.get("sport"))))]
     if to_check:
         details = {**details, **await _current_workouts(tool_context, to_check, tp_cache)}
     profile = tool_context.state.get("user_profile") or {}
@@ -307,13 +320,7 @@ async def stage_workout_changes(
             result.update({
                 "staged": len(staged),
                 "staged_id": staged_id,
-                "changes": [
-                    {k: c.get(k) for k in ("kind", "action", "date", "sport", "title", "replaces_title", "replaces",
-                                           "distance_km", "duration_minutes", "tss_planned", "structure_summary",
-                                           "strides_added")
-                     if c.get(k) is not None}
-                    for c in staged
-                ],
+                "changes": [compact_staged_line(c) for c in staged],
                 "message": "Staged. The runner sees the changes with an Update TrainingPeaks button.",
             })
             if totals_notes:

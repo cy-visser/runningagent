@@ -11,15 +11,27 @@ called anything but `load_skill` of the report's own skill. Otherwise the tool i
 write, no report card) and the model is told to answer from the data in the conversation.
 """
 
+import re
 from typing import Any, Optional
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_response import LlmResponse
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
+from opentelemetry import trace
+
+from .quick_actions import (
+    DISPATCHED_STATE_KEY,
+    has_action_or_event_intent,
+    is_plan_intake,
+    is_quick_action_report,
+)
 
 TURN_CALLS_STATE_KEY = "temp:turn_calls"
 LOAD_SKILL = "load_skill"
+FETCH_PLAN_CONTEXT = "fetch_plan_context"
+PLAN_BUILDER_SKILL = "plan-builder"
+ANALYZE_WORKOUT = "analyze_workout"
 
 # report data tool -> the skill whose report it renders
 REPORT_TOOL_SKILLS = {
@@ -27,6 +39,8 @@ REPORT_TOOL_SKILLS = {
     "fetch_trend_data": "trend-analysis",
     "fetch_plan_audit_data": "plan-audit",
 }
+_SYNTHESIS_TOOLS = frozenset({*REPORT_TOOL_SKILLS, "fetch_nutrition_context"})
+_RACE_RE = re.compile(r"\b(?:race|parkrun|time\s+trial|tt)\b", re.IGNORECASE)
 
 _REPORT_NAMES = {
     "fetch_checkin_data": "check-in report",
@@ -87,12 +101,6 @@ def is_turn_report(tool_name: str, steps: list[list[dict]]) -> bool:
     return True
 
 
-from .quick_actions import is_plan_intake
-
-FETCH_PLAN_CONTEXT = "fetch_plan_context"
-PLAN_BUILDER_SKILL = "plan-builder"
-
-
 def is_plan_builder_turn(tool_context: ToolContext) -> bool:
     """True when `fetch_plan_context` was dispatched by `plan-builder:intake` or `load_skill('plan-builder')`."""
     if is_plan_intake(tool_context.state, tool_context.invocation_id):
@@ -131,3 +139,33 @@ def guard_report_tools(
     if is_turn_report(tool.name, _turn_steps(tool_context)):
         return None
     return {"result": blocked_message(tool.name)}
+
+
+def mark_report_synthesis(
+    tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: Any
+) -> Optional[dict]:
+    """after_tool_callback: switches Step 2 of read-only LLM-routed report turns into tools-off synthesis mode."""
+    if tool.name not in _SYNTHESIS_TOOLS and tool.name != ANALYZE_WORKOUT:
+        return None
+    invocation_id = getattr(tool_context, "invocation_id", None)
+    if not invocation_id or is_quick_action_report(tool_context.state, invocation_id):
+        return None
+    user_content = getattr(tool_context, "user_content", None)
+    if user_content is None:
+        return None
+    user_text = " ".join(p.text for p in (user_content.parts or []) if p.text).strip()
+    if has_action_or_event_intent(user_text):
+        return None
+    res_obj = tool_response.get("result", tool_response) if isinstance(tool_response, dict) else tool_response
+    res_str = res_obj if isinstance(res_obj, str) else str(res_obj or "")
+    if res_str.startswith(f"{tool.name} was not run:"):
+        return None
+    if tool.name == ANALYZE_WORKOUT:
+        if "### Workout Analysis" not in res_str or _RACE_RE.search(res_str) or _RACE_RE.search(user_text):
+            return None
+    steps = _turn_steps(tool_context)
+    if not steps or any(c["name"] not in (LOAD_SKILL, tool.name) for step in steps for c in step):
+        return None
+    tool_context.state[DISPATCHED_STATE_KEY] = invocation_id
+    trace.get_current_span().set_attribute("coach.report_synthesis_trim", tool.name)
+    return None

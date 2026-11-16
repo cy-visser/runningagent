@@ -416,3 +416,119 @@ def test_typed_standalone_workout_and_report_prompts_pre_dispatch_and_auto_align
     assert len(swapped_resps) == 1 and swapped_resps[0]["skill_name"] == "bike-workout-analysis"
     assert "# Bike Workout Analysis Skill" in swapped_resps[0]["instructions"]
 
+
+def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fallback_trims_step2(runner, monkeypatch):
+    from datetime import date, datetime
+    from running_coach.coach.coaching.quick_actions import infer_typed_quick_action
+
+    today = date(2026, 11, 16)
+    prompt = "Audit my 5k block from Nov 30th until Feb 7th. In which session would I haver a good idea if im in sub 21 shape?"
+    assert infer_typed_quick_action(prompt, today) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2026-11-30", "end_date": "2027-02-07"},
+    }
+    assert infer_typed_quick_action("Audit my plan for the next 6 weeks. Is my taper enough?", today) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2026-11-16", "end_date": "2026-12-28"},
+    }
+    assert infer_typed_quick_action("Audit my plan. Am I ramping too fast?", today) == {
+        "skill": "plan-audit",
+        "args": {},
+    }
+    assert infer_typed_quick_action("Analyze my trends for the last 12 weeks. Are my easy paces improving?", today) == {
+        "skill": "trend-analysis",
+        "args": {"weeks": 12},
+    }
+    assert infer_typed_quick_action("Weekly check-in. Am I ready for Sunday's long run?", today) == {
+        "skill": "check-in-report",
+        "args": {},
+    }
+    # Year-boundary rollovers in both directions:
+    assert infer_typed_quick_action("Audit my block from Jan 4th until Mar 15th", date(2026, 12, 20)) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2027-01-04", "end_date": "2027-03-15"},
+    }
+    assert infer_typed_quick_action("Audit my block from Dec 15th until Feb 14th", date(2027, 1, 5)) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2026-12-15", "end_date": "2027-02-14"},
+    }
+    # Mutation/staging/weather/event or undated named-block prompts safely fall back to LLM routing:
+    for non_match in (
+        "Audit my plan from Nov 30 to Feb 7 and move Friday S&C",
+        "Audit my Amsterdam Half block",
+        "Analyze my trends for the last 3 weeks",
+        "Audit my plan. What should my race carb loading be?",
+        "Check in report — I strained my calf yesterday",
+    ):
+        assert infer_typed_quick_action(non_match, today) is None, non_match
+
+    # End-to-end:
+    # 1. Pre-dispatched typed audit with date range + question runs in 1 LLM call (routing + tools stripped).
+    # 2. Fallback undated named-block audit ("Audit my Amsterdam Half block") routes on Call 1, then strips
+    #    routing + catalog + tools on Call 2 via mark_report_synthesis.
+    # 3. Fallback audit + mutation ("Audit my plan from Nov 30 to Feb 7 and move Friday S&C") keeps tools on Call 2.
+    class RoutingFallbackLlm(BaseLlm):
+        requests: list = []
+
+        async def generate_content_async(
+            self, llm_request: LlmRequest, stream: bool = False
+        ) -> AsyncGenerator[LlmResponse, None]:
+            self.requests.append(llm_request)
+            idx = len(self.requests)
+            if idx in (2, 4):
+                yield LlmResponse(content=types.Content(role="model", parts=[
+                    types.Part(function_call=types.FunctionCall(
+                        id=f"ls-{idx}", name="load_skill", args={"skill_name": "plan-audit"},
+                    )),
+                    types.Part(function_call=types.FunctionCall(
+                        id=f"fa-{idx}",
+                        name="fetch_plan_audit_data",
+                        args={"start_date": "2026-11-30", "end_date": "2027-02-07"},
+                    )),
+                ]))
+                return
+            yield LlmResponse(content=types.Content(
+                role="model", parts=[types.Part(text="### Assessment\n- **Benchmark:** Jan 24 5x1km.")]
+            ))
+
+    runner.now = datetime(2026, 11, 16, 9, 0, 0)
+    llm = RoutingFallbackLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        e1 = await _turn(r, session.id, prompt)
+        e2 = await _turn(r, session.id, "Audit my Amsterdam Half block")
+        e3 = await _turn(r, session.id, "Audit my plan from Nov 30 to Feb 7 and move Friday S&C")
+        return e1, e2, e3
+
+    e1, e2, e3 = asyncio.run(scenario())
+
+    # Turn 1: pre-dispatched -> exactly 1 LLM call (idx 0), tools & routing stripped, question preserved.
+    assert _calls(e1) == [
+        ("load_skill", {"skill_name": "plan-audit"}),
+        ("fetch_plan_audit_data", {"start_date": "2026-11-30", "end_date": "2027-02-07"}),
+    ]
+    req1_report = llm.requests[0]
+    assert req1_report.config.tools == []
+    assert _tool_mode(req1_report) == types.FunctionCallingConfigMode.NONE
+    assert "SKILL ROUTING" not in _system_text(req1_report) and "<available_skills>" not in _system_text(req1_report)
+    assert any("sub 21 shape" in (p.text or "") for c in req1_report.contents for p in c.parts or [])
+
+    # Turn 2: fallback read-only report -> Call 1 (idx 1) has tools & routing; Call 2 (idx 2) strips both!
+    req2_route, req2_synth = llm.requests[1], llm.requests[2]
+    assert req2_route.config.tools and "SKILL ROUTING" in _system_text(req2_route)
+    assert req2_synth.config.tools == []
+    assert _tool_mode(req2_synth) == types.FunctionCallingConfigMode.NONE
+    assert "SKILL ROUTING" not in _system_text(req2_synth) and "<available_skills>" not in _system_text(req2_synth)
+
+    # Turn 3: fallback report + mutation intent -> Call 2 (idx 4) keeps stage_workout_changes and routing!
+    req3_route, req3_step2 = llm.requests[3], llm.requests[4]
+    assert req3_route.config.tools
+    declared_step2 = {d.name for t in (req3_step2.config.tools or []) for d in (t.function_declarations or [])}
+    assert "stage_workout_changes" in declared_step2
+    assert "SKILL ROUTING" in _system_text(req3_step2)
+
+

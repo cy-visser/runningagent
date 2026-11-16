@@ -430,4 +430,40 @@ describe("plan builder: Build Plan card and week-by-week apply loop", () => {
     fireEvent.click(screen.getByText("Build Plan"));
     expect(onSendPrompt).not.toHaveBeenCalled();
   });
+
+  it("parses SSE usage events and renders the Token stats hover tooltip with per-call breakdown", async () => {
+    vi.spyOn(api, "fetchMe").mockResolvedValue(DEMO_ME_READY);
+    vi.spyOn(api, "fetchRacePredictor").mockResolvedValue(DEMO_RACE_PREDICTOR_RESPONSE);
+
+    const sseBody = [
+      'event: session\ndata: {"session_id":"sess-usage-1"}\n\n',
+      'event: message\ndata: {"text":"### Assessment\\nSchedule looks solid.","kind":"audit"}\n\n',
+      'event: usage\ndata: {"input_tokens":11409,"cached_tokens":4284,"output_tokens":445,"calls":2,"steps":[{"input_tokens":4859,"cached_tokens":0,"output_tokens":76},{"input_tokens":6550,"cached_tokens":4284,"output_tokens":369}]}\n\n',
+      'event: done\ndata: {"session_id":"sess-usage-1"}\n\n',
+    ].join("");
+
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(sseBody));
+        controller.close();
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Check-In Report")).toBeInTheDocument());
+    fireEvent.click(screen.getByText(/^Audit Plan – /));
+
+    await waitFor(() => expect(screen.getByText("Tokens")).toBeInTheDocument());
+    const tooltip = screen.getByRole("tooltip", { hidden: true });
+    expect(tooltip).toHaveTextContent("Call 1: 4,859 in · 0 cached · 76 out");
+    expect(tooltip).toHaveTextContent("Call 2: 6,550 in · 4,284 cached · 369 out");
+    expect(tooltip).toHaveTextContent("Total: 11,409 in · 4,284 cached · 445 out");
+  });
 });

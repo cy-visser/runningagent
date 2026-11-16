@@ -1,6 +1,6 @@
 ---
 name: nutrition-planner
-description: Race- and session-specific carbohydrate, hydration, sodium, and gut-training guidance grounded in sports science.
+description: Race and workout carbohydrate, hydration, sodium, and gut-training plan.
 ---
 
 # Nutrition & Fueling Planner Skill

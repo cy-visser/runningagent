@@ -315,3 +315,64 @@ def test_needs_structure_retry_reuses_tp_cache_and_merges_delta_only_fix(runner)
         "2026-11-04",
     ]
 
+
+def test_from_date_str_moves_and_swaps_preserve_workouts_in_one_call_with_compact_llm_result(runner):
+    # Add an evening Strength workout on Saturday 2026-11-07 alongside Saturday's Long Run.
+    runner.workouts.append({
+        "id": "w_sat_str", "date": "2026-11-07", "sport": "Strength",
+        "title": "Heavy Machine & Unilateral S&C", "type": "planned",
+        "duration_planned": 0.75, "tss_planned": 30.0,
+        "description": "Basic Fit Heavy Machine & Unilateral S&C Protocol",
+    })
+    ctx = runner.ctx()
+
+    # 1. Strength-only move via from_date_str skips tp_get_athlete_settings and keeps exact workout_id/totals.
+    str_move = _stage(_fresh(ctx), [
+        {"from_date_str": "2026-11-07", "sport": "Strength", "date_str": "2026-11-06"},
+    ])
+    assert str_move["staged"] == 1 and ctx.actions.skip_summarization is True
+    assert [name for name, _ in runner.tp_calls] == ["tp_get_workouts"]
+    (moved_str,) = ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    assert moved_str["action"] == "update" and moved_str["workout_id"] == "w_sat_str"
+    assert moved_str["date"] == "2026-11-06" and moved_str["replaces"]["date"] == "2026-11-07"
+    assert moved_str["description_summary"] == "Basic Fit Heavy Machine & Unilateral S&C Protocol"
+    assert all(isinstance(line, str) and "[w_sat_str]" in line and "2026-11-07->2026-11-06" in line
+               for line in str_move["changes"])
+
+    # 2. Cross-sport swap (Thu Bike <-> Fri Run) + same-sport swap (Mon Run <-> Tue Run) in ONE call, without ids!
+    runner.tp_calls.clear()
+    swap_res = _stage_with(_fresh(ctx), [
+        {"from_date_str": "2026-11-05", "sport": "Bike", "date_str": "2026-11-06"},
+        {"from_date_str": "2026-11-06", "sport": "Run", "date_str": "2026-11-05"},
+        {"from_date_str": "2026-11-02", "sport": "Run", "date_str": "2026-11-03"},
+        {"from_date_str": "2026-11-03", "sport": "Run", "date_str": "2026-11-02"},
+    ], "Swapped sessions to open > 48 h recovery.")
+    assert swap_res["staged"] == 4 and ctx.actions.skip_summarization is True
+    staged = ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    assert {(c["replaces"]["date"], c["date"], c["sport"], c["title"]) for c in staged} == {
+        ("2026-11-05", "2026-11-06", "Bike", "Z2 Spin"),
+        ("2026-11-06", "2026-11-05", "Run", "Easy Run"),
+        ("2026-11-02", "2026-11-03", "Run", "Easy Aerobic Run"),
+        ("2026-11-03", "2026-11-02", "Run", "Threshold 2 x 15'"),
+    }
+    # Compact LLM response is a flat list of short one-line strings (< 450 chars total), while state holds full dicts.
+    assert all(isinstance(s, str) for s in swap_res["changes"])
+    assert len(json.dumps(swap_res)) < 650
+
+    # Applying writes 4 clean tp_update_workout moves (zero deletes, zero creates!).
+    runner.tp_calls.clear()
+    applied = json.loads(asyncio.run(apply_staged_changes(_fresh(ctx))))
+    assert applied["success"] is True
+    assert [name for name, _ in runner.tp_calls] == ["tp_update_workout"] * 4
+    assert ctx.reply_text().count("| Moved |") == 4
+
+    # 3. Missing or ambiguous from_date_str reports clean errors without creating duplicates.
+    not_found = _stage(_fresh(ctx), [{"from_date_str": "2026-11-04", "sport": "Run", "date_str": "2026-11-05"}])
+    assert not_found["staged"] == 0 and not_found["not_found"][0]["date_str"] == "2026-11-04"
+
+    runner.workouts.append({"id": "pm-run", "date": "2026-11-06", "sport": "Run", "title": "PM Shakeout",
+                            "type": "planned"})
+    ambig = _stage(_fresh(ctx), [{"from_date_str": "2026-11-06", "sport": "Run", "date_str": "2026-11-04"}])
+    assert ambig["staged"] == 0 and ambig["ambiguous"][0]["reason"] == "needs_workout_id"
+
+

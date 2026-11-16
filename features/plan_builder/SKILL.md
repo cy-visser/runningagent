@@ -1,11 +1,11 @@
 ---
 name: plan-builder
-description: Builds a new training plan/block or overhauls > 10 sessions using compact session codes, applied week by week.
+description: Builds a new training block or overhauls > 10 sessions via session codes.
 ---
 
 # Plan Builder Skill
 
-Builds a **new plan/block** or **overhauls** > 10 sessions (`<= 10` sessions use `workout-creator`). `load_skill("plan-builder", start_date, end_date, mode)` automatically loads `PLAN CONTEXT` (zones, recent training, weekly calendar) in the same step. You write session codes; the app builds exact workouts, builders, strides, and calendar diffs.
+Builds a **new plan/block** or **overhauls** > 10 sessions (`<= 10` sessions use `stage_workout_changes`). `load_skill("plan-builder", start_date, end_date, mode)` automatically loads `PLAN CONTEXT` (zones, recent training, weekly calendar) in the same step. You write session codes; the app builds exact workouts, builders, strides, and calendar diffs.
 
 ## Protocol
 

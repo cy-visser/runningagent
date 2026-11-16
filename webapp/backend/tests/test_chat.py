@@ -239,3 +239,81 @@ def test_event_translator_and_connect_onboarding_chat_sse_flow():
         assert chat4.status_code == 200
         assert agent.created_sessions == 4
         assert agent.calls[5]["session_id"] == "sess-new-4"
+
+
+def test_turn_event_translator_accumulates_token_usage_without_double_counting_partials():
+    tr = TurnEventTranslator()
+
+    # Call 1 (tool routing): partial chunk carries usageMetadata first, then partial=False repeats it.
+    call1_usage = {
+        "promptTokenCount": 4859,
+        "candidatesTokenCount": 76,
+    }
+    assert tr.feed(
+        {
+            "id": "ev-call-1-partial",
+            "author": "coaching_agent",
+            "partial": True,
+            "content": {"parts": [{"functionCall": {"name": "fetch_plan_audit_data"}}]},
+            "usageMetadata": call1_usage,
+        }
+    ) == [
+        ("tool", {"name": "fetch_plan_audit_data", "label": "Auditing weekly schedule & calendar notes", "state": "start"})
+    ]
+
+    assert tr.feed(
+        {
+            "id": "ev-call-1-final",
+            "author": "coaching_agent",
+            "partial": False,
+            "content": {"parts": [{"functionCall": {"name": "fetch_plan_audit_data"}}]},
+            "usageMetadata": call1_usage,
+        }
+    ) == [
+        ("tool", {"name": "fetch_plan_audit_data", "label": "Auditing weekly schedule & calendar notes", "state": "start"}),
+        (
+            "usage",
+            {
+                "input_tokens": 4859,
+                "cached_tokens": 0,
+                "output_tokens": 76,
+                "calls": 1,
+                "steps": [{"input_tokens": 4859, "cached_tokens": 0, "output_tokens": 76}],
+            },
+        ),
+    ]
+
+    # Re-emitting the same event id (e.g. ADK artifact split) does not double-count.
+    assert tr.feed({"id": "ev-call-1-final", "author": "coaching_agent", "usageMetadata": call1_usage}) == []
+
+    # Call 2 (final answer with cached prefix + thinking tokens): sums cleanly across both calls.
+    call2_evs = tr.feed(
+        {
+            "id": "ev-call-2-final",
+            "author": "coaching_agent",
+            "partial": False,
+            "content": {"parts": [{"text": "### Assessment\nLooks solid."}]},
+            "usage_metadata": {
+                "prompt_token_count": 6550,
+                "cached_content_token_count": 4284,
+                "candidates_token_count": 269,
+                "thoughts_token_count": 100,
+            },
+        }
+    )
+    assert call2_evs == [
+        ("message", {"text": "### Assessment\nLooks solid.", "kind": "audit"}),
+        (
+            "usage",
+            {
+                "input_tokens": 11409,
+                "cached_tokens": 4284,
+                "output_tokens": 445,
+                "calls": 2,
+                "steps": [
+                    {"input_tokens": 4859, "cached_tokens": 0, "output_tokens": 76},
+                    {"input_tokens": 6550, "cached_tokens": 4284, "output_tokens": 369},
+                ],
+            },
+        ),
+    ]

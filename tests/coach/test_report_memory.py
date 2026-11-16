@@ -166,26 +166,26 @@ def test_skill_instructions_of_completed_turns_become_a_stub_and_the_current_tur
         types.Content(role="user", parts=[types.Part(text="Audit my schedule")]),
         *load("k1", "plan-audit"),
         types.Content(role="model", parts=[types.Part(text="### Assessment")]),
-        types.Content(role="user", parts=[types.Part(text="Add a tempo run on Thursday")]),
-        *load("k2", "workout-creator"),
+        types.Content(role="user", parts=[types.Part(text="Analyze my run today")]),
+        *load("k2", "workout-analysis"),
     ])
     keep_latest_reports_and_skills(None, request)
     skills = {p.function_response.response["skill_name"]: p.function_response.response["instructions"]
               for c in request.contents for p in c.parts
               if p.function_response and p.function_response.name == "load_skill"}
-    assert skills == {"plan-audit": STALE_SKILL_STUB, "workout-creator": SKILL_TEXT}
+    assert skills == {"plan-audit": STALE_SKILL_STUB, "workout-analysis": SKILL_TEXT}
 
-    # Follow-up turn ("yes update it"): data-free workout-creator keeps its latest instructions (no reload, cache intact).
+    # Next turn: completed-turn skill instructions become a stub too.
     follow_up = LlmRequest(contents=[
         *request.contents,
-        types.Content(role="model", parts=[types.Part(text="I can update those sessions.")]),
-        types.Content(role="user", parts=[types.Part(text="yes update it")]),
+        types.Content(role="model", parts=[types.Part(text="Solid aerobic session.")]),
+        types.Content(role="user", parts=[types.Part(text="yes update Thursday")]),
     ])
     keep_latest_reports_and_skills(None, follow_up)
     follow_skills = {p.function_response.response["skill_name"]: p.function_response.response["instructions"]
                      for c in follow_up.contents for p in c.parts
                      if p.function_response and p.function_response.name == "load_skill"}
-    assert follow_skills == {"plan-audit": STALE_SKILL_STUB, "workout-creator": SKILL_TEXT}
+    assert follow_skills == {"plan-audit": STALE_SKILL_STUB, "workout-analysis": STALE_SKILL_STUB}
 
 
 def test_an_applied_plan_is_stubbed_and_its_week_applies_collapse_into_one_line():

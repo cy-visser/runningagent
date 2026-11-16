@@ -1,6 +1,6 @@
 ---
 name: workout-analysis
-description: Deep physiological and telemetry analysis of a single completed running workout.
+description: Telemetry and physiological analysis of one completed run.
 ---
 
 # Workout Analysis Skill

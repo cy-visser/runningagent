@@ -23,7 +23,6 @@ from ...features.plan_builder.fetch_plan_context_tool import resolve_plan_contex
 from ...features.workout_creator.stage_workout_changes_tool import STAGED_CHANGES_STATE_KEY
 from ...shared.dates import get_today_date, iso_date
 from ...shared.session_state import PLAN_CONTEXT_STATE_KEY, WORKOUT_REPORT_STATE_KEY
-from ...shared.workout_builder import needs_builder
 from ..model_config import COACH_THINKING_LEVEL
 from .quick_actions import (
     BIKE_WORKOUT_SKILL,
@@ -48,22 +47,13 @@ INTERNAL_TOOLS = frozenset({"fetch_plan_context", "apply_training_plan", "refres
 LOAD_SKILL = "load_skill"
 FETCH_PLAN_CONTEXT = "fetch_plan_context"
 STAGE_TRAINING_PLAN = "stage_training_plan"
-WORKOUT_CREATOR_SKILL = "workout-creator"
 STAGE_WORKOUT_CHANGES = "stage_workout_changes"
-APPLY_STAGED_CHANGES = "apply_staged_changes"
 ANALYZE_WORKOUT = "analyze_workout"
 _WORKOUT_SKILLS = frozenset({RUN_WORKOUT_SKILL, BIKE_WORKOUT_SKILL})
 
 
 def _has_unapplied_staged_plan(state: Any) -> bool:
     return bool(unapplied_staged_plan_id(state))
-
-
-def _has_unapplied_staged_changes(state: Any) -> bool:
-    if not state:
-        return False
-    staged = state.get(STAGED_CHANGES_STATE_KEY)
-    return isinstance(staged, dict) and bool(staged.get("changes"))
 
 
 def _has_plan_builder_in_context(state: Any, contents: list[types.Content]) -> bool:
@@ -130,8 +120,6 @@ def hide_internal_tools(
     hidden = set(INTERNAL_TOOLS)
     if not _has_plan_builder_in_context(state, llm_request.contents or []):
         hidden.add(STAGE_TRAINING_PLAN)
-    if not _has_unapplied_staged_changes(state):
-        hidden.add(APPLY_STAGED_CHANGES)
     kept_tools = []
     for tool in config.tools:
         declarations = getattr(tool, "function_declarations", None)
@@ -211,74 +199,12 @@ def expand_plan_builder_context(
     return None
 
 
-def _is_blind_workout_change(item: Any) -> bool:
-    """True when a Run/Bike workout change lacks `code`, `structure`, and a pure move/rename `workout_id`."""
-    if not isinstance(item, dict):
-        return False
-    if str(item.get("kind") or "workout").strip().lower() == "note" or item.get("delete"):
-        return False
-    if item.get("code") not in (None, "") or item.get("structure") not in (None, "", {}):
-        return False
-    if not needs_builder(item.get("sport")):
-        return False
-    pure_move_or_rename = (
-        bool(str(item.get("workout_id") or "").strip())
-        and item.get("distance_km") in (None, "")
-        and item.get("duration_minutes") in (None, "")
-    )
-    return not pure_move_or_rename
-
-
-def drop_premature_staging(
-    callback_context: CallbackContext, llm_response: LlmResponse
-) -> Optional[LlmResponse]:
-    """Drops a blind `stage_workout_changes` emitted in the same step as `load_skill('workout-creator')`."""
-    content = llm_response.content
-    if llm_response.partial or not content or not content.parts:
-        return None
-    if is_quick_action_report(callback_context.state, callback_context.invocation_id):
-        return None
-    loads_wc = any(
-        p.function_call
-        and p.function_call.name == LOAD_SKILL
-        and (p.function_call.args or {}).get("skill_name") == WORKOUT_CREATOR_SKILL
-        for p in content.parts
-    )
-    if not loads_wc:
-        return None
-    stage_parts = [
-        p for p in content.parts
-        if p.function_call and p.function_call.name == STAGE_WORKOUT_CHANGES
-    ]
-    if not stage_parts:
-        return None
-    if not any(
-        _is_blind_workout_change(c)
-        for p in stage_parts
-        for c in ((p.function_call.args or {}).get("changes") or [])
-    ):
-        return None
-    sig = next((p.thought_signature for p in content.parts if p.function_call and p.thought_signature), None)
-    kept: list[types.Part] = []
-    restored_sig = False
-    for p in content.parts:
-        if p.function_call and p.function_call.name == STAGE_WORKOUT_CHANGES:
-            continue
-        if p.function_call and sig and not restored_sig:
-            p = p.model_copy(update={"thought_signature": sig}) if not p.thought_signature else p
-            restored_sig = True
-        kept.append(p)
-    trace.get_current_span().set_attribute("coach.dropped_premature_staging", True)
-    return llm_response.model_copy(update={"content": content.model_copy(update={"parts": kept})})
-
-
 def after_coach_model(
     callback_context: CallbackContext, llm_response: LlmResponse
 ) -> Optional[LlmResponse]:
-    """Single `after_model_callback` composing disabled-tool dropping, premature-staging guard, plan-builder expansion, and turn tracking."""
+    """Single `after_model_callback` composing disabled-tool dropping, plan-builder expansion, and turn tracking."""
     shaped = (
         drop_disabled_tool_calls(callback_context, llm_response)
-        or drop_premature_staging(callback_context, llm_response)
         or expand_plan_builder_context(callback_context, llm_response)
     )
     track_turn_calls(callback_context, shaped or llm_response)
@@ -344,16 +270,10 @@ def is_followup_confirmation(llm_request: LlmRequest) -> bool:
 
 
 def _has_workout_creator_step(contents: list[types.Content]) -> bool:
-    """True once the current turn loaded `workout-creator` or is retrying a rejected staging (`staged: 0`)."""
+    """True when the current turn is retrying a rejected `stage_workout_changes` (`staged: 0`)."""
     cut = max((i for i, c in enumerate(contents) if _is_runner_message(c)), default=0)
     for c in contents[cut:]:
         for p in c.parts or []:
-            if (
-                p.function_call
-                and p.function_call.name == LOAD_SKILL
-                and (p.function_call.args or {}).get("skill_name") == WORKOUT_CREATOR_SKILL
-            ):
-                return True
             resp = p.function_response
             if resp and resp.name == STAGE_WORKOUT_CHANGES:
                 payload = resp.response if isinstance(resp.response, dict) else {}

@@ -102,17 +102,13 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
         r.tools_dict.update({d.name: d for d in decls})
         return r
 
-    # 1. Plain chat without staged changes: internal tools, stage_training_plan AND apply_staged_changes hidden.
+    # 1. Plain chat: internal tools and stage_training_plan hidden; apply_staged_changes stays stably declared
+    #    so staging/applying workouts never mutates tool definitions or busts Gemini's prefix cache.
     req = make_req([_user("hi")])
     hide_internal_tools(None, req)
     declared = {d.name for t in req.config.tools for d in t.function_declarations}
-    assert declared == {"load_skill", "get_weather"}
+    assert declared == {"load_skill", "apply_staged_changes", "get_weather"}
     assert {"fetch_plan_context", "apply_training_plan", "stage_training_plan", "apply_staged_changes"} <= set(req.tools_dict)
-
-    # 1b. Pending staged_workout_changes -> apply_staged_changes becomes declared for chat approval.
-    with_staged = make_req([_user("yes do it")])
-    hide_internal_tools(SimpleNamespace(state={"staged_workout_changes": {"changes": [{"title": "E 8"}]}}), with_staged)
-    assert "apply_staged_changes" in {d.name for t in with_staged.config.tools for d in t.function_declarations}
 
     # 2. Current turn loaded plan-builder -> stage_training_plan is declared for Step 2.
     plan_turn = make_req([
@@ -317,7 +313,7 @@ def test_get_runner_tp_cookie_singleflights_concurrent_kms_decrypts(monkeypatch)
         credentials.clear_tp_credential_cache()
 
 
-def test_audit_recommendation_confirmations_and_workout_creator_steps_use_low_thinking():
+def test_audit_recommendation_confirmations_and_staging_retries_use_low_thinking():
     from running_coach.coach.coaching.model_callbacks import thinking_for
 
     history = [
@@ -325,6 +321,7 @@ def test_audit_recommendation_confirmations_and_workout_creator_steps_use_low_th
         _model(types.Part(text="### Assessment\n- ...\n### Recommendations\n- Nov 18: E 10 -> E 8")),
     ]
     for prompt in (
+        "ok, stage the changes",
         "Apply the recommendations",
         "Apply all your recommendations",
         "Make all those changes",
@@ -333,15 +330,6 @@ def test_audit_recommendation_confirmations_and_workout_creator_steps_use_low_th
     ):
         cfg, reason = thinking_for({}, LlmRequest(contents=[*history, _user(prompt)]))
         assert cfg.thinking_level == types.ThinkingLevel.LOW and reason == "confirmation", prompt
-
-    # Non-confirmation turn that loaded workout-creator in Step 1 -> Step 2 runs at LOW thinking ("workout_creator").
-    wc_step2 = LlmRequest(contents=[
-        _user("Schedule 5x1000m VO2max on Thursday and a 6 km recovery run on Friday"),
-        _model(types.Part(function_call=types.FunctionCall(name="load_skill", args={"skill_name": "workout-creator"}))),
-        _resp("load_skill"),
-    ])
-    cfg_wc, reason_wc = thinking_for({}, wc_step2)
-    assert cfg_wc.thinking_level == types.ThinkingLevel.LOW and reason_wc == "workout_creator"
 
     # Validation retry after stage_workout_changes returns staged: 0 -> runs at LOW thinking ("workout_creator").
     retry_req = LlmRequest(contents=[
@@ -353,43 +341,6 @@ def test_audit_recommendation_confirmations_and_workout_creator_steps_use_low_th
     ])
     cfg_retry, reason_retry = thinking_for({}, retry_req)
     assert cfg_retry.thinking_level == types.ThinkingLevel.LOW and reason_retry == "workout_creator"
-
-
-def test_drop_premature_staging_strips_blind_parallel_call_but_keeps_coded_call():
-    from types import SimpleNamespace
-    from google.adk.models.llm_response import LlmResponse
-    from running_coach.coach.coaching.model_callbacks import after_coach_model
-
-    # 1. Blind parallel stage_workout_changes (missing code & structure) is dropped; signature stays on load_skill.
-    blind = LlmResponse(content=types.Content(role="model", parts=[
-        types.Part(
-            function_call=types.FunctionCall(
-                name="stage_workout_changes",
-                args={"changes": [{"date_str": "2026-11-18", "sport": "Run", "distance_km": 8}]},
-            ),
-            thought_signature=SIG,
-        ),
-        types.Part(function_call=types.FunctionCall(name="load_skill", args={"skill_name": "workout-creator"})),
-    ]))
-    shaped = after_coach_model(SimpleNamespace(state={}, invocation_id="inv-blind"), blind)
-    assert [(p.function_call.name, p.thought_signature) for p in shaped.content.parts if p.function_call] == [
-        ("load_skill", SIG)
-    ]
-
-    # 2. Coded parallel stage_workout_changes is complete -> kept intact so the turn finishes in 1 call.
-    coded = LlmResponse(content=types.Content(role="model", parts=[
-        types.Part(
-            function_call=types.FunctionCall(name="load_skill", args={"skill_name": "workout-creator"}),
-            thought_signature=SIG,
-        ),
-        types.Part(
-            function_call=types.FunctionCall(
-                name="stage_workout_changes",
-                args={"changes": [{"date_str": "2026-11-18", "code": "E 8"}]},
-            )
-        ),
-    ]))
-    assert after_coach_model(SimpleNamespace(state={}, invocation_id="inv-coded"), coded) is None
 
 
 def test_create_session_stamps_initial_expire_at(monkeypatch):

@@ -599,6 +599,20 @@ export interface AppliedTrainingPlan {
   done: boolean;
 }
 
+export interface TokenUsageStep {
+  input_tokens: number;
+  cached_tokens: number;
+  output_tokens: number;
+}
+
+export interface TokenUsage {
+  input_tokens: number;
+  cached_tokens: number;
+  output_tokens: number;
+  calls: number;
+  steps?: TokenUsageStep[];
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -611,6 +625,7 @@ export interface ChatMessage {
   report?: ReportEnvelope | null;
   staged?: StagedChanges | null;
   plan?: StagedTrainingPlan | null;
+  usage?: TokenUsage | null;
   error?: string | null;
 }
 
@@ -640,6 +655,7 @@ export interface ChatStreamHandlers {
   onPlanStaged?: (plan: StagedTrainingPlan) => void;
   onPlanApplied?: (applied: AppliedTrainingPlan) => void;
   onMessage?: (payload: { text: string; kind: MessageKind }) => void;
+  onUsage?: (usage: TokenUsage) => void;
   onError?: (message: string) => void;
   onDone?: (sessionId: string) => void;
 }

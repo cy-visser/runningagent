@@ -65,7 +65,7 @@ running_coach/
 │   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
 │   ├── plan_audit/              # SKILL.md, fetch_plan_audit_data_tool.py, helpers/
 │   ├── nutrition_planner/           # SKILL.md, fetch_nutrition_context_tool.py, helpers/
-│   ├── workout_creator/             # SKILL.md, stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes); <= 10 changes (session codes or custom builders), bigger sets redirect to plan_builder
+│   ├── workout_creator/             # stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes); <= 10 changes (session codes or custom builders), bigger sets redirect to plan_builder
 │   ├── plan_builder/                # SKILL.md, fetch_plan_context_tool.py, stage_training_plan_tool.py, apply_training_plan_tool.py, helpers/ (plan_expand, plan_diff, plan_context_text, plan_summary_text, web_payload)
 │   └── weather_lookup/              # get_weather_tool.py
 ├── shared/                          # domain helpers used by 2+ features/coach

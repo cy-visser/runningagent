@@ -13,6 +13,7 @@ import type {
   SessionResponse,
   StagedChanges,
   StagedTrainingPlan,
+  TokenUsage,
   ToolChip,
 } from "./types";
 
@@ -332,6 +333,21 @@ function dispatchSseEvent(
         handlers.onMessage?.({
           text: obj.text,
           kind: (obj.kind as MessageKind) || "chat",
+        });
+      }
+      break;
+    case "usage":
+      if (
+        typeof obj.input_tokens === "number" &&
+        typeof obj.cached_tokens === "number" &&
+        typeof obj.output_tokens === "number"
+      ) {
+        handlers.onUsage?.({
+          input_tokens: obj.input_tokens,
+          cached_tokens: obj.cached_tokens,
+          output_tokens: obj.output_tokens,
+          calls: typeof obj.calls === "number" ? obj.calls : 1,
+          ...(Array.isArray(obj.steps) ? { steps: obj.steps as TokenUsage["steps"] } : {}),
         });
       }
       break;

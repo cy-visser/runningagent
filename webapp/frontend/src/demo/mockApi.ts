@@ -397,6 +397,16 @@ export async function demoStreamChat(
       kind: "audit",
       text: DEMO_AUDIT_MARKDOWN,
     });
+    handlers.onUsage?.({
+      input_tokens: 10620,
+      cached_tokens: 3910,
+      output_tokens: 445,
+      calls: 2,
+      steps: [
+        { input_tokens: 4410, cached_tokens: 0, output_tokens: 76 },
+        { input_tokens: 6210, cached_tokens: 3910, output_tokens: 369 },
+      ],
+    });
   } else if (lower.includes("analy") || lower.includes("workout") || lower.includes("run today")) {
     handlers.onTool?.({
       name: "analyze_workout",
@@ -411,10 +421,24 @@ export async function demoStreamChat(
     });
     handlers.onReport?.({ kind: "workout", data: DEMO_WORKOUT_DATA });
     handlers.onMessage?.({ kind: "workout", text: DEMO_WORKOUT_MARKDOWN });
+    handlers.onUsage?.({
+      input_tokens: 5840,
+      cached_tokens: 3910,
+      output_tokens: 512,
+      calls: 1,
+      steps: [{ input_tokens: 5840, cached_tokens: 3910, output_tokens: 512 }],
+    });
   } else {
     handlers.onMessage?.({
       kind: "chat",
       text: `Got it! Based on your **Sub-1:26 Half Marathon** block (61.4 CTL, TSB -4.8), keep today's aerobic effort relaxed at **4:55–5:10/km** below 141 bpm so you're fresh for Thursday's threshold cruise.`,
+    });
+    handlers.onUsage?.({
+      input_tokens: 3980,
+      cached_tokens: 0,
+      output_tokens: 318,
+      calls: 1,
+      steps: [{ input_tokens: 3980, cached_tokens: 0, output_tokens: 318 }],
     });
   }
 

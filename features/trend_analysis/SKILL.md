@@ -1,6 +1,6 @@
 ---
 name: trend-analysis
-description: Long-horizon (6+ weeks) training-log analysis of fitness progress, weekly load capacity, pacing headroom, and block recommendations.
+description: Long-horizon (6+ wk) fitness, load capacity, and pacing headroom report.
 ---
 
 # Trend Analysis Skill

@@ -1,6 +1,6 @@
 ---
 name: check-in-report
-description: Short-horizon (last 14 days + next 7) check-in on training execution, recovery, CTL/LT trajectory, and next-week priorities.
+description: Short-horizon (14d back + 7d ahead) execution, recovery, CTL/LT, and next-week check-in.
 ---
 
 # Check-In Report Skill

@@ -1,6 +1,6 @@
 ---
 name: bike-workout-analysis
-description: Physiological and power analysis of a single completed indoor or outdoor cycling workout.
+description: Power and physiological analysis of one completed ride.
 ---
 
 # Bike Workout Analysis Skill

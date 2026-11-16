@@ -291,8 +291,14 @@ def test_architecture_rules_and_cross_stack_contract():
     assert _eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_STATE_KEY") == QUICK_ACTION_STATE_KEY
     assert _eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_PART_PREFIX") == QUICK_ACTION_PART_PREFIX
     assert set(_eval_dict_literal(bff_quick_actions_py, "QUICK_ACTION_SKILLS")) == set(QUICK_ACTIONS)
-    # A '<skill>:<op>' key (e.g. plan-builder:apply) is valid when <skill> is a loaded skill; it is skill-free.
+    # A quick action names a loaded skill, or a skill-free feature folder (e.g. workout-creator, plan-builder:apply).
+    feature_names = {
+        d.name.replace("_", "-")
+        for d in FEATURES_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith("_")
+    }
     for key in QUICK_ACTIONS:
         skill, _, op = key.partition(":")
-        assert skill in loaded_skill_names, f"quick action {key} names no loaded skill"
+        valid = feature_names if key in SKILL_FREE_ACTIONS else loaded_skill_names
+        assert skill in valid, f"quick action {key} names no loaded skill or feature"
         assert not op or key in SKILL_FREE_ACTIONS, f"quick action {key} must be skill-free"

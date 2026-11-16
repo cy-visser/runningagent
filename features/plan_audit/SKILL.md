@@ -1,6 +1,6 @@
 ---
 name: plan-audit
-description: Audits scheduled weekly volume, TSS, intensity spacing, long runs, travel notes, and taper compliance.
+description: Audits scheduled weekly km, TSS, hard-day spacing, long runs, notes, and taper.
 ---
 
 # Plan Audit & Assessment Skill
@@ -20,5 +20,5 @@ description: Audits scheduled weekly volume, TSS, intensity spacing, long runs, 
 ## Output
 
 Keep internal reasoning brief—never re-sum sessions or draft week-by-week prose. The web calendar already displays every session title, weekly km/TSS, and note—**never quote full workout titles or repeat weekly totals/notes, write no intro or closing prose, and keep the entire reply <= 200 words.** Refer to sessions compactly by date + type (e.g. `Nov 21 evening S&C`, `Dec 01 400s`). Resolve competing trade-offs on the same week into a single weighed verdict (never flag opposite sides as separate risks), and do not repeat `Assessment` rationale inside `Recommendations`. Output **only** these two sections:
-- `### Assessment` — 3-5 concise bullets (`- **Topic:** ...`, 1-2 short sentences / <= 30 words each; prefix moderate risks/watchpoints with `- ⚠️ **Topic:**` and `< 48 h` spacing, taper, or unsafe ramp conflicts with `- 🔴 **Topic:**`, leaving positive/on-track bullets unmarked) covering key strengths and risks with numbers (ramp steps vs history, hard-day & S&C spacing, long-run load vs history, travel/notes, taper; findings only, no fixes).
+- `### Assessment` — 3-5 concise bullets (`- **Topic:** ...`, 1-2 short sentences / <= 30 words each; prefix moderate risks/watchpoints with `- ⚠️ **Topic:**` and `< 48 h` spacing, taper, or unsafe ramp conflicts with `- 🔴 **Topic:**`, leaving positive/on-track bullets unmarked) covering key strengths and risks with numbers (ramp steps vs history, hard-day & S&C spacing, long-run load vs history, travel/notes, taper; findings only, no fixes; if the runner asked a specific question—e.g. benchmark/predictor session—answer it directly in one dedicated bullet).
 - `### Recommendations` — **delta-only** adjustments to what is currently scheduled in TrainingPeaks (`<= 30 words` per bullet, `date + current -> proposed` + brief clause on why; **never** list or repeat workouts/long-run progressions already in TrainingPeaks unless missing from the calendar). With a north star, group under `- **Sub goal (<goal>):**` and `- **North star (<goal>):**` (1-2 sub-bullets each; if one level needs no edits, write one sub-bullet stating no changes needed and why).

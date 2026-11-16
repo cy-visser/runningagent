@@ -66,7 +66,7 @@ def _report_deltas(events: list) -> list:
 
 def test_follow_up_lookup_opens_no_checkin_report(runner, monkeypatch):
     events, s = _run_turn(monkeypatch, [
-        [_call("load_skill", skill_name="workout-creator")],
+        [_call("load_skill", skill_name="workout-analysis")],
         [_call("fetch_checkin_data", start_date="2026-11-23", end_date="2026-11-29")],
     ])
     (resp,) = _responses(events, "fetch_checkin_data")
