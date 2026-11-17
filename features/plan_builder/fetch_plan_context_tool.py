@@ -82,7 +82,7 @@ async def fetch_plan_context(
         prefetched_start=monday_of(start) if raw["workouts"] is not None else None,
     )
     fitness = latest_fitness(coerce_mcp_payload(raw["fitness"]).get("daily_data")) if raw["fitness"] else None
-    zones = resolve_zones(raw["settings"], profile, today)
+    zones = resolve_zones(raw["settings"], profile, today, target_date=end)
     tool_context.state[PLAN_CONTEXT_STATE_KEY] = {
         "start_date": iso_date(start),
         "end_date": iso_date(end),

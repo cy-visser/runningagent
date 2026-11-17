@@ -150,7 +150,7 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
     ]
 
     # 4. Turn 2/3 after plan-builder:intake: active fetch_plan_context unhides stage_training_plan,
-    #    uses LOW thinking ("plan_builder"), and reuses plan_context_cache even after staging.
+    #    uses MEDIUM thinking ("default") for synthesis/revisions, and reuses plan_context_cache even after staging.
     from running_coach.coach.coaching.model_callbacks import thinking_for
     from running_coach.shared.dates import get_today_date, iso_date
 
@@ -166,10 +166,10 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
     hide_internal_tools(SimpleNamespace(state={}), intake_turn2)
     assert "stage_training_plan" in {d.name for t in intake_turn2.config.tools for d in t.function_declarations}
     pb_cfg, pb_reason = thinking_for({}, intake_turn2)
-    assert pb_cfg.thinking_level == types.ThinkingLevel.LOW and pb_reason == "plan_builder"
+    assert pb_cfg.thinking_level == types.ThinkingLevel.MEDIUM and pb_reason == "default"
 
     edit_cfg, edit_reason = thinking_for({"staged_training_plan": {"staged_id": "plan-1"}}, followup_unapplied)
-    assert edit_cfg.thinking_level == types.ThinkingLevel.LOW and edit_reason == "plan_builder"
+    assert edit_cfg.thinking_level == types.ThinkingLevel.MEDIUM and edit_reason == "default"
 
     today_iso = iso_date(get_today_date())
     cached_ctx = SimpleNamespace(
@@ -341,6 +341,16 @@ def test_audit_recommendation_confirmations_and_staging_retries_use_low_thinking
     ])
     cfg_retry, reason_retry = thinking_for({}, retry_req)
     assert cfg_retry.thinking_level == types.ThinkingLevel.LOW and reason_retry == "workout_creator"
+
+    pb_retry_req = LlmRequest(contents=[
+        _user("Build my marathon plan"),
+        _model(_call("stage_training_plan")),
+        types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
+            name="stage_training_plan", response={"result": '{"staged": 0, "errors": [{"code": "Zz 5"}]}'}
+        ))]),
+    ])
+    cfg_pb_retry, reason_pb_retry = thinking_for({}, pb_retry_req)
+    assert cfg_pb_retry.thinking_level == types.ThinkingLevel.LOW and reason_pb_retry == "plan_builder"
 
 
 def test_create_session_stamps_initial_expire_at(monkeypatch):

@@ -50,6 +50,25 @@ def test_every_code_type_builds_the_expected_session():
     assert _targets(long_mp["structured_workout"])[1] == tuple(ZONES["goal"]["M"]["pct"])  # Sub-3:15 goal pace
     assert ZONES["goal"]["M"]["source"] == "goal Sub-3:15 Marathon"
 
+    # Model-controlled Long Run blocks (no forced cooldown unless written) & marathon long blocks (> 10 km).
+    lr_blocks = build_session("L 26 +4x4k@HM r1k", ZONES)
+    assert lr_blocks["distance_km"] == 26.0 and lr_blocks["title"] == "Long Run 26 km (4x4km @HM)"
+    assert "strides_added" not in lr_blocks
+    assert len(lr_blocks["structured_workout"]["structure"]) == 2
+    assert lr_blocks["structured_workout"]["structure"][0]["steps"][0]["length"]["value"] == 6000
+    assert lr_blocks["structured_workout"]["structure"][1]["length"] == {"value": 4, "unit": "repetition"}
+
+    lr_with_cd = build_session("L 36 +4x7k@M r1k +2@E", ZONES)
+    assert lr_with_cd["distance_km"] == 36.0 and lr_with_cd["title"] == "Long Run 36 km (4x7km @M + 2km @E)"
+    assert [b["steps"][0]["name"] for b in lr_with_cd["structured_workout"]["structure"]] == ["Long run", "@M", "@E"]
+    assert lr_with_cd["structured_workout"]["structure"][0]["steps"][0]["length"]["value"] == 2000
+    assert lr_with_cd["structured_workout"]["structure"][2]["steps"][0]["length"]["value"] == 2000
+
+    lr_12k_reps = build_session("L 30 +2x12k@M r1k +2@E", ZONES)
+    assert lr_12k_reps["distance_km"] == 30.0
+    assert build_session("L 26 +6@M +4@HM", ZONES)["distance_km"] == 26.0
+    assert build_session("L 25 +3x3k@HM r2'", ZONES)["distance_km"] == 25.0
+
     threshold = build_session("T 2x15' r2'", ZONES)
     native = threshold["structured_workout"]
     # Warm-up, strides (shared.strides), main set, cool-down; totals from the builder.
@@ -72,6 +91,26 @@ def test_every_code_type_builds_the_expected_session():
 
     race = build_session("RACE", ZONES, day=date(2027, 2, 14))
     assert (race["title"], race["distance_km"]) == ("Race: Schoorl 10K", 10.0)
+
+    tuneup = build_session("RACE 16k @HM Dam tot Damloop", ZONES, day=date(2027, 9, 19))
+    assert (tuneup["title"], tuneup["distance_km"]) == ("Race: Dam tot Damloop", 16.0)
+    assert _block_names(tuneup["structured_workout"]) == ["Race"]
+    assert _targets(tuneup["structured_workout"]) == [tuple(ZONES["goal"]["HM"]["pct"])]
+    assert "strides_added" not in tuneup
+
+    controlled = build_session("EVENT 10mi @M Tilburg 10 Miles", ZONES, day=date(2027, 9, 26))
+    assert (controlled["title"], controlled["distance_km"]) == ("Event: Tilburg 10 Miles (@M)", 16.09)
+    assert _block_names(controlled["structured_workout"]) == ["Event"]
+    assert _targets(controlled["structured_workout"]) == [tuple(ZONES["goal"]["M"]["pct"])]
+    assert "Controlled event effort" in controlled["description"]
+
+    # Sub-marathon RACE at @M or @E automatically becomes a controlled Event so Riegel never treats it as an all-out race.
+    auto_event = build_session("RACE 16k @M Tilburg 10mi", ZONES, day=date(2027, 9, 26))
+    assert (auto_event["title"], auto_event["distance_km"]) == ("Event: Tilburg 10mi (@M)", 16.0)
+
+    unnamed_tuneup = build_session("RACE 16k", ZONES, day=date(2027, 9, 19))
+    assert (unnamed_tuneup["title"], unnamed_tuneup["distance_km"]) == ("Race 16 km", 16.0)
+    assert _targets(unnamed_tuneup["structured_workout"]) == [tuple(ZONES["goal"]["HM"]["pct"])]
 
     double = build_session("E 6 pm", ZONES)
     assert double["time"] == "18:00"
@@ -100,11 +139,33 @@ def test_bike_strength_and_cross_training_codes():
 
 
 @pytest.mark.parametrize("code", ["Q 3", "E", "P 4x1k", "S 40' legs day", "B 10k", "L 20 +25@M", "E 10 @Z9",
-                                  "B 3x10' Z2", "X 30' karate", "I 60x400"])
+                                  "B 3x10' Z2", "X 30' karate", "I 0x400", "L 18 +4x4k@HM r1k", "E 12 +4@HM",
+                                  "L 20 +4@E", "RACE 2x5k @10K", "RACE 16k +4@HM", "RACE 16k @HM +strides",
+                                  "RACE 60' @HM", "EVENT 16k", "EVENT"])
 def test_bad_codes_are_rejected_with_a_reason(code):
     with pytest.raises(CodeError) as err:
         build_session(code, ZONES)
     assert str(err.value)
+
+
+def test_resolve_zones_uses_target_block_goal_when_multiple_sub_goals_share_distance(runner):
+    multi_hm_profile = {
+        **PLAN_PROFILE,
+        "sub_goals": [
+            {"goal": "Sub-21 5K", "race_name": "Twiske 5K", "start_date": "2026-11-30", "race_date": "2027-02-07", "planned": True},
+            {"goal": "Sub-1:35 Half Marathon", "race_name": "Helsinki HM", "start_date": "2027-03-29", "race_date": "2027-06-12", "planned": True},
+            {"goal": "Sub-1:34 Half Marathon", "race_name": "Amsterdam HM", "start_date": "2027-08-02", "race_date": "2027-10-31", "planned": False},
+        ],
+    }
+    helsinki_zones = resolve_zones(envelope(SETTINGS), multi_hm_profile, TODAY, target_date=date(2027, 6, 12))
+    amsterdam_zones = resolve_zones(envelope(SETTINGS), multi_hm_profile, TODAY, target_date=date(2027, 10, 31))
+    assert helsinki_zones["goal"]["HM"]["source"] == "goal Sub-1:35 Half Marathon"
+    assert amsterdam_zones["goal"]["HM"]["source"] == "goal Sub-1:34 Half Marathon"
+
+    ctx = runner.ctx(profile=multi_hm_profile)
+    plan_ctx_text = asyncio.run(fetch_plan_context(ctx))
+    assert "goal Sub-1:34 Half Marathon" in plan_ctx_text
+    assert "race in W13" in plan_ctx_text
 
 
 def test_multi_session_days_rest_and_errors_expand_per_week():
@@ -519,3 +580,47 @@ def test_stage_workout_changes_redirects_big_sets_to_plan_builder(runner):
     result = json.loads(asyncio.run(stage_workout_changes(ctx, spread, message="Moved both runs two weeks out.")))
     assert result.get("use_plan_builder") is not True and result["staged"] == 2
     assert len(ctx.state["staged_workout_changes"]["changes"]) == 2
+
+
+def test_tuneup_races_and_controlled_events_stage_at_exact_distance_and_protect_race_predictor(runner):
+    from running_coach.shared.sports import is_quality_title, is_race_title
+
+    ctx = runner.ctx()
+    res = _stage(ctx, {
+        "start_date": "2027-09-13",
+        "mode": "new",
+        "weeks": [
+            "W1 | build | Dam tot Damloop race week | Tue: T 3x8' r2' | Sun: RACE 16k @HM Dam tot Damloop",
+            "W2 | recovery | Post-race & Tilburg 10mi | Wed: E 10 | Sun: EVENT 10mi @M Tilburg 10 Miles",
+            "W3 | base | Social parkrun | Sun: EVENT 5k @E Vondelpark Parkrun",
+        ],
+    })
+    assert res["total_weeks"] == 3
+    weeks = ctx.state["staged_training_plan"]["weeks"]
+    w1_sun = weeks[0]["rows"][-1]
+    w2_sun = weeks[1]["rows"][-1]
+    w3_sun = weeks[2]["rows"][-1]
+
+    assert (w1_sun["title"], w1_sun["distance_km"], w1_sun["category"]) == ("Race: Dam tot Damloop", 16.0, "quality")
+    assert is_race_title(w1_sun["title"]) is True and is_quality_title(w1_sun["title"]) is True
+
+    assert (w2_sun["title"], w2_sun["distance_km"], w2_sun["category"]) == (
+        "Event: Tilburg 10 Miles (@M)", 16.09, "quality"
+    )
+    assert is_race_title(w2_sun["title"]) is False and is_quality_title(w2_sun["title"]) is True
+
+    assert (w3_sun["title"], w3_sun["distance_km"], w3_sun["category"]) == (
+        "Event: Vondelpark Parkrun (@E)", 5.0, "easy"
+    )
+    assert is_race_title(w3_sun["title"]) is False and is_quality_title(w3_sun["title"]) is False
+
+    wc_ctx = runner.ctx()
+    wc_res = json.loads(asyncio.run(stage_workout_changes(
+        wc_ctx,
+        [{"date_str": "2027-09-19", "code": "RACE 16k @HM Dam tot Damloop", "create": True}],
+        message="Added Dam tot Damloop 16k tune-up race.",
+    )))
+    assert wc_res["staged"] == 1
+    staged_item = wc_ctx.state["staged_workout_changes"]["changes"][0]
+    assert (staged_item["title"], staged_item["distance_km"]) == ("Race: Dam tot Damloop", 16.0)
+

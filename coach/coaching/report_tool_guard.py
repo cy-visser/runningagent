@@ -21,10 +21,11 @@ from google.adk.tools.tool_context import ToolContext
 from opentelemetry import trace
 
 from .quick_actions import (
-    DISPATCHED_STATE_KEY,
+    SYNTHESIS_GUARD_STATE_KEY,
     has_action_or_event_intent,
     is_plan_intake,
     is_quick_action_report,
+    is_synthesis_guard,
 )
 
 TURN_CALLS_STATE_KEY = "temp:turn_calls"
@@ -144,11 +145,15 @@ def guard_report_tools(
 def mark_report_synthesis(
     tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: Any
 ) -> Optional[dict]:
-    """after_tool_callback: switches Step 2 of read-only LLM-routed report turns into tools-off synthesis mode."""
+    """after_tool_callback: guards Step 2 of read-only LLM-routed report turns so it ends on prose while keeping Call 1's prefix cache intact."""
     if tool.name not in _SYNTHESIS_TOOLS and tool.name != ANALYZE_WORKOUT:
         return None
     invocation_id = getattr(tool_context, "invocation_id", None)
-    if not invocation_id or is_quick_action_report(tool_context.state, invocation_id):
+    if (
+        not invocation_id
+        or is_quick_action_report(tool_context.state, invocation_id)
+        or is_synthesis_guard(tool_context.state, invocation_id)
+    ):
         return None
     user_content = getattr(tool_context, "user_content", None)
     if user_content is None:
@@ -166,6 +171,6 @@ def mark_report_synthesis(
     steps = _turn_steps(tool_context)
     if not steps or any(c["name"] not in (LOAD_SKILL, tool.name) for step in steps for c in step):
         return None
-    tool_context.state[DISPATCHED_STATE_KEY] = invocation_id
-    trace.get_current_span().set_attribute("coach.report_synthesis_trim", tool.name)
+    tool_context.state[SYNTHESIS_GUARD_STATE_KEY] = invocation_id
+    trace.get_current_span().set_attribute("coach.report_synthesis_guard", tool.name)
     return None

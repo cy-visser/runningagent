@@ -11,12 +11,12 @@ NON_TRAINING_SPORTS = {"DayOff", "Other"}
 RACE_RE = re.compile(r"\b(race|parkrun|time[- ]?trial|tt|wedstrijd)\b", re.IGNORECASE)
 # Titles that mention "race" without being one (race-pace blocks, shakeouts, ...).
 NOT_RACE_RE = re.compile(
-    r"\brace[- ]?(pace|week|prep|specific|sim\w*)\b|\b(pre|post)[- ]?race\b",
+    r"\brace[- ]?(pace|week|prep|specific|sim\w*)\b|\b(pre|post)[- ]?race\b|^event\b",
     re.IGNORECASE,
 )
 QUALITY_RE = re.compile(
     r"(interval|tempo|threshold|speed|reps|\bmp\b|marathon pace|race pace|canova|"
-    r"progression|hills?\b|fartlek|vo2|\bpush\b|\d+\s*x\s*\d+)",
+    r"progression|hills?\b|fartlek|vo2|\bpush\b|\d+\s*x\s*\d+|@(?:5k|10k|hm|hmp|m|mp|t|i|rp|h)\b)",
     re.IGNORECASE,
 )
 

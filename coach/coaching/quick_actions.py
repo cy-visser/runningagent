@@ -47,8 +47,10 @@ logger = logging.getLogger(__name__)
 QUICK_ACTION_STATE_KEY = "temp:quick_action"
 # Message part carrying the action: this prefix followed by the action JSON.
 QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
-# Invocation id of the turn whose report call runs without routing / tool calling.
+# Invocation id of the turn whose standalone report call strips routing rules, skill catalog, and tool schemas.
 DISPATCHED_STATE_KEY = "temp:quick_action_invocation"
+# Invocation id of a report synthesis call that keeps the full prompt prefix cached while dropping any stray tool calls.
+SYNTHESIS_GUARD_STATE_KEY = "temp:report_synthesis_guard"
 # Skill of that dispatched action (the plan-builder:intake opener gets its own rules and LOW thinking).
 DISPATCHED_SKILL_STATE_KEY = "temp:quick_action_skill"
 PLAN_INTAKE = "plan-builder:intake"
@@ -370,8 +372,13 @@ def infer_typed_quick_action(text: Optional[str], today: Optional[date] = None) 
 
 
 def is_quick_action_report(state: Any, invocation_id: Optional[str]) -> bool:
-    """True during the report call of a dispatched quick action (this invocation only)."""
+    """True during the trimmed report call of a standalone quick action (this invocation only)."""
     return bool(invocation_id) and state.get(DISPATCHED_STATE_KEY) == invocation_id
+
+
+def is_synthesis_guard(state: Any, invocation_id: Optional[str]) -> bool:
+    """True when a report synthesis call keeps the full prompt prefix cached while blocking follow-up tool calls."""
+    return bool(invocation_id) and state.get(SYNTHESIS_GUARD_STATE_KEY) == invocation_id
 
 
 def is_plan_intake(state: Any, invocation_id: Optional[str]) -> bool:
@@ -386,6 +393,23 @@ def _is_turn_start(llm_request: LlmRequest) -> bool:
     last = llm_request.contents[-1]
     parts = last.parts or []
     return last.role == "user" and any(p.text for p in parts) and not any(p.function_response for p in parts)
+
+
+def _has_prior_full_prompt_turn(llm_request: LlmRequest) -> bool:
+    """True once an earlier turn in this session ran with the full prompt + tool declarations."""
+    prior = (llm_request.contents or [])[:-1]
+    for i, content in enumerate(prior):
+        parts = content.parts or []
+        if any(p.text and "REPORT MEMORY:" in p.text for p in parts):
+            return True
+        if content.role != "user" or not any(not p.function_response for p in parts):
+            continue
+        if i + 1 >= len(prior) or prior[i + 1].role != "model":
+            continue
+        first = (prior[i + 1].parts or [None])[0]
+        if not (first and first.function_call and first.thought_signature == SYNTHETIC_THOUGHT_SIGNATURE):
+            return True
+    return False
 
 
 def _turn_start_text(llm_request: LlmRequest) -> Optional[str]:
@@ -433,13 +457,15 @@ def dispatch_quick_action(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
     """before_model_callback: runs a web quick action (or unambiguous standalone typed report/workout prompt)
-    without a routing LLM call, then disables tool calling for that turn's report call."""
+    without a routing LLM call, trimming routing/tools on fresh sessions while preserving prefix cache on warm ones."""
     state = callback_context.state
     invocation_id = callback_context.invocation_id
     if is_quick_action_report(state, invocation_id):
         llm_request.config = llm_request.config or types.GenerateContentConfig()
         llm_request.config.tool_config = NO_TOOL_CALLS
         llm_request.config.tools = []
+        return None
+    if is_synthesis_guard(state, invocation_id):
         return None
     action = state.get(QUICK_ACTION_STATE_KEY)
     inferred = False
@@ -455,7 +481,10 @@ def dispatch_quick_action(
     parts = quick_action_calls(action, llm_request, allow_typed=inferred)
     if not parts:
         return None  # unknown action: fall back to normal LLM routing of the message
-    state[DISPATCHED_STATE_KEY] = invocation_id
+    if action["skill"] not in SKILL_FREE_ACTIONS and _has_prior_full_prompt_turn(llm_request):
+        state[SYNTHESIS_GUARD_STATE_KEY] = invocation_id
+    else:
+        state[DISPATCHED_STATE_KEY] = invocation_id
     state[DISPATCHED_SKILL_STATE_KEY] = action["skill"]
     if inferred:
         trace.get_current_span().set_attribute("coach.typed_pre_dispatch", action["skill"])
@@ -465,19 +494,22 @@ def dispatch_quick_action(
 def drop_disabled_tool_calls(
     callback_context: CallbackContext, llm_response: LlmResponse
 ) -> Optional[LlmResponse]:
-    """after_model_callback: the quick-action report call runs with tool calling off, but the model can still
-    return function calls (gemini-4-argon ignores mode=NONE, even with no tools declared). Drop them so no tool
+    """after_model_callback: report synthesis calls must end on text, but the model can still return function
+    calls (gemini-4-argon ignores mode=NONE, and warm-cache synthesis keeps tools declared). Drop them so no tool
     runs and the turn ends on the report text."""
     content = llm_response.content
     if llm_response.partial or not content or not content.parts:
         return None
-    if not is_quick_action_report(callback_context.state, callback_context.invocation_id):
+    if not (
+        is_quick_action_report(callback_context.state, callback_context.invocation_id)
+        or is_synthesis_guard(callback_context.state, callback_context.invocation_id)
+    ):
         return None
     kept = [p for p in content.parts if not p.function_call]
     if len(kept) == len(content.parts):
         return None
     trace.get_current_span().set_attribute("coach.dropped_tool_calls", len(content.parts) - len(kept))
-    logger.warning("Dropped %d function call(s) from a tools-off report call", len(content.parts) - len(kept))
+    logger.warning("Dropped %d function call(s) from a report synthesis call", len(content.parts) - len(kept))
     return llm_response.model_copy(update={"content": content.model_copy(update={"parts": kept})})
 
 

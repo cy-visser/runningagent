@@ -376,3 +376,27 @@ def test_from_date_str_moves_and_swaps_preserve_workouts_in_one_call_with_compac
     assert ambig["staged"] == 0 and ambig["ambiguous"][0]["reason"] == "needs_workout_id"
 
 
+def test_stage_workout_changes_resolves_goal_pace_for_workout_date_and_long_run_blocks(runner):
+    from running_coach.tests.fakes import PLAN_PROFILE
+
+    profile = {
+        **PLAN_PROFILE,
+        "sub_goals": [
+            {"goal": "Sub-1:40 Half Marathon", "race_date": "2027-06-12", "planned": True},
+            {"goal": "Sub-1:30 Half Marathon", "race_date": "2027-10-31", "planned": True},
+        ],
+    }
+    ctx = runner.ctx(profile=profile)
+    res = _stage(ctx, [
+        {"date_str": "2027-05-16", "code": "L 24 +3x3k@HM r1k"},
+        {"date_str": "2027-10-03", "code": "L 26 +4x4k@HM r1k +2@E"},
+    ])
+    assert res["staged"] == 2
+    may_lr, oct_lr = ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    assert may_lr["distance_km"] == 24.0 and oct_lr["distance_km"] == 26.0
+    may_hm_min = may_lr["structured_workout"]["structure"][1]["steps"][0]["targets"][0]["minValue"]
+    oct_hm_min = oct_lr["structured_workout"]["structure"][1]["steps"][0]["targets"][0]["minValue"]
+    assert oct_hm_min > may_hm_min  # Sub-1:30 October HM block gets faster @HM target than Sub-1:40 June block
+
+
+

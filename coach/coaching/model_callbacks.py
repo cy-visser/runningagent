@@ -30,6 +30,7 @@ from .quick_actions import (
     drop_disabled_tool_calls,
     is_plan_intake,
     is_quick_action_report,
+    is_synthesis_guard,
 )
 from .report_tool_guard import track_turn_calls
 from .skill_toolset import (
@@ -171,7 +172,10 @@ def expand_plan_builder_context(
     content = llm_response.content
     if llm_response.partial or not content or not content.parts:
         return None
-    if is_quick_action_report(callback_context.state, callback_context.invocation_id):
+    if (
+        is_quick_action_report(callback_context.state, callback_context.invocation_id)
+        or is_synthesis_guard(callback_context.state, callback_context.invocation_id)
+    ):
         return None
     called = {p.function_call.name for p in content.parts if p.function_call}
     if FETCH_PLAN_CONTEXT in called:
@@ -269,18 +273,26 @@ def is_followup_confirmation(llm_request: LlmRequest) -> bool:
     return bool(_CONFIRMATION_RE.match(text.lstrip(" ,.!—-")))
 
 
-def _has_workout_creator_step(contents: list[types.Content]) -> bool:
-    """True when the current turn is retrying a rejected `stage_workout_changes` (`staged: 0`)."""
+def _has_rejected_staging_step(contents: list[types.Content], tool_name: str) -> bool:
+    """True when the current turn is retrying a rejected staging tool call (`staged: 0`)."""
     cut = max((i for i, c in enumerate(contents) if _is_runner_message(c)), default=0)
     for c in contents[cut:]:
         for p in c.parts or []:
             resp = p.function_response
-            if resp and resp.name == STAGE_WORKOUT_CHANGES:
+            if resp and resp.name == tool_name:
                 payload = resp.response if isinstance(resp.response, dict) else {}
                 raw = str(payload.get("result", payload))
                 if '"staged": 0' in raw or '"staged":0' in raw:
                     return True
     return False
+
+
+def _has_workout_creator_step(contents: list[types.Content]) -> bool:
+    return _has_rejected_staging_step(contents, STAGE_WORKOUT_CHANGES)
+
+
+def _has_plan_builder_retry_step(contents: list[types.Content]) -> bool:
+    return _has_rejected_staging_step(contents, STAGE_TRAINING_PLAN)
 
 
 def thinking_for(
@@ -293,7 +305,7 @@ def thinking_for(
         return EXECUTION_THINKING, "intake"  # short Build Plan opener: the data is already in the request
     if is_followup_confirmation(llm_request):
         return EXECUTION_THINKING, "confirmation"
-    if _has_plan_builder_in_context(state, llm_request.contents or []):
+    if _has_plan_builder_retry_step(llm_request.contents or []):
         return EXECUTION_THINKING, "plan_builder"
     if _has_workout_creator_step(llm_request.contents or []):
         return EXECUTION_THINKING, "workout_creator"

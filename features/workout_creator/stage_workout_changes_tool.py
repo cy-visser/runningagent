@@ -217,8 +217,8 @@ async def stage_workout_changes(
     - delete: delete=true + (workout_id | date_str + sport | kind='note' + date_str + title).
     - note: kind='note', date_str, title [+ description].
     - workout (`code` default; omit distance_km/duration_minutes/tss_planned/structure; create=true adds 2nd same-sport; strides=false drops strides):
-      lengths 8 / 1.5k / 400m / 50' / 90" / 1h30, reps 6x1k, rec r2' / r90" / r200, slot am|mid|pm.
-      Run: E 8 (+strides), R 6, L 22 (+6@M|@HM|@10K|@T); quality (auto 15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M), H 8x60" r90".
+      lengths 8 / 1.5k / 10mi / 400m / 50' / 90" / 1h30, reps 6x1k, rec r2' / r90" / r200, slot am|mid|pm.
+      Run: E 8 (+strides), R 6, L 22 (+6@M|+4x4k@HM r1k [+2@E]), RACE / RACE 16k @HM [Name] / EVENT 16k @M [Name] (exact dist, no auto WU/CD); quality (auto 15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M), H 8x60" r90".
       Other: B 60' Z2 (Z1-Z3) | B 4x8' @SS r4' (@SS|@T|@VO2), S 40' heavy-lower (full|core-hips|plyo|mobility), X 40' swim (walk|crosstrain).
     - fallback `structure` (ONLY custom WU/CD, ladders, or current_structure edits): {"steps":[step|{"type":"repetition","reps":N,"steps":[work,rest]}]} (primaryIntensityMetric: "percentOfThresholdHr"|"percentOfFtp"); step={"name","intensityClass":"warmUp"|"active"|"rest"|"coolDown"|"other","distance_m"|"duration_seconds","pace":"M:SS-M:SS"|"intensity_min"+"intensity_max"}."""
     invocation = getattr(tool_context, "invocation_id", None)

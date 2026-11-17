@@ -65,13 +65,18 @@ def _band(pct: float) -> list[int]:
     return [round(pct - GOAL_BAND_PCT), round(pct + GOAL_BAND_PCT)]
 
 
-def resolve_zones(settings_raw: Any, profile: Optional[dict], today: date) -> dict:
+def resolve_zones(
+    settings_raw: Any,
+    profile: Optional[dict],
+    today: date,
+    target_date: Optional[date] = None,
+) -> dict:
     """JSON-safe zone table: thresholds per sport, run / bike zones, goal paces (with their source) and
     the goal races (date, title, km, pace band) a RACE code can refer to."""
     run_thr = sport_thresholds(settings_raw, "Run")
     bike_thr = sport_thresholds(settings_raw, "Bike")
     speed = run_thr.get("threshold_speed")
-    goals = _goal_blocks(profile, today)
+    goals = _goal_blocks(profile, target_date or today)
 
     goal_paces: dict[str, dict] = {}
     for code, label in GOAL_PACES.items():

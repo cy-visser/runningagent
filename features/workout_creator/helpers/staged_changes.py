@@ -511,7 +511,8 @@ def finalize_builders(
     ready: list[dict] = []
     needs: list[dict] = []
     notes: list[dict] = []
-    zones: Optional[dict] = None
+    zones_by_date: dict[Optional[date], dict] = {}
+    today_d = today or get_today_date()
     for change in staged:
         if change.get("action") == ACTION_DELETE:
             ready.append(change)
@@ -524,14 +525,17 @@ def finalize_builders(
         if change.get("workout_id"):
             _show_current_builder(change, details_by_id.get(str(change["workout_id"])), thr)
         if marker == BUILDER_CODE:
+            target_day = parse_date(change["date"])
+            zones = zones_by_date.get(target_day)
             if zones is None:
-                zones = resolve_zones(settings_raw, profile, today or get_today_date())
+                zones = resolve_zones(settings_raw, profile, today_d, target_date=target_day)
+                zones_by_date[target_day] = zones
             current = (details_by_id.get(str(change.get("workout_id"))) or {}).get("structured_workout")
             try:
                 built = build_session(
                     raw_code,
                     zones,
-                    day=parse_date(change["date"]),
+                    day=target_day,
                     current_builder=current if has_builder(current) else None,
                     allow_strides=change.get("strides") is not False,
                     include_code_footer=False,

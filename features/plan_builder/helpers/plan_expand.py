@@ -22,7 +22,7 @@ _DAY_KEYS = {d.lower(): d for d in DAYS} | {
     "saturday": "Sat", "sunday": "Sun", "tu": "Tue", "tues": "Tue", "weds": "Wed",
     "th": "Thu", "thur": "Thu", "thurs": "Thu",
 }
-_SESSION_PREFIXES = frozenset({"E", "R", "L", "T", "I", "RP", "M", "P", "H", "RACE", "B", "S", "X", "REST"})
+_SESSION_PREFIXES = frozenset({"E", "R", "L", "T", "I", "RP", "M", "P", "H", "RACE", "EVENT", "B", "S", "X", "REST"})
 MODES = ("new", "overhaul")
 MAX_WEEKS = 52
 REST = "REST"

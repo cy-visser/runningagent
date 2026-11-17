@@ -32,7 +32,7 @@ def _goal_lines(profile: dict, start: date, end: date) -> list[str]:
     lines = []
     if goal.get("training_goal"):
         race = race_day(goal)
-        weeks = f", {(race - monday_of(start)).days // 7} weeks after W1 starts" if race else ""
+        weeks = f", race in W{(monday_of(race) - monday_of(start)).days // 7 + 1}" if race else ""
         lines.append(f"Goal: {goal['training_goal']} on {goal.get('timeline') or 'an unset date'}{weeks}")
     ns = north_star(profile)
     if ns and ns.get("timeline") != goal.get("timeline"):

@@ -9,7 +9,7 @@ from google.adk.tools import FunctionTool, ToolContext
 from opentelemetry import trace
 
 from ...integrations.trainingpeaks import tp_calls
-from ...shared.dates import get_today_date, iso_date
+from ...shared.dates import get_today_date, iso_date, parse_date
 from ...shared.goal_plan import current_goal
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.training_times import default_session_times
@@ -92,7 +92,7 @@ async def stage_training_plan(
     - Revision (`base_staged_id` or reshape): `### Plan Update` (delta-only, <= 90–120 words) — 1 short lead sentence +
       1–3 single-sentence numbered items on ONLY what changed, any numeric pushback, and new guardrails (1–2 sentences
       total for minor edits; never repeat unchanged pillars).
-    Use NO emojis (never `🟢`, `🟡`, `🔴`, `✅`, `⚠️`), NO Markdown tables, and never list individual sessions.
+    Use NO decorative emojis (`🟢`, `🟡`, `✅`), NO Markdown tables, and never list individual sessions (`⚠️` / `🔴` are allowed on genuine watchpoints or pushbacks).
     `base_staged_id`: to change a staged plan, send ONLY the changed weeks with `base_staged_id` (its `staged_id` or
     `"current"`; omit unchanged weeks).
 
@@ -134,9 +134,13 @@ async def stage_training_plan(
 
     start, end = plan_window(spec)
     start_s, end_s = iso_date(start), iso_date(end)
+    target_end = parse_date(spec.get("end_date")) or end
+    cached_end = context.get("end_date")
     cached_zones = (
         context.get("zones")
-        if isinstance(context.get("zones"), dict) and context.get("today") == iso_date(today)
+        if isinstance(context.get("zones"), dict)
+        and context.get("today") == iso_date(today)
+        and (not cached_end or cached_end == iso_date(target_end))
         else None
     )
     cached_w = state.get(TEMP_PLAN_WORKOUTS_KEY)
@@ -160,7 +164,11 @@ async def stage_training_plan(
         reply(tool_context, CALENDAR_UNAVAILABLE_TEXT)
         return json.dumps({"staged": 0, "message": "The calendar could not be read; the runner was told to retry."})
     # A plan edit keeps the zones it was staged with, so unchanged weeks expand identically.
-    zones = base["zones"] if base else (cached_zones or resolve_zones(raw.get("settings"), profile, today))
+    zones = (
+        base["zones"]
+        if base
+        else (cached_zones or resolve_zones(raw.get("settings"), profile, today, target_date=target_end))
+    )
 
     weeks, errors = expand_plan(spec, zones, today)
     if errors:

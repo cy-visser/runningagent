@@ -12,6 +12,8 @@ X session of that sport on that day (then that sport is managed on that day; del
 
 from typing import Any, Optional
 
+import re
+
 from ....shared.dates import iso_date, parse_date, parse_iso_timestamp
 from ....shared.sports import BIKE_SPORTS, NON_TRAINING_SPORTS, RUN_SPORTS, STRENGTH_SPORTS, is_quality_title
 from ....shared.units import as_float
@@ -23,6 +25,7 @@ DAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 MANAGED_SPORTS = ("Run", "Strength", "Bike")
 SPORT_ORDER = {"Run": 0, "Bike": 1, "Strength": 2}
 QUALITY_KINDS = frozenset({"T", "I", "RP", "M", "P", "H", "RACE"})
+_EASY_PACE_TAG_RE = re.compile(r"@(?:E|L|R)\b", re.IGNORECASE)
 DISTANCE_TOL_KM = 0.1
 DURATION_TOL_MIN = 1.5
 # Row fields shown on the web card (contract: staged_training_plan.weeks[].rows).
@@ -51,7 +54,10 @@ def session_category(sport: str, title: str = "", kind: Optional[str] = None, co
     if low in STRENGTH_SPORTS:
         return "strength"
     if low in RUN_SPORTS or low == "race":
-        if (kind and kind.upper() in QUALITY_KINDS) or (code and "@" in code) or is_quality_title(title):
+        upper_kind = (kind or "").upper()
+        if upper_kind in ("RACE", "EVENT"):
+            return "easy" if _EASY_PACE_TAG_RE.search(code or "") else "quality"
+        if (upper_kind in QUALITY_KINDS) or (code and "@" in code and not _EASY_PACE_TAG_RE.search(code)) or is_quality_title(title):
             return "quality"
         return "easy"
     return "other"

@@ -253,10 +253,11 @@ def test_turn_after_build_plan_intake_stages_in_one_llm_call_without_reading_his
         return turn2, turn3, first_id, s3
 
     turn2, turn3, first_id, s = asyncio.run(scenario())
-    # Turn 1 (intake) + Turn 2 (stage) + Turn 3 (revise): exactly 1 LLM call per turn, all LOW thinking!
+    # Turn 1 (intake: LOW) + Turn 2 (stage: MEDIUM) + Turn 3 (revise: MEDIUM): 1 LLM call per turn.
     assert len(llm.requests) == 3
-    for req in llm.requests:
-        assert req.config.thinking_config.thinking_level == types.ThinkingLevel.LOW
+    assert llm.requests[0].config.thinking_config.thinking_level == types.ThinkingLevel.LOW
+    assert llm.requests[1].config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
+    assert llm.requests[2].config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
 
     turn2_req, turn3_req = llm.requests[1], llm.requests[2]
     for req in (turn2_req, turn3_req):
@@ -463,10 +464,12 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
         assert infer_typed_quick_action(non_match, today) is None, non_match
 
     # End-to-end:
-    # 1. Pre-dispatched typed audit with date range + question runs in 1 LLM call (routing + tools stripped).
-    # 2. Fallback undated named-block audit ("Audit my Amsterdam Half block") routes on Call 1, then strips
-    #    routing + catalog + tools on Call 2 via mark_report_synthesis.
-    # 3. Fallback audit + mutation ("Audit my plan from Nov 30 to Feb 7 and move Friday S&C") keeps tools on Call 2.
+    # 1. Fresh-session pre-dispatched typed audit runs in 1 LLM call (routing + tools stripped).
+    # 2. Fallback undated named-block audit ("Audit my Amsterdam Half block") routes on Call 1, then preserves
+    #    100% byte-identical system_instruction + tool declarations on Call 2 (prefix cache intact) while still
+    #    dropping any stray function call returned alongside the synthesis prose.
+    # 3. Fallback audit + mutation ("Audit my plan from Nov 30 to Feb 7 and move Friday S&C") keeps tools active.
+    # 4. Warm-session typed pre-dispatch ("Audit my plan") skips Call 1 in code AND keeps the warm full-prompt prefix.
     class RoutingFallbackLlm(BaseLlm):
         requests: list = []
 
@@ -487,6 +490,14 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
                     )),
                 ]))
                 return
+            if idx == 3:
+                yield LlmResponse(content=types.Content(role="model", parts=[
+                    types.Part(text="### Assessment\n- **Benchmark:** Jan 24 5x1km."),
+                    types.Part(function_call=types.FunctionCall(
+                        id="stray-weather", name="get_weather", args={"dates": ["2026-11-30"]},
+                    )),
+                ]))
+                return
             yield LlmResponse(content=types.Content(
                 role="model", parts=[types.Part(text="### Assessment\n- **Benchmark:** Jan 24 5x1km.")]
             ))
@@ -502,11 +513,12 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
         e1 = await _turn(r, session.id, prompt)
         e2 = await _turn(r, session.id, "Audit my Amsterdam Half block")
         e3 = await _turn(r, session.id, "Audit my plan from Nov 30 to Feb 7 and move Friday S&C")
-        return e1, e2, e3
+        e4 = await _turn(r, session.id, "Audit my plan")
+        return e1, e2, e3, e4
 
-    e1, e2, e3 = asyncio.run(scenario())
+    e1, e2, e3, e4 = asyncio.run(scenario())
 
-    # Turn 1: pre-dispatched -> exactly 1 LLM call (idx 0), tools & routing stripped, question preserved.
+    # Turn 1 (fresh session): pre-dispatched -> 1 LLM call (idx 0), tools & routing stripped, question preserved.
     assert _calls(e1) == [
         ("load_skill", {"skill_name": "plan-audit"}),
         ("fetch_plan_audit_data", {"start_date": "2026-11-30", "end_date": "2027-02-07"}),
@@ -517,18 +529,35 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
     assert "SKILL ROUTING" not in _system_text(req1_report) and "<available_skills>" not in _system_text(req1_report)
     assert any("sub 21 shape" in (p.text or "") for c in req1_report.contents for p in c.parts or [])
 
-    # Turn 2: fallback read-only report -> Call 1 (idx 1) has tools & routing; Call 2 (idx 2) strips both!
+    # Turn 2: fallback read-only report -> Call 2 (idx 2) keeps 100% identical prefix as Call 1 (idx 1) AND drops stray tool calls!
     req2_route, req2_synth = llm.requests[1], llm.requests[2]
-    assert req2_route.config.tools and "SKILL ROUTING" in _system_text(req2_route)
-    assert req2_synth.config.tools == []
-    assert _tool_mode(req2_synth) == types.FunctionCallingConfigMode.NONE
-    assert "SKILL ROUTING" not in _system_text(req2_synth) and "<available_skills>" not in _system_text(req2_synth)
+    assert _system_text(req2_route) == _system_text(req2_synth)
+    declared_route = [d.name for t in (req2_route.config.tools or []) for d in (t.function_declarations or [])]
+    declared_synth = [d.name for t in (req2_synth.config.tools or []) for d in (t.function_declarations or [])]
+    assert declared_route and declared_route == declared_synth
+    assert _tool_mode(req2_synth) is None
+    assert _calls(e2) == [
+        ("load_skill", {"skill_name": "plan-audit"}),
+        ("fetch_plan_audit_data", {"start_date": "2026-11-30", "end_date": "2027-02-07"}),
+    ]  # stray get_weather dropped by drop_disabled_tool_calls
 
     # Turn 3: fallback report + mutation intent -> Call 2 (idx 4) keeps stage_workout_changes and routing!
     req3_route, req3_step2 = llm.requests[3], llm.requests[4]
     assert req3_route.config.tools
-    declared_step2 = {d.name for t in (req3_step2.config.tools or []) for d in (t.function_declarations or [])}
+    declared_step2 = [d.name for t in (req3_step2.config.tools or []) for d in (t.function_declarations or [])]
     assert "stage_workout_changes" in declared_step2
     assert "SKILL ROUTING" in _system_text(req3_step2)
+
+    # Turn 4 (warm session): pre-dispatches in 1 LLM call (idx 5) while keeping the warm full-prompt prefix intact!
+    assert len(llm.requests) == 6
+    assert _calls(e4) == [
+        ("load_skill", {"skill_name": "plan-audit"}),
+        ("fetch_plan_audit_data", {}),
+    ]
+    req4_warm = llm.requests[5]
+    assert _system_text(req4_warm) == _system_text(req3_step2)
+    declared_warm = [d.name for t in (req4_warm.config.tools or []) for d in (t.function_declarations or [])]
+    assert declared_warm == declared_step2
+
 
 
