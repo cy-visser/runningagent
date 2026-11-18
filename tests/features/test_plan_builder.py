@@ -148,6 +148,93 @@ def test_bad_codes_are_rejected_with_a_reason(code):
     assert str(err.value)
 
 
+# ------------------------------------------------------------------------------
+# Clock paces: a runner-stated pace wins over zone / goal bands (fake threshold 3.509 m/s ≈ 4:45/km)
+# ------------------------------------------------------------------------------
+
+def _work_targets(native: dict) -> list[tuple[int, int]]:
+    """Targets of the main work (repetition work steps, else active non-stride steps)."""
+    out = []
+    for block in native["structure"]:
+        for s in block["steps"]:
+            if s["intensityClass"] == "active" and s["name"] != "Stride":
+                out.append((s["targets"][0]["minValue"], s["targets"][0]["maxValue"]))
+    return out
+
+
+def test_clock_pace_sets_the_work_band_centred_on_the_stated_pace():
+    zone_only = build_session("I 4x1.2k r2'", ZONES)
+    assert set(_work_targets(zone_only["structured_workout"])) == {(106, 111)}  # I zone: ~4:17-4:29
+
+    intervals = build_session("I 4x1.2k @4:10 r2'", ZONES)
+    assert set(_work_targets(intervals["structured_workout"])) == {(113, 115)}  # 4:10 = 114%
+    assert "4:08–4:12/km" in intervals["summary"] and "@" not in intervals["title"]
+    assert intervals["title"] == "Intervals 4x1.2km"
+    # Warm-up / cool-down / jog keep their zone defaults.
+    assert build_session("I 4x1.2k @4:10/km r2'", ZONES)["structured_workout"] == intervals["structured_workout"]
+
+
+def test_clock_pace_on_p_needs_no_goal_and_ignores_the_profile_goal():
+    race_pace = build_session("P 3x1.6k @4:08 r2'", ZONES)
+    assert set(_work_targets(race_pace["structured_workout"])) == {(114, 116)}  # 4:08 = 114.9%
+    assert race_pace["title"] == "Race Pace 3x1.6km"
+    goal = build_session("P 3x1.6k@5K r2'", ZONES)
+    assert set(_work_targets(goal["structured_workout"])) == {tuple(ZONES["goal"]["5K"]["pct"])}
+
+
+def test_clock_pace_range_on_steady_runs_uses_nearest_rounding():
+    long_run = build_session("L 16 @5:31-5:52", ZONES)
+    assert _work_targets(long_run["structured_workout"]) == [(81, 86)]
+    assert long_run["title"] == "Long Run 16 km" and long_run["distance_km"] == 16.0
+    assert build_session("L 16 @5:31–5:52", ZONES)["structured_workout"] == long_run["structured_workout"]
+    easy = build_session("E 8 @5:40", ZONES)
+    assert _work_targets(easy["structured_workout"]) == [(83, 85)]
+    # With segments the clock pace sets the easy remainder; segments keep their named pace.
+    fast_finish = build_session("L 22 @5:31-5:52 +6@M", ZONES)
+    assert _targets(fast_finish["structured_workout"]) == [(81, 86), tuple(ZONES["goal"]["M"]["pct"])]
+
+
+@pytest.mark.parametrize("code", ["L 16 @M", "RACE 5k @4:10", "B 60' @4:10", "E 8 @4:99"])
+def test_clock_pace_misuse_is_rejected_with_a_reason(code):
+    with pytest.raises(CodeError) as err:
+        build_session(code, ZONES)
+    assert str(err.value)
+
+
+def test_clock_pace_without_threshold_is_rejected():
+    no_thr = {**ZONES, "thr": {**ZONES["thr"], "run": {}}}
+    with pytest.raises(CodeError, match="threshold"):
+        build_session("I 4x1.2k @4:10 r2'", no_thr)
+
+
+def test_pace_band_and_main_target_text():
+    from running_coach.shared.workout_builder import main_target_text, pace_band
+
+    assert pace_band("4:10", 3.509) == [113, 115]
+    assert pace_band("5:31-5:52", 3.509) == [81, 86]
+    thr = ZONES["thr"]["run"]
+    assert main_target_text(build_session("I 4x1.2k @4:10 r2'", ZONES)["structured_workout"], thr) == "4:08–4:12/km"
+    assert main_target_text(build_session("L 16 @5:31-5:52", ZONES)["structured_workout"], thr) == "5:31–5:52/km"
+    assert main_target_text(None, thr) == ""
+
+
+def test_run_structure_with_pace_and_hr_metric_is_read_as_threshold_pace():
+    """Trace regression: the old tool doc listed only HR/FTP metrics, so the coach sent pace + HR and was rejected."""
+    from running_coach.shared.workout_builder import PACE, parse_coach_structure
+
+    thr = ZONES["thr"]["run"]
+    structure = {"primaryIntensityMetric": "percentOfThresholdHr",
+                 "steps": [{"name": "Long run", "intensityClass": "active", "distance_m": 16000, "pace": "5:45-5:55"}]}
+    native, error = parse_coach_structure(structure, "Run", thr)
+    assert error is None and native["primaryIntensityMetric"] == PACE
+    # Explicit % values with an HR metric stay HR (only pure-pace structures are coerced).
+    hr = {"primaryIntensityMetric": "percentOfThresholdHr",
+          "steps": [{"intensityClass": "active", "duration_seconds": 3600, "intensity_min": 70, "intensity_max": 80}]}
+    assert parse_coach_structure(hr, "Run", thr)[0]["primaryIntensityMetric"] == "percentOfThresholdHr"
+    # Bikes never take pace.
+    assert parse_coach_structure({**structure, "primaryIntensityMetric": "percentOfFtp"}, "Bike", thr)[1]
+
+
 def test_resolve_zones_uses_target_block_goal_when_multiple_sub_goals_share_distance(runner):
     multi_hm_profile = {
         **PLAN_PROFILE,

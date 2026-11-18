@@ -86,7 +86,7 @@ def test_quick_action_dispatches_without_routing_and_chat_keeps_full_capabilitie
 
     feature, feature_requests, chat, s = asyncio.run(scenario())
 
-    assert _calls(feature) == [("load_skill", {"skill_name": "trend-analysis"}), ("fetch_trend_data", {"weeks": 12})]
+    assert _calls(feature) == [("fetch_trend_data", {"weeks": 12}), ("load_skill", {"skill_name": "trend-analysis"})]
     assert s.state.get("trend_report_data", {}).get("version") == 1          # the tool really ran
     assert len(feature_requests) == 1                                          # report call only
     report = feature_requests[0]
@@ -397,12 +397,12 @@ def test_typed_standalone_workout_and_report_prompts_pre_dispatch_and_auto_align
 
     bike_events, date_only_events = asyncio.run(scenario())
     assert _calls(bike_events) == [
-        ("load_skill", {"skill_name": "bike-workout-analysis"}),
         ("analyze_workout", {"date_str": "2026-10-22", "sport": "bike"}),
+        ("load_skill", {"skill_name": "bike-workout-analysis"}),
     ]
     assert _calls(date_only_events) == [
-        ("load_skill", {"skill_name": "workout-analysis"}),
         ("analyze_workout", {"date_str": "2026-10-22"}),
+        ("load_skill", {"skill_name": "workout-analysis"}),
     ]
     assert len(llm.requests) == 2
     for req in llm.requests:
@@ -469,7 +469,8 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
     #    100% byte-identical system_instruction + tool declarations on Call 2 (prefix cache intact) while still
     #    dropping any stray function call returned alongside the synthesis prose.
     # 3. Fallback audit + mutation ("Audit my plan from Nov 30 to Feb 7 and move Friday S&C") keeps tools active.
-    # 4. Warm-session typed pre-dispatch ("Audit my plan") skips Call 1 in code AND keeps the warm full-prompt prefix.
+    # 4. Warm-session typed pre-dispatch ("Audit my plan") skips Call 1 in code AND keeps the warm full-prompt prefix,
+    #    placing `fetch_plan_audit_data` before `load_skill` so stubbing `load_skill` on Turn 5 keeps the report cached.
     class RoutingFallbackLlm(BaseLlm):
         requests: list = []
 
@@ -481,12 +482,12 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
             if idx in (2, 4):
                 yield LlmResponse(content=types.Content(role="model", parts=[
                     types.Part(function_call=types.FunctionCall(
-                        id=f"ls-{idx}", name="load_skill", args={"skill_name": "plan-audit"},
-                    )),
-                    types.Part(function_call=types.FunctionCall(
                         id=f"fa-{idx}",
                         name="fetch_plan_audit_data",
                         args={"start_date": "2026-11-30", "end_date": "2027-02-07"},
+                    )),
+                    types.Part(function_call=types.FunctionCall(
+                        id=f"ls-{idx}", name="load_skill", args={"skill_name": "plan-audit"},
                     )),
                 ]))
                 return
@@ -514,14 +515,15 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
         e2 = await _turn(r, session.id, "Audit my Amsterdam Half block")
         e3 = await _turn(r, session.id, "Audit my plan from Nov 30 to Feb 7 and move Friday S&C")
         e4 = await _turn(r, session.id, "Audit my plan")
-        return e1, e2, e3, e4
+        e5 = await _turn(r, session.id, "On Jan 26th, 6x1k or 3x1.6k?")
+        return e1, e2, e3, e4, e5
 
-    e1, e2, e3, e4 = asyncio.run(scenario())
+    e1, e2, e3, e4, e5 = asyncio.run(scenario())
 
     # Turn 1 (fresh session): pre-dispatched -> 1 LLM call (idx 0), tools & routing stripped, question preserved.
     assert _calls(e1) == [
-        ("load_skill", {"skill_name": "plan-audit"}),
         ("fetch_plan_audit_data", {"start_date": "2026-11-30", "end_date": "2027-02-07"}),
+        ("load_skill", {"skill_name": "plan-audit"}),
     ]
     req1_report = llm.requests[0]
     assert req1_report.config.tools == []
@@ -537,8 +539,8 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
     assert declared_route and declared_route == declared_synth
     assert _tool_mode(req2_synth) is None
     assert _calls(e2) == [
-        ("load_skill", {"skill_name": "plan-audit"}),
         ("fetch_plan_audit_data", {"start_date": "2026-11-30", "end_date": "2027-02-07"}),
+        ("load_skill", {"skill_name": "plan-audit"}),
     ]  # stray get_weather dropped by drop_disabled_tool_calls
 
     # Turn 3: fallback report + mutation intent -> Call 2 (idx 4) keeps stage_workout_changes and routing!
@@ -549,15 +551,20 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
     assert "SKILL ROUTING" in _system_text(req3_step2)
 
     # Turn 4 (warm session): pre-dispatches in 1 LLM call (idx 5) while keeping the warm full-prompt prefix intact!
-    assert len(llm.requests) == 6
+    assert len(llm.requests) == 7
     assert _calls(e4) == [
-        ("load_skill", {"skill_name": "plan-audit"}),
         ("fetch_plan_audit_data", {}),
+        ("load_skill", {"skill_name": "plan-audit"}),
     ]
-    req4_warm = llm.requests[5]
-    assert _system_text(req4_warm) == _system_text(req3_step2)
+    req4_warm, req5_followup = llm.requests[5], llm.requests[6]
+    assert _system_text(req4_warm) == _system_text(req3_step2) == _system_text(req5_followup)
     declared_warm = [d.name for t in (req4_warm.config.tools or []) for d in (t.function_declarations or [])]
     assert declared_warm == declared_step2
+    # Data tool precedes load_skill in Turn 4's tool-response content, so Turn 5 stubs load_skill AFTER the report:
+    assert [p.function_response.name for p in req4_warm.contents[-1].parts] == ["fetch_plan_audit_data", "load_skill"]
+    turn4_report_part = req4_warm.contents[-1].parts[0]
+    turn5_report_part = req5_followup.contents[-3].parts[0]
+    assert turn4_report_part == turn5_report_part
 
 
 

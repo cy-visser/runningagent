@@ -211,16 +211,16 @@ async def _current_workouts(tool_context: ToolContext, workout_ids: list[str], c
 async def stage_workout_changes(
     tool_context: ToolContext, changes: list[dict[str, Any]], message: str = ""
 ) -> str:
-    """Stages <= 10 workout/note changes (> 10 -> plan-builder). `message`: <= 80w rationale + ⚠️/🔴 numeric risks (omit on plain move/rename).
-    `changes` items (`date_str` YYYY-MM-DD[THH:MM:SS]):
-    - move/swap/rename: (workout_id | from_date_str + sport) + date_str [+ title].
-    - delete: delete=true + (workout_id | date_str + sport | kind='note' + date_str + title).
+    """Stages <= 10 workout/note changes (> 10 -> plan-builder). `message`: <= 35w if already discussed in chat, else <= 80w rationale + ⚠️/🔴 numeric risks (omit on plain move/rename).
+    `changes` (`date_str` YYYY-MM-DD[THH:MM:SS]):
+    - move/swap/rename: (workout_id | from_date_str+sport) + date_str [+ title].
+    - delete: delete=true + (workout_id | date_str+sport | kind='note'+date_str+title).
     - note: kind='note', date_str, title [+ description].
-    - workout (`code` default; omit distance_km/duration_minutes/tss_planned/structure; create=true adds 2nd same-sport; strides=false drops strides):
-      lengths 8 / 1.5k / 10mi / 400m / 50' / 90" / 1h30, reps 6x1k, rec r2' / r90" / r200, slot am|mid|pm.
-      Run: E 8 (+strides), R 6, L 22 (+6@M|+4x4k@HM r1k [+2@E]), RACE / RACE 16k @HM [Name] / EVENT 16k @M [Name] (exact dist, no auto WU/CD); quality (auto 15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M), H 8x60" r90".
+    - workout (`code` default; omit title/distance_km/duration_minutes/tss_planned/structure; create=true adds 2nd same-sport; strides=false drops strides):
+      lengths 8|1.5k|10mi|400m|50'|90"|1h30, reps 6x1k, rec r2'|r90"|r200, slot am|mid|pm.
+      Run: E 8 (+strides), R 6, L 22 (+6@M|+4x4k@HM r1k [+2@E]), RACE/EVENT [16k @HM] [Name] (no auto WU/CD); quality (15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M), H 8x60" r90". Stated/kept pace -> @M:SS[-M:SS] (P 3x1.6k @4:08 r3').
       Other: B 60' Z2 (Z1-Z3) | B 4x8' @SS r4' (@SS|@T|@VO2), S 40' heavy-lower (full|core-hips|plyo|mobility), X 40' swim (walk|crosstrain).
-    - fallback `structure` (ONLY custom WU/CD, ladders, or current_structure edits): {"steps":[step|{"type":"repetition","reps":N,"steps":[work,rest]}]} (primaryIntensityMetric: "percentOfThresholdHr"|"percentOfFtp"); step={"name","intensityClass":"warmUp"|"active"|"rest"|"coolDown"|"other","distance_m"|"duration_seconds","pace":"M:SS-M:SS"|"intensity_min"+"intensity_max"}."""
+    - fallback `structure` (ONLY custom WU/CD, ladders, or current_structure edits): {"steps":[step|{"type":"repetition","reps":N,"steps":[work,rest]}]} (primaryIntensityMetric: omit for run pace; "percentOfThresholdHr"|bike "percentOfFtp"); step={"name","intensityClass":"warmUp"|"active"|"rest"|"coolDown"|"other","distance_m"|"duration_seconds","pace":"M:SS-M:SS"|"intensity_min"+"intensity_max"}."""
     invocation = getattr(tool_context, "invocation_id", None)
     saved_cache = tool_context.state.get(_TP_CACHE_STATE_KEY)
     tp_cache: dict[str, Any] = (

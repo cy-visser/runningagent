@@ -1,16 +1,16 @@
 """Model callbacks for the coaching agent.
 
-- Per call: thinking (COACH_THINKING_LEVEL, default MEDIUM; LOW for staged approvals, short follow-up
-  execution confirmations like 'yes update it', and the Build Plan opener), with `include_thoughts=True` so
-  the UI receives immediate thinking status.
+- Per call: state-driven thinking (COACH_THINKING_LEVEL, default MEDIUM; LOW only for staged approvals,
+  the Build Plan opener, and rejected staging retries), with `include_thoughts=True` so the UI receives
+  immediate thinking status.
 - Internal & skill-gated tools: `fetch_plan_context` and `apply_training_plan` stay runnable in
   `tools_dict` for code dispatches (`plan-builder:intake`, `plan-builder:apply`, `load_skill("plan-builder")`)
   and are never declared as tools to the LLM. `stage_training_plan` is declared only once `plan-builder`
   is loaded in the current turn or while an unapplied `staged_training_plan` sits in session state.
+  Declared tool schemas strip redundant Pydantic `title` / null `default` metadata on every call.
 - History: thought signatures and thought parts of completed turns are dropped before each call.
 """
 
-import re
 from typing import Any, Optional
 
 from google.adk.agents.callback_context import CallbackContext
@@ -110,10 +110,51 @@ def align_workout_skill(
     return None
 
 
+_SCHEMA_MAP_KEYS = frozenset({"properties", "$defs", "definitions"})
+_SCHEMA_LIST_KEYS = frozenset({"anyOf", "oneOf", "allOf", "prefixItems"})
+
+
+def _clean_json_schema(node: Any) -> Any:
+    """Strips redundant Pydantic `title` metadata and null `default` entries while preserving property names."""
+    if isinstance(node, list):
+        return [_clean_json_schema(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    cleaned: dict[str, Any] = {}
+    for k, v in node.items():
+        if k == "title" or (k == "default" and v is None):
+            continue
+        if k in _SCHEMA_MAP_KEYS and isinstance(v, dict):
+            cleaned[k] = {prop: _clean_json_schema(sub) for prop, sub in v.items()}
+        elif k == "items":
+            cleaned[k] = _clean_json_schema(v)
+        elif k in _SCHEMA_LIST_KEYS and isinstance(v, list):
+            cleaned[k] = [_clean_json_schema(sub) for sub in v]
+        elif k == "additionalProperties" and isinstance(v, dict):
+            cleaned[k] = _clean_json_schema(v)
+        else:
+            cleaned[k] = v
+    return cleaned
+
+
+def _clean_declaration(decl: types.FunctionDeclaration) -> types.FunctionDeclaration:
+    updates: dict[str, Any] = {}
+    if isinstance(decl.parameters_json_schema, dict):
+        cleaned_json = _clean_json_schema(decl.parameters_json_schema)
+        if cleaned_json != decl.parameters_json_schema:
+            updates["parameters_json_schema"] = cleaned_json
+    if decl.parameters is not None:
+        raw_params = decl.parameters.model_dump(exclude_none=True)
+        cleaned_params = _clean_json_schema(raw_params)
+        if cleaned_params != raw_params or "default" in decl.parameters.model_fields_set:
+            updates["parameters"] = types.Schema.model_validate(cleaned_params)
+    return decl.model_copy(update=updates) if updates else decl
+
+
 def hide_internal_tools(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-    """before_model_callback: removes internal/unloaded tools from `config.tools` (keeps `tools_dict` runnable)."""
+    """before_model_callback: removes internal/unloaded tools from `config.tools` and strips schema noise."""
     config = llm_request.config
     if not config or not config.tools:
         return None
@@ -127,7 +168,7 @@ def hide_internal_tools(
         if not declarations:
             kept_tools.append(tool)
             continue
-        kept = [d for d in declarations if d.name not in hidden]
+        kept = [_clean_declaration(d) for d in declarations if d.name not in hidden]
         if kept:
             kept_tools.append(tool.model_copy(update={"function_declarations": kept}))
     config.tools = kept_tools
@@ -224,13 +265,6 @@ DEFAULT_THINKING = types.ThinkingConfig(
     thinking_level=types.ThinkingLevel[COACH_THINKING_LEVEL], include_thoughts=True
 )
 APPROVAL_MAX_WORDS = 12
-_CONFIRMATION_RE = re.compile(
-    r"^(?:yes|yeah|yep|ok|okay|sure|please|agreed|perfect|great|go\s+ahead|do\s+it|sounds\s+good|looks\s+good)\b"
-    r"|^(?:update|stage|apply|schedule|make|implement)\s+"
-    r"(?:it|them|those|that|all(?:\s+of\s+(?:it|them|those))?|my\s+(?:calendar|plan|schedule)"
-    r"|(?:(?:all|your|the|those|these)\s+)+(?:plan|sessions|workouts|calendar|schedule|recommendations|changes|adjustments|fixes|edits|suggestions))\b",
-    re.IGNORECASE,
-)
 
 
 def _text(content: types.Content) -> Optional[str]:
@@ -261,18 +295,6 @@ def is_staged_approval(state: Any, llm_request: LlmRequest) -> bool:
     return bool(text) and "?" not in text and len(text.split()) <= APPROVAL_MAX_WORDS
 
 
-def is_followup_confirmation(llm_request: LlmRequest) -> bool:
-    """Short affirmative confirmation of a prior coach proposal (e.g. 'yes update it'), held across the turn."""
-    contents = llm_request.contents or []
-    cut = max((i for i, c in enumerate(contents) if _is_runner_message(c)), default=0)
-    if cut == 0 or not any(c.role == "model" for c in contents[:cut]):
-        return False
-    text = _text(contents[cut])
-    if not text or "?" in text or len(text.split()) > APPROVAL_MAX_WORDS:
-        return False
-    return bool(_CONFIRMATION_RE.match(text.lstrip(" ,.!—-")))
-
-
 def _has_rejected_staging_step(contents: list[types.Content], tool_name: str) -> bool:
     """True when the current turn is retrying a rejected staging tool call (`staged: 0`)."""
     cut = max((i for i, c in enumerate(contents) if _is_runner_message(c)), default=0)
@@ -298,13 +320,11 @@ def _has_plan_builder_retry_step(contents: list[types.Content]) -> bool:
 def thinking_for(
     state: Any, llm_request: LlmRequest, invocation_id: Optional[str] = None
 ) -> tuple[types.ThinkingConfig, str]:
-    """The thinking config for this call and why (recorded on the trace span)."""
+    """The state-driven thinking config for this call and why (recorded on the trace span)."""
     if is_staged_approval(state, llm_request):
         return EXECUTION_THINKING, "approval"
     if is_plan_intake(state, invocation_id):
         return EXECUTION_THINKING, "intake"  # short Build Plan opener: the data is already in the request
-    if is_followup_confirmation(llm_request):
-        return EXECUTION_THINKING, "confirmation"
     if _has_plan_builder_retry_step(llm_request.contents or []):
         return EXECUTION_THINKING, "plan_builder"
     if _has_workout_creator_step(llm_request.contents or []):

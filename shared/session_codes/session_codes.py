@@ -12,7 +12,13 @@ from datetime import date
 from typing import Any, Optional
 
 from ..strides import ADDED, default_strides, ensure_strides
-from ..workout_builder import NOMINAL_SPEED_MPS, builder_summary, builder_totals, parse_coach_structure
+from ..workout_builder import (
+    NOMINAL_SPEED_MPS,
+    builder_summary,
+    builder_totals,
+    pace_band,
+    parse_coach_structure,
+)
 from .pace_zones import run_band
 from .strength_templates import FOCI, focus_key, strength_session
 
@@ -66,6 +72,8 @@ _MI_RE = re.compile(r"^(\d+(?:\.\d+)?)(?:mi|miles?)$")
 _M_RE = re.compile(r"^(\d+(?:\.\d+)?)m$")
 _BARE_RE = re.compile(r"^(\d+(?:\.\d+)?)$")
 _REPS_RE = re.compile(r"^(\d+)x(.+)$")
+# Explicit clock pace: '@4:10', '@4:10/km' or '@5:31-5:52' (a runner-stated pace wins over zone / goal bands).
+_CLOCK_RE = re.compile(r"^\d{1,2}:\d\d(?:[-–—]\d{1,2}:\d\d)?(?:/km)?$", re.IGNORECASE)
 # A bare number below this is km ('E 10'), otherwise metres ('Rp 10x200').
 BARE_KM_BELOW = 50
 
@@ -177,13 +185,16 @@ def _parse(code: str) -> dict:
     if not tokens:
         raise CodeError("empty session code")
     parsed: dict[str, Any] = {"kind": tokens[0].upper(), "words": [], "raw_words": [], "strides": False,
-                              "time": None, "pace": None, "recovery": None, "segments": [], "main": None, "reps": 1}
+                              "time": None, "pace": None, "clock_pace": None, "recovery": None, "segments": [],
+                              "main": None, "reps": 1}
     for token in _split_tokens(code):
         low = token.lower()
         if low in ("+strides", "+st"):
             parsed["strides"] = True
         elif low in TIMES_OF_DAY:
             parsed["time"] = TIMES_OF_DAY[low]
+        elif token.startswith("@") and _CLOCK_RE.match(token[1:]):
+            parsed["clock_pace"] = low[1:].removesuffix("/km")
         elif token.startswith("@"):
             parsed["pace"] = token[1:].upper()
         elif token.startswith("+"):
@@ -238,14 +249,29 @@ def _need_main(parsed: dict, what: str) -> tuple[str, float]:
 # Runs
 # ------------------------------------------------------------------------------
 
+def _clock_band(parsed: dict, zones: dict) -> Optional[list[int]]:
+    """[min %, max %] of the code's explicit clock pace (None without one): a single pace is centred on itself."""
+    if not parsed.get("clock_pace"):
+        return None
+    speed = zones["thr"]["run"].get("threshold_speed")
+    if not speed:
+        raise CodeError("a clock pace (@4:10) needs the runner's threshold pace in TrainingPeaks; use a zone code")
+    try:
+        return pace_band(parsed["clock_pace"], speed)
+    except ValueError as exc:
+        raise CodeError(str(exc)) from exc
+
+
 def _steady_run(parsed: dict, kind: str, zones: dict, allow_strides: bool = True) -> tuple[dict, str, Optional[str]]:
     main = _need_main(parsed, "the run")
     if parsed["pace"]:
-        raise CodeError("easy, recovery and long runs take no @pace (a long-run segment is +8@M or +4x4k@HM)")
+        raise CodeError("easy, recovery and long runs take no @zone (use a clock pace like L 16 @5:31-5:52; "
+                        "a long-run segment is +8@M or +4x4k@HM)")
     zone = {"E": "E", "R": "R", "L": "L"}[kind]
+    main_band = _clock_band(parsed, zones) or run_band(zones, zone)
     name = {"E": "Easy", "R": "Recovery", "L": "Long run"}[kind]
     title = {"E": "Easy Run", "R": "Recovery Run", "L": "Long Run"}[kind] + f" {length_text(main)}"
-    steps: list[dict] = [_step(name, "active", main, run_band(zones, zone))]
+    steps: list[dict] = [_step(name, "active", main, main_band)]
     extra_cue = None
     segments = parsed["segments"]
     if segments:
@@ -279,7 +305,7 @@ def _steady_run(parsed: dict, kind: str, zones: dict, allow_strides: bool = True
                 seg_labels.append(f"{length_text(seg_len).replace(' ', '')} @{pace}")
         if used >= main[1]:
             raise CodeError("long-run segments must be shorter than the total run")
-        steps = [_step(name, "active", (main[0], main[1] - used), run_band(zones, "L")), *seg_blocks]
+        steps = [_step(name, "active", (main[0], main[1] - used), main_band), *seg_blocks]
         if single_finish:
             seg_len = segments[0]["length"]
             pace = PACE_ALIASES[segments[0]["pace"]]
@@ -295,11 +321,13 @@ def _steady_run(parsed: dict, kind: str, zones: dict, allow_strides: bool = True
 
 
 def _quality_run(parsed: dict, kind: str, zones: dict) -> tuple[dict, str]:
-    pace = _pace_key(parsed, kind)
+    clock = _clock_band(parsed, zones)
+    # With a clock pace, P needs no named goal pace ('P 3x1.6k @4:08'); the clock pace sets the work band.
+    pace = None if (clock and kind == "P" and not parsed["pace"]) else _pace_key(parsed, kind)
     reps = parsed["reps"]
     main = _need_main(parsed, "the main set")
-    name = _STEP_NAMES.get(kind) or f"@{pace}"
-    work = _step(name, "active", main, run_band(zones, pace))
+    name = _STEP_NAMES.get(kind) or (f"@{pace}" if pace else "Race pace")
+    work = _step(name, "active", main, clock or run_band(zones, pace))
     if reps > 1:
         rec = _positive(parsed["recovery"] or DEFAULT_RECOVERY[kind], "recovery")
         block = {"type": "repetition", "reps": reps, "steps": [work, _step("Jog", "rest", rec, run_band(zones, "JOG"))]}
@@ -307,7 +335,10 @@ def _quality_run(parsed: dict, kind: str, zones: dict) -> tuple[dict, str]:
         block = work
     steps = [_step("Warm up", "warmUp", ("s", WARMUP_S), run_band(zones, "WU")), block,
              _step("Cool down", "coolDown", ("s", COOLDOWN_S), run_band(zones, "WU"))]
-    base = _GOAL_TITLES[pace] if kind == "P" else ("Tempo" if kind == "T" and reps == 1 else _TITLES[kind])
+    if kind == "P":
+        base = _GOAL_TITLES[pace] if pace else "Race Pace"
+    else:
+        base = "Tempo" if kind == "T" and reps == 1 else _TITLES[kind]
     title = f"{base} {f'{reps}x' if reps > 1 else ''}{length_text(main).replace(' ', '')}"
     if parsed["pace"] and kind != "P" and pace != DEFAULT_PACE.get(kind):
         title += f" @{pace}"
@@ -384,6 +415,8 @@ def _run_session(
     strides_status = None
     race_cue: Optional[str] = None
     if kind in RACE_KINDS:
+        if parsed["clock_pace"]:
+            raise CodeError("RACE/EVENT take a named pace (@5K, @10K, @HM, @M, @T or @E), not a clock pace")
         structure, title, race_cue = _race(parsed, zones, day)
     elif kind in QUALITY_KINDS:
         structure, title = _quality_run(parsed, kind, zones)
@@ -418,6 +451,8 @@ def _run_session(
 
 def _bike_session(parsed: dict, code: str, zones: dict, *, include_code_footer: bool = True) -> dict:
     main = _need_main(parsed, "the ride")
+    if parsed["clock_pace"]:
+        raise CodeError("rides take an intensity (Z1-Z3, @SS, @T, @VO2), not a clock pace")
     if main[0] != "s":
         raise CodeError("rides are planned in time (e.g. B 60' Z2)")
     reps = parsed["reps"]

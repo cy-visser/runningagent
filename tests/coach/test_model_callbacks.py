@@ -48,33 +48,28 @@ def test_completed_turns_lose_thoughts_and_signatures():
     assert [p.text for p in second_model.parts] == ["### Assessment"]  # empty signed part dropped
 
 
-def test_followup_confirmation_uses_low_thinking_across_the_entire_turn():
+def test_thinking_policy_is_strictly_state_driven():
     from running_coach.coach.coaching.model_callbacks import thinking_for
+    from running_coach.coach.coaching.quick_actions import DISPATCHED_SKILL_STATE_KEY, DISPATCHED_STATE_KEY, PLAN_INTAKE
 
     history = [
         _user("When should I start strength training? Marathon was Nov 1st."),
         _model(types.Part(text="Start mobility tomorrow; if you'd like I can update your S&C sessions.")),
     ]
-    # Step 1 of Turn 2: runner replies "yes update it" -> LOW thinking ("confirmation") + include_thoughts.
-    step1 = LlmRequest(contents=[*history, _user("yes update it")])
-    cfg1, reason1 = thinking_for({}, step1)
-    assert cfg1.thinking_level == types.ThinkingLevel.LOW and cfg1.include_thoughts is True
-    assert reason1 == "confirmation"
-
-    # Step 2 of Turn 2 (after load_skill("workout-creator") returns): still LOW thinking on the staging call!
-    step2 = LlmRequest(contents=[
-        *history,
-        _user("yes update it"),
-        _model(_call("load_skill")),
-        _resp("load_skill"),
-    ])
-    cfg2, reason2 = thinking_for({}, step2)
-    assert cfg2.thinking_level == types.ThinkingLevel.LOW and reason2 == "confirmation"
-
-    # Non-confirmations in follow-up turns keep MEDIUM thinking.
-    for msg in ("My left calf feels tight today", "Yes, why Tuesday?", " ".join(["yes"] * 13)):
+    # Natural-language follow-up messages without staged state always keep MEDIUM thinking (no phrase regexes).
+    for msg in ("yes update it", "Stage the full set of changes", "My left calf feels tight today", "Yes, why Tuesday?"):
         cfg, reason = thinking_for({}, LlmRequest(contents=[*history, _user(msg)]))
-        assert cfg.thinking_level == types.ThinkingLevel.MEDIUM and reason == "default"
+        assert cfg.thinking_level == types.ThinkingLevel.MEDIUM and cfg.include_thoughts is True
+        assert reason == "default"
+
+    # State-driven LOW thinking: active staged_workout_changes approval + Build Plan intake opener.
+    staged_state = {"staged_workout_changes": {"staged_id": "s-1", "changes": [{"kind": "workout"}]}}
+    cfg_app, reason_app = thinking_for(staged_state, LlmRequest(contents=[*history, _user("yes update it")]))
+    assert cfg_app.thinking_level == types.ThinkingLevel.LOW and reason_app == "approval"
+
+    intake_state = {DISPATCHED_STATE_KEY: "inv-intake", DISPATCHED_SKILL_STATE_KEY: PLAN_INTAKE}
+    cfg_in, reason_in = thinking_for(intake_state, LlmRequest(contents=[_user("build plan")]), "inv-intake")
+    assert cfg_in.thinking_level == types.ThinkingLevel.LOW and reason_in == "intake"
 
 
 def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expands_in_code():
@@ -92,9 +87,21 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
                 "stage_training_plan",
                 "apply_training_plan",
                 "apply_staged_changes",
-                "get_weather",
             )
         ]
+        decls.append(
+            types.FunctionDeclaration(
+                name="get_weather",
+                parameters_json_schema={
+                    "type": "object",
+                    "title": "get_weatherParams",
+                    "properties": {
+                        "title": {"type": "string", "title": "Title", "default": None, "nullable": True},
+                        "days": {"type": "integer", "title": "Days", "default": 3},
+                    },
+                },
+            )
+        )
         r = LlmRequest(
             contents=contents,
             config=types.GenerateContentConfig(tools=[types.Tool(function_declarations=decls)]),
@@ -103,11 +110,19 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
         return r
 
     # 1. Plain chat: internal tools and stage_training_plan hidden; apply_staged_changes stays stably declared
-    #    so staging/applying workouts never mutates tool definitions or busts Gemini's prefix cache.
+    #    so staging/applying workouts never mutates tool definitions or busts Gemini's prefix cache;
+    #    Pydantic `title` and null `default` metadata stripped while preserving property key `"title"` and `default: 3`.
     req = make_req([_user("hi")])
     hide_internal_tools(None, req)
-    declared = {d.name for t in req.config.tools for d in t.function_declarations}
-    assert declared == {"load_skill", "apply_staged_changes", "get_weather"}
+    by_name = {d.name: d for t in req.config.tools for d in t.function_declarations}
+    assert set(by_name) == {"load_skill", "apply_staged_changes", "get_weather"}
+    assert by_name["get_weather"].parameters_json_schema == {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "nullable": True},
+            "days": {"type": "integer", "default": 3},
+        },
+    }
     assert {"fetch_plan_context", "apply_training_plan", "stage_training_plan", "apply_staged_changes"} <= set(req.tools_dict)
 
     # 2. Current turn loaded plan-builder -> stage_training_plan is declared for Step 2.
@@ -313,7 +328,7 @@ def test_get_runner_tp_cookie_singleflights_concurrent_kms_decrypts(monkeypatch)
         credentials.clear_tp_credential_cache()
 
 
-def test_audit_recommendation_confirmations_and_staging_retries_use_low_thinking():
+def test_staging_retries_use_low_thinking_while_unstaged_chat_keeps_medium():
     from running_coach.coach.coaching.model_callbacks import thinking_for
 
     history = [
@@ -322,14 +337,11 @@ def test_audit_recommendation_confirmations_and_staging_retries_use_low_thinking
     ]
     for prompt in (
         "ok, stage the changes",
+        "Stage the full set of changes",
         "Apply the recommendations",
-        "Apply all your recommendations",
-        "Make all those changes",
-        "Implement the adjustments",
-        "Update my schedule",
     ):
         cfg, reason = thinking_for({}, LlmRequest(contents=[*history, _user(prompt)]))
-        assert cfg.thinking_level == types.ThinkingLevel.LOW and reason == "confirmation", prompt
+        assert cfg.thinking_level == types.ThinkingLevel.MEDIUM and reason == "default", prompt
 
     # Validation retry after stage_workout_changes returns staged: 0 -> runs at LOW thinking ("workout_creator").
     retry_req = LlmRequest(contents=[

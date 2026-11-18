@@ -25,6 +25,7 @@ from ....shared.workout_builder import (
     builder_totals,
     coach_structure_from,
     has_builder,
+    main_target_text,
     needs_builder,
     parse_coach_structure,
 )
@@ -465,6 +466,11 @@ def _apply_builder(change: dict, native: dict, thr: dict, notes: list[dict], not
     _set_inherited(change, inherited)
     change["structured_workout"] = native
     change["structure_summary"] = builder_summary(native, thr)
+    main_pace = main_target_text(native, thr)
+    if main_pace:
+        change["main_pace"] = main_pace
+    else:
+        change.pop("main_pace", None)
 
 
 def _set_inherited(change: dict, inherited: set[str]) -> None:
@@ -477,10 +483,13 @@ def _set_inherited(change: dict, inherited: set[str]) -> None:
 
 def _show_current_builder(change: dict, detail: Optional[dict], thr: dict) -> None:
     """Card detail of an update: the current workout's builder summary (Current column) and, when the
-    change keeps that builder, on the proposed side too."""
+    change keeps that builder, on the proposed side too. Also the current main pace for the result line."""
     current = (detail or {}).get("structured_workout")
     if not change.get("replaces") or not has_builder(current):
         return
+    current_pace = main_target_text(current, thr)
+    if current_pace:
+        change["replaces"]["main_pace"] = current_pace
     summary = builder_summary(current, thr)
     if not summary:
         return
@@ -669,6 +678,11 @@ def compact_staged_line(change: dict) -> str:
     if change.get("action") == ACTION_DELETE:
         return f'{label} {when} {sport} "{title}"{wid}'
     metrics = workout_metrics(change, show_sport=False)
+    pace = change.get("main_pace")
+    if pace:
+        before = (change.get("replaces") or {}).get("main_pace")
+        pace_part = f"main {pace}" + (f", was {before}" if before and before != pace else "")
+        metrics = f"{metrics} · {pace_part}" if metrics else pace_part
     metrics_part = f" ({metrics})" if metrics else ""
     return f'{label} {when} {sport} "{title}"{metrics_part}{wid}'
 

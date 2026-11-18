@@ -442,8 +442,9 @@ def quick_action_calls(
     tool, allowed = registry[skill]
     raw_args = action.get("args") if isinstance(action.get("args"), dict) else {}
     args = {k: v for k, v in raw_args.items() if k in allowed and v is not None}
-    calls = [] if skill in SKILL_FREE_ACTIONS else [(LOAD_SKILL, {"skill_name": skill})]
-    calls.append((tool.name, args))
+    calls = [(tool.name, args)]
+    if skill not in SKILL_FREE_ACTIONS:
+        calls.append((LOAD_SKILL, {"skill_name": skill}))
     return [
         types.Part(
             function_call=types.FunctionCall(name=name, args=call_args),

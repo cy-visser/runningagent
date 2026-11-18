@@ -71,6 +71,22 @@ def pace_to_percent(pace: str, threshold_speed: float) -> tuple[int, int]:
     return pcts[0], pcts[-1]
 
 
+def pace_band(pace: str, threshold_speed: float, half_width_pct: float = 1.0) -> list[int]:
+    """[min %, max %] of threshold pace for a clock pace: a range ('5:31-5:52') as given (nearest whole %),
+    a single pace ('4:10') centred on itself +- `half_width_pct` (the width of a goal-pace band).
+
+    Raises ValueError on an unreadable pace.
+    """
+    text = str(pace).lower().replace("/km", "").replace("–", "-").replace("—", "-").replace(" ", "")
+    if "-" in text:
+        return list(pace_to_percent(text, threshold_speed))
+    seconds = _pace_seconds(text)
+    if seconds is None:
+        raise ValueError(f"unreadable pace '{pace}' (use 'm:ss' or 'm:ss-m:ss' per km)")
+    pct = 1000.0 / threshold_speed / seconds * 100.0
+    return [round(pct - half_width_pct), round(pct + half_width_pct)]
+
+
 def _percent_to_pace(pct: float, threshold_speed: float) -> float:
     return 1000.0 / (threshold_speed * pct / 100.0)
 
@@ -138,6 +154,24 @@ def _wire_step(raw: Any, metric: str, thr: dict, where: str) -> tuple[Optional[d
     }, None
 
 
+def _flat_steps(steps: list) -> list[dict]:
+    out: list[dict] = []
+    for item in steps:
+        if isinstance(item, dict) and item.get("type") == "repetition":
+            out += [s for s in (item.get("steps") or []) if isinstance(s, dict)]
+        elif isinstance(item, dict):
+            out.append(item)
+    return out
+
+
+def _uses_pace_only(steps: list) -> bool:
+    """True when some step targets a pace and no step gives explicit % values (pace targets are % threshold pace)."""
+    flat = _flat_steps(steps)
+    has_pace = any(s.get("pace") not in (None, "") for s in flat)
+    has_pct = any(s.get("intensity_min") not in (None, "") or s.get("intensity_max") not in (None, "") for s in flat)
+    return has_pace and not has_pct
+
+
 def parse_coach_structure(raw: Any, sport: Optional[str], thr: dict) -> tuple[Optional[dict], Optional[str]]:
     """Coach `structure` -> (native builder with exact lengths and targets plus geometry, None) or (None, error)."""
     data = raw
@@ -150,6 +184,8 @@ def parse_coach_structure(raw: Any, sport: Optional[str], thr: dict) -> tuple[Op
         return None, "structure needs a non-empty `steps` list"
     is_bike = sport_family(sport) == "bike"
     metric = data.get("primaryIntensityMetric") or (FTP if is_bike else PACE)
+    if not is_bike and metric != PACE and _uses_pace_only(data["steps"]):
+        metric = PACE  # run pace targets are always % threshold pace; never bounce the call back for the metric
     if metric not in METRICS:
         return None, f"primaryIntensityMetric must be one of {', '.join(METRICS)}"
     if is_bike and metric == PACE:
@@ -335,6 +371,24 @@ def _target_text(step: dict, metric: Optional[str], thr: dict) -> str:
         low, high = round(base * lo / 100.0), round(base * hi / 100.0)
         return f"{low} {unit}" if low == high else f"{low}–{high} {unit}"
     return f"{lo:g}–{hi:g}%"
+
+
+def main_target_text(native: Optional[dict], thr: dict) -> str:
+    """Target of the builder's main work: the active step with the most total time (reps included),
+    e.g. '4:08–4:12/km' for 4x1.2k intervals or '5:31–5:52/km' for a long run; '' when unknown."""
+    if not isinstance(native, dict):
+        return ""
+    metric = native.get("primaryIntensityMetric")
+    best, best_len = None, 0.0
+    for block in native.get("structure") or []:
+        reps = _block_reps(block)
+        for step in _steps(block):
+            if step.get("intensityClass") != "active":
+                continue
+            total = _geometry_length(step, metric, thr, by_distance=False) * reps
+            if total > best_len:
+                best, best_len = step, total
+    return _target_text(best, metric, thr) if best else ""
 
 
 def _step_text(step: dict, metric: Optional[str], thr: dict) -> str:

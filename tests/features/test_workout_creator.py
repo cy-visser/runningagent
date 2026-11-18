@@ -399,4 +399,41 @@ def test_stage_workout_changes_resolves_goal_pace_for_workout_date_and_long_run_
     assert oct_hm_min > may_hm_min  # Sub-1:30 October HM block gets faster @HM target than Sub-1:40 June block
 
 
+# ------------------------------------------------------------------------------
+# Trace regressions: one staging call, and the stored pace is the stated pace
+# ------------------------------------------------------------------------------
+
+def test_trace_structure_with_hr_metric_and_pace_stages_in_one_call(runner):
+    """The coach followed the old tool doc (percentOfThresholdHr + pace) and got `staged: 0` -> a second LLM call."""
+    ctx = runner.ctx()
+    structure = {"primaryIntensityMetric": "percentOfThresholdHr",
+                 "steps": [{"pace": "5:45-5:55", "distance_m": 16000, "name": "16km Aerobic Long Run",
+                            "intensityClass": "active"}]}
+    result = _stage(_fresh(ctx), [{"sport": "run", "title": "16km Aerobic Long Run", "date_str": "2026-11-07",
+                                   "structure": structure}])
+    assert result["staged"] == 1 and "needs_structure" not in result
+    (change,) = ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    assert change["structured_workout"]["primaryIntensityMetric"] == "percentOfThresholdPace"
+
+
+def test_clock_pace_codes_stage_the_stated_paces_and_show_them_in_the_result(runner):
+    ctx = runner.ctx()
+    result = _stage(_fresh(ctx), [
+        {"date_str": "2026-11-10", "code": "I 4x1.2k @4:10 r2'"},   # update the planned Tue run
+        {"date_str": "2026-11-07", "code": "L 16 @5:31-5:52"},      # update the Sat long run
+    ])
+    assert result["staged"] == 2
+    staged = {c["date"][:10]: c for c in ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]}
+    intervals, long_run = staged["2026-11-10"], staged["2026-11-07"]
+    # Code-built titles: no pace in the title, the pace lives in the builder.
+    assert intervals["title"] == "Intervals 4x1.2km" and long_run["title"] == "Long Run 16 km"
+    assert intervals["main_pace"] == "4:08–4:12/km" and long_run["main_pace"] == "5:31–5:52/km"
+
+    lines = {line.split()[1][:10]: line for line in result["changes"]}
+    for day, pace in (("2026-11-10", "4:08–4:12/km"), ("2026-11-07", "5:31–5:52/km")):  # both update planned runs
+        before = staged[day]["replaces"].get("main_pace")
+        assert before and before != pace, "the update reads the current builder, so the old pace is known"
+        assert f"main {pace}, was {before}" in lines[day]
+
+
 

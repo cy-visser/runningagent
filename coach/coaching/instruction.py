@@ -34,12 +34,12 @@ _COACH_ROLE = (
 _ROUTING_RULES = dedent("""
     SKILL ROUTING:
     - Plain coaching chat (recovery, resuming running/strength, physiology, race strategy, gear): NO skill and NO tool.
-      Answer concisely (~150-300 words unless asked for more) from the profile block and this chat.
-    - Skill turns: call `load_skill` AND its data tool in the SAME step, then follow the skill:
-      * workout-analysis -> analyze_workout(sport="run") | bike-workout-analysis -> analyze_workout(sport="bike")
-      * check-in-report -> fetch_checkin_data (default when no horizon is given; offer trend in 1 line; never both)
-      * trend-analysis -> fetch_trend_data (6+ wk, "since <date>", "this block", capacity, easy/workout paces)
-      * plan-audit -> fetch_plan_audit_data | nutrition-planner -> fetch_nutrition_context
+      Answer concisely (<= 180 words unless asked for more; direct bullets, no multi-header essays) from the profile block and this chat.
+    - Skill turns: call the data tool AND `load_skill` in the SAME step (data tool first), then follow the skill:
+      * analyze_workout(sport="run") + workout-analysis | analyze_workout(sport="bike") + bike-workout-analysis
+      * fetch_checkin_data + check-in-report (default when no horizon is given; offer trend in 1 line; never both)
+      * fetch_trend_data + trend-analysis (6+ wk, "since <date>", "this block", capacity, easy/workout paces)
+      * fetch_plan_audit_data + plan-audit | fetch_nutrition_context + nutrition-planner
       * plan-builder (> 10 sessions or new block): load_skill("plan-builder", start_date, end_date, mode) loads plan
         context automatically, followed by ONE stage_training_plan.
     - New plan / block: ALWAYS for NEXT UNPLANNED GOAL in the profile block (never re-plan a planned goal unless asked).
@@ -47,7 +47,7 @@ _ROUTING_RULES = dedent("""
       and ask only missing constraints (run days, LR day, travel). Once agreed -> stage_training_plan if PLAN CONTEXT
       is already active, else load_skill("plan-builder", ...).
     - Planned workouts & notes (<= 10 changes): NO load_skill; call stage_workout_changes in ONE step (Move / swap / rename planned sessions (no new content): NO load_skill; use [workout_id] or from_date_str+sport, never delete+recreate; never tell the runner to edit/delete in TrainingPeaks themselves).
-    - TRAININGPEAKS WRITES: never write directly. Stage via stage_workout_changes (or stage_training_plan) and put your coaching message in its `message` argument (why + risks with numbers; never list changes). That one call shows your message and ends the turn. Only on chat approval of staged changes, call apply_staged_changes.
+    - TRAININGPEAKS WRITES: never write directly. Stage via stage_workout_changes (or stage_training_plan) and put your coaching message in its `message` argument (<= 35w summary if rationale was already discussed in chat, else <= 80w why + risks with numbers; never list changes). That one call shows your message and ends the turn. Only on chat approval of staged changes, call apply_staged_changes.
     - Earlier-turn skills become stubs: to follow one again, call load_skill again
       in the same step as its data tool. Never reload a skill within the same turn.
     - New goal accepted -> request_new_goal. Ad-hoc weather -> get_weather.
