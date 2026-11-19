@@ -13,9 +13,11 @@ from google.genai import types
 from running_coach.agent import app
 from running_coach.coach.coaching.coaching_agent import coaching_agent
 from running_coach.coach.coaching.quick_actions import (
-    DISPATCHED_STATE_KEY,
+    PLAN_INTAKE_STATE_KEY,
     QUICK_ACTION_PART_PREFIX,
     QUICK_ACTION_STATE_KEY,
+    SYNTHESIS_GUARD_STATE_KEY,
+    SYNTHETIC_THOUGHT_SIGNATURE,
 )
 from running_coach.shared.session_state import AUTH_EMAIL_STATE_KEY
 from running_coach.tests.fakes import EMAIL
@@ -79,7 +81,7 @@ def test_quick_action_dispatches_without_routing_and_chat_keeps_full_capabilitie
                               {"skill": "trend-analysis", "args": {"weeks": 12, "bogus": 1}})
         feature_requests = list(llm.requests)
 
-        # 2. Typed chat in the same session: full instruction, catalog and tool calling.
+        # 2. Typed chat in the same session: full instruction, catalog, tool calling, AND byte-identical Turn-0 prefix.
         chat = await _turn(r, session.id, "What should I do tomorrow?")
         s = await r.session_service.get_session(app_name="running_coach", user_id="web_runner", session_id=session.id)
         return feature, feature_requests, chat, s
@@ -90,10 +92,10 @@ def test_quick_action_dispatches_without_routing_and_chat_keeps_full_capabilitie
     assert s.state.get("trend_report_data", {}).get("version") == 1          # the tool really ran
     assert len(feature_requests) == 1                                          # report call only
     report = feature_requests[0]
-    assert _tool_mode(report) == types.FunctionCallingConfigMode.NONE
-    assert report.config.tools == []                                           # zero tool schemas leaked on report
+    assert _tool_mode(report) is None
+    assert report.config.tools                                                 # full prefix kept to warm cache
     report_si = _system_text(report)
-    assert "SKILL ROUTING" not in report_si and "<available_skills>" not in report_si
+    assert "SKILL ROUTING" in report_si and "<available_skills>" in report_si
     assert "CRITICAL COACHING CONTRACT" in report_si
     roles = [(c.role, [bool(p.function_call) for p in c.parts]) for c in report.contents]
     assert ("model", [True, True]) in roles                                    # synthesized calls in history
@@ -102,9 +104,19 @@ def test_quick_action_dispatches_without_routing_and_chat_keeps_full_capabilitie
     chat_req = llm.requests[-1]
     assert len(llm.requests) == 2
     assert _tool_mode(chat_req) is None
-    chat_si = _system_text(chat_req)
-    assert "SKILL ROUTING" in chat_si and "<available_skills>" in chat_si
-    assert QUICK_ACTION_STATE_KEY not in s.state and DISPATCHED_STATE_KEY not in s.state
+    # Prefix-cache & token invariant across Turn 0 -> Turn 1: thinking_level, system_instruction, tools,
+    # contents[0..1] (including SYNTHETIC_THOUGHT_SIGNATURE), AND Turn-0 report data (parts[0]) stay byte-identical,
+    # while completed-turn load_skill (parts[1]) is stubbed to save ~1k+ uncached follow-up tokens!
+    from running_coach.coach.report_memory import STALE_SKILL_STUB
+
+    assert report.config.thinking_config == chat_req.config.thinking_config
+    assert _system_text(report) == _system_text(chat_req)
+    assert report.config.tools == chat_req.config.tools
+    assert report.contents[:2] == chat_req.contents[:2]
+    assert report.contents[2].parts[0] == chat_req.contents[2].parts[0]
+    assert chat_req.contents[2].parts[1].function_response.response["instructions"] == STALE_SKILL_STUB
+    assert chat_req.contents[1].parts[0].thought_signature == SYNTHETIC_THOUGHT_SIGNATURE
+    assert QUICK_ACTION_STATE_KEY not in s.state and SYNTHESIS_GUARD_STATE_KEY not in s.state
     # The action part never reaches the persisted history or any LLM request.
     user_texts = [p.text or "" for e in s.events if e.author == "user" for p in e.content.parts or []]
     assert "Trend analysis for the past 6 months" in user_texts
@@ -158,15 +170,16 @@ def test_a_tools_off_report_call_never_runs_a_function_call_the_model_returns_an
         types.Part(text="### Report"),
         types.Part(function_call=types.FunctionCall(name="stage_workout_changes", args={"changes": []})),
     ]))
-    report_call = FakeContext(state={DISPATCHED_STATE_KEY: "inv-1"})  # this invocation's report call
-    dropped = drop_disabled_tool_calls(report_call, response)
-    assert [p.text for p in dropped.content.parts] == ["### Report"]
-    assert response.content.parts[1].function_call  # the original response object is untouched
+    for state_key in (SYNTHESIS_GUARD_STATE_KEY, PLAN_INTAKE_STATE_KEY):
+        guarded = FakeContext(state={state_key: "inv-1"}, invocation_id="inv-1")
+        dropped = drop_disabled_tool_calls(guarded, response)
+        assert [p.text for p in dropped.content.parts] == ["### Report"]
+        assert response.content.parts[1].function_call  # the original response object is untouched
 
-    chat_turn = FakeContext(state={DISPATCHED_STATE_KEY: "an-earlier-invocation"})  # typed chat: tools on
-    assert drop_disabled_tool_calls(chat_turn, response) is None
-    assert drop_disabled_tool_calls(report_call, LlmResponse(content=types.Content(
-        role="model", parts=[types.Part(text="only text")]))) is None
+        chat_turn = FakeContext(state={state_key: "an-earlier-invocation"}, invocation_id="inv-2")
+        assert drop_disabled_tool_calls(chat_turn, response) is None
+        assert drop_disabled_tool_calls(guarded, LlmResponse(content=types.Content(
+            role="model", parts=[types.Part(text="only text")]))) is None
 
 
 def test_build_plan_intake_reads_the_next_unplanned_goal_in_code_and_writes_one_short_opener(runner, monkeypatch):
@@ -318,10 +331,11 @@ def test_a_stale_plan_builder_action_falls_back_to_routing(runner, monkeypatch):
     assert len(llm.requests) == 1
     call = llm.requests[0]
     assert _tool_mode(call) is None                                # a normal chat turn: tools on
-    assert {"record_key_event", "fetch_plan_context", "stage_training_plan"} <= set(call.tools_dict)
+    assert {"get_schedule", "fetch_plan_context", "stage_training_plan"} <= set(call.tools_dict)
+    assert "record_key_event" not in call.tools_dict
     system = _system_text(call)
-    assert "NEXT UNPLANNED GOAL" in system and "KEY EVENTS:" in system and "PLAN INTAKE" not in system
-    assert DISPATCHED_STATE_KEY not in s.state
+    assert "NEXT UNPLANNED GOAL" in system and "KEY EVENTS" not in system and "PLAN INTAKE" not in system
+    assert PLAN_INTAKE_STATE_KEY not in s.state and SYNTHESIS_GUARD_STATE_KEY not in s.state
 
 
 def test_apply_plan_button_writes_one_week_without_any_llm_call(runner, monkeypatch):
@@ -370,11 +384,41 @@ def test_typed_standalone_workout_and_report_prompts_pre_dispatch_and_auto_align
         "skill": "workout-analysis",
         "args": {"date_str": "2026-10-15"},
     }
+    assert infer_typed_quick_action("Analyze oct 15th — why was my HR so high?", today) == {
+        "skill": "workout-analysis",
+        "args": {"date_str": "2026-10-15"},
+    }
+    assert infer_typed_quick_action(
+        "Analyze today's tempo run. Did my HR drift too much in the last 3 km?", today
+    ) == {
+        "skill": "workout-analysis",
+        "args": {"date_str": "today", "sport": "run"},
+    }
+    assert infer_typed_quick_action(
+        "Can you analyze yesterday's bike ride?\nMy power faded in block 3.", today
+    ) == {
+        "skill": "bike-workout-analysis",
+        "args": {"date_str": "2026-11-14", "sport": "bike"},
+    }
+    assert infer_typed_quick_action(
+        "Analyze today's 10k run. Did I push too hard early?", today
+    ) == {
+        "skill": "workout-analysis",
+        "args": {"date_str": "today", "sport": "run"},
+    }
+    assert infer_typed_quick_action(
+        "Analyze oct 22nd. Did my cadence drop in the second half?", today
+    ) == {
+        "skill": "workout-analysis",
+        "args": {"date_str": "2026-10-22"},
+    }
     assert infer_typed_quick_action("Audit my plan", today) == {"skill": "plan-audit", "args": {}}
-    # Nuanced, multi-clause, non-workout or question prompts stay on normal LLM routing.
+    # Mutations, comparisons, injuries, races, goals, or open questions stay on normal LLM routing.
     for non_match in (
         "Analyze today's run and move Thursday's tempo",
-        "Analyze oct 15th — why was my HR so high?",
+        "Analyze today's run. Compare it with Oct 15th.",
+        "Analyze today's run. My calf started hurting at km 8.",
+        "Analyze today's race. Did I pace it right?",
         "Analyze my marathon goal",
         "My calf hurt on today's run",
         "What should I do tomorrow?",
@@ -388,11 +432,11 @@ def test_typed_standalone_workout_and_report_prompts_pre_dispatch_and_auto_align
     async def scenario():
         r = InMemoryRunner(app=app)
         session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
-        # 1. Explicit bike typed prompt -> 1 LLM call, bike-workout-analysis loaded, zero tool schemas on synthesis.
+        # 1. Explicit bike typed prompt -> 1 LLM call, bike-workout-analysis loaded, full prefix kept for caching.
         bike_events = await _turn(r, session.id, "Analyze oct 22nd bike session")
-        # 2. Date-only typed prompt on a bike-only day (2026-10-22 is Z2 Spin) -> pre-dispatches without sport,
-        #    then align_workout_skill swaps the loaded instructions from workout-analysis -> bike-workout-analysis!
-        date_only_events = await _turn(r, session.id, "Analyze oct 22nd")
+        # 2. Multi-sentence date-only typed prompt on a bike-only day (2026-10-22 is Z2 Spin) -> pre-dispatches
+        #    without sport, keeps the runner's question verbatim, and align_workout_skill auto-swaps to bike!
+        date_only_events = await _turn(r, session.id, "Analyze oct 22nd. Did my cadence drop in the second half?")
         return bike_events, date_only_events
 
     bike_events, date_only_events = asyncio.run(scenario())
@@ -406,8 +450,11 @@ def test_typed_standalone_workout_and_report_prompts_pre_dispatch_and_auto_align
     ]
     assert len(llm.requests) == 2
     for req in llm.requests:
-        assert req.config.tools == []
-        assert "SKILL ROUTING" not in _system_text(req)
+        assert req.config.tools
+        assert "SKILL ROUTING" in _system_text(req)
+    assert _system_text(llm.requests[0]) == _system_text(llm.requests[1])
+    assert llm.requests[0].config.tools == llm.requests[1].config.tools
+    assert any("cadence drop" in (p.text or "") for c in llm.requests[1].contents for p in c.parts or [])
     # Date-only synthesis request received the swapped bike-workout-analysis protocol:
     swapped_resps = [
         p.function_response.response
@@ -423,11 +470,37 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
     from running_coach.coach.coaching.quick_actions import infer_typed_quick_action
 
     today = date(2026, 11, 16)
-    prompt = "Audit my 5k block from Nov 30th until Feb 7th. In which session would I haver a good idea if im in sub 21 shape?"
-    assert infer_typed_quick_action(prompt, today) == {
+    rich_audit_prompt = (
+        "Audit my 5k block from Nov 30th until feb 7th. "
+        "Im aiming to run a 5k on Feb 7th between 20:40 and 20:55. "
+        "I want to know if my threshold and intervals are progressive enough and will set me up to reach my goal. "
+        "I have a week of holiday planned between Dec 19th and Dec 26th."
+    )
+    expected_5k_audit = {
         "skill": "plan-audit",
         "args": {"start_date": "2026-11-30", "end_date": "2027-02-07"},
     }
+    assert infer_typed_quick_action(rich_audit_prompt, today) == expected_5k_audit
+    # Multi-paragraph, semicolon-separated, "build" noun, and long (>90 words) briefs all pre-dispatch with no length cap:
+    assert infer_typed_quick_action(
+        "Audit my 5k block from Nov 30th until Feb 7th.\n\n"
+        "Target: 20:40-20:55 on Feb 7th.\n"
+        "Are my threshold sessions progressive enough given my Dec 19-26 holiday?",
+        today,
+    ) == expected_5k_audit
+    assert infer_typed_quick_action(
+        "Audit my 5k build from Nov 30th until Feb 7th; are my easy runs too fast for recovery?",
+        today,
+    ) == expected_5k_audit
+    long_brief = (
+        "Audit my 5k block from Nov 30th until Feb 7th. "
+        "I am targeting a sub-21 5k on Feb 7th and want a thorough look at how the progression builds across December and January. "
+        "Specifically I care about whether my threshold volume, VO2max intervals, and recovery weeks align well with my current fitness, "
+        "and whether my planned holiday between Dec 19th and Dec 26th leaves enough ramp-up before peak week and taper. "
+        "Which key session in January will give me the clearest signal that sub-21 shape is realistic?"
+    )
+    assert len(long_brief.split()) > 80
+    assert infer_typed_quick_action(long_brief, today) == expected_5k_audit
     assert infer_typed_quick_action("Audit my plan for the next 6 weeks. Is my taper enough?", today) == {
         "skill": "plan-audit",
         "args": {"start_date": "2026-11-16", "end_date": "2026-12-28"},
@@ -453,24 +526,34 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
         "skill": "plan-audit",
         "args": {"start_date": "2026-12-15", "end_date": "2027-02-14"},
     }
-    # Mutation/staging/weather/event or undated named-block prompts safely fall back to LLM routing:
+    # Mutation/staging/weather/event, tail date-window, second report, pasted plan, or undated named-block stay on LLM routing:
     for non_match in (
         "Audit my plan from Nov 30 to Feb 7 and move Friday S&C",
+        "Audit my plan and drop Friday's S&C",
         "Audit my Amsterdam Half block",
         "Analyze my trends for the last 3 weeks",
+        "Audit my plan. Specifically look at Nov 30th until Feb 7th.",
+        "Analyze my trends. Look at the last 16 weeks.",
+        "Audit my 5k block from Nov 30th until Feb 7th. Also analyze yesterday's run.",
+        "Audit my 5k block from Nov 30th until Feb 7th. Can you rework the January weeks?",
+        "Audit my 5k block from Nov 30th until Feb 7th. Build me a new January block.",
+        "Audit my plan:\n- Mon: 10k\n- Tue: 12k",
         "Audit my plan. What should my race carb loading be?",
         "Check in report — I strained my calf yesterday",
+        "I am going on a holiday between Dec 20th and Dec 26th. Can you look at my calendar and tell me what runs are scheduled?",
     ):
         assert infer_typed_quick_action(non_match, today) is None, non_match
 
     # End-to-end:
-    # 1. Fresh-session pre-dispatched typed audit runs in 1 LLM call (routing + tools stripped).
-    # 2. Fallback undated named-block audit ("Audit my Amsterdam Half block") routes on Call 1, then preserves
-    #    100% byte-identical system_instruction + tool declarations on Call 2 (prefix cache intact) while still
-    #    dropping any stray function call returned alongside the synthesis prose.
-    # 3. Fallback audit + mutation ("Audit my plan from Nov 30 to Feb 7 and move Friday S&C") keeps tools active.
-    # 4. Warm-session typed pre-dispatch ("Audit my plan") skips Call 1 in code AND keeps the warm full-prompt prefix,
-    #    placing `fetch_plan_audit_data` before `load_skill` so stubbing `load_skill` on Turn 5 keeps the report cached.
+    # 1. Fresh-session rich 57-word typed audit runs in 1 LLM call AND keeps the full prefix to warm cache.
+    # 2. Fallback undated named-block audit ("Audit my Amsterdam Half block") routes on Call 1 with byte-identical
+    #    Turn-1 prefix, emits real thought_signature on Call 1, keeps Call 2 identical, and drops stray calls.
+    # 3. Fallback audit + mutation keeps tools active AND inherits Turn 2's completed thought_signature verbatim
+    #    (preventing Turn-1 prefix-cache invalidation on 2-call turns!).
+    # 4. Warm-session typed pre-dispatch ("Audit my plan") skips Call 1 in code AND keeps the full warm prefix
+    #    byte-identical on Turn 5 (including Turn 4's report + non-plan-builder skill verbatim!).
+    real_sig = b"real-model-thought-signature"
+
     class RoutingFallbackLlm(BaseLlm):
         requests: list = []
 
@@ -481,14 +564,21 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
             idx = len(self.requests)
             if idx in (2, 4):
                 yield LlmResponse(content=types.Content(role="model", parts=[
-                    types.Part(function_call=types.FunctionCall(
-                        id=f"fa-{idx}",
-                        name="fetch_plan_audit_data",
-                        args={"start_date": "2026-11-30", "end_date": "2027-02-07"},
-                    )),
-                    types.Part(function_call=types.FunctionCall(
-                        id=f"ls-{idx}", name="load_skill", args={"skill_name": "plan-audit"},
-                    )),
+                    types.Part(text="routing thought...", thought=True),
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            id=f"fa-{idx}",
+                            name="fetch_plan_audit_data",
+                            args={"start_date": "2026-11-30", "end_date": "2027-02-07"},
+                        ),
+                        thought_signature=real_sig,
+                    ),
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            id=f"ls-{idx}", name="load_skill", args={"skill_name": "plan-audit"},
+                        ),
+                        thought_signature=real_sig,
+                    ),
                 ]))
                 return
             if idx == 3:
@@ -511,7 +601,7 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
     async def scenario():
         r = InMemoryRunner(app=app)
         session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
-        e1 = await _turn(r, session.id, prompt)
+        e1 = await _turn(r, session.id, rich_audit_prompt)
         e2 = await _turn(r, session.id, "Audit my Amsterdam Half block")
         e3 = await _turn(r, session.id, "Audit my plan from Nov 30 to Feb 7 and move Friday S&C")
         e4 = await _turn(r, session.id, "Audit my plan")
@@ -520,37 +610,49 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
 
     e1, e2, e3, e4, e5 = asyncio.run(scenario())
 
-    # Turn 1 (fresh session): pre-dispatched -> 1 LLM call (idx 0), tools & routing stripped, question preserved.
+    # Turn 1 (fresh session): rich 57-word audit pre-dispatches -> 1 LLM call (idx 0), full prefix kept, tail preserved.
     assert _calls(e1) == [
         ("fetch_plan_audit_data", {"start_date": "2026-11-30", "end_date": "2027-02-07"}),
         ("load_skill", {"skill_name": "plan-audit"}),
     ]
     req1_report = llm.requests[0]
-    assert req1_report.config.tools == []
-    assert _tool_mode(req1_report) == types.FunctionCallingConfigMode.NONE
-    assert "SKILL ROUTING" not in _system_text(req1_report) and "<available_skills>" not in _system_text(req1_report)
-    assert any("sub 21 shape" in (p.text or "") for c in req1_report.contents for p in c.parts or [])
+    assert req1_report.config.tools
+    assert _tool_mode(req1_report) is None
+    assert "SKILL ROUTING" in _system_text(req1_report) and "<available_skills>" in _system_text(req1_report)
+    assert any("Dec 19th and Dec 26th" in (p.text or "") for c in req1_report.contents for p in c.parts or [])
 
-    # Turn 2: fallback read-only report -> Call 2 (idx 2) keeps 100% identical prefix as Call 1 (idx 1) AND drops stray tool calls!
+    # Turn 2: fallback read-only report -> Call 1 keeps Turn 1's report data verbatim while stubbing Turn 1's
+    # completed load_skill rubric; Call 2 keeps byte-identical system_instruction + tools AND drops stray tool calls!
+    from running_coach.coach.report_memory import STALE_SKILL_STUB
+
     req2_route, req2_synth = llm.requests[1], llm.requests[2]
-    assert _system_text(req2_route) == _system_text(req2_synth)
-    declared_route = [d.name for t in (req2_route.config.tools or []) for d in (t.function_declarations or [])]
-    declared_synth = [d.name for t in (req2_synth.config.tools or []) for d in (t.function_declarations or [])]
-    assert declared_route and declared_route == declared_synth
+    assert _system_text(req1_report) == _system_text(req2_route) == _system_text(req2_synth)
+    assert req1_report.config.tools == req2_route.config.tools == req2_synth.config.tools
+    assert req1_report.contents[:2] == req2_route.contents[:2]
+    assert req1_report.contents[2].parts[0] == req2_route.contents[2].parts[0]
+    assert req2_route.contents[2].parts[1].function_response.response["instructions"] == STALE_SKILL_STUB
     assert _tool_mode(req2_synth) is None
     assert _calls(e2) == [
         ("fetch_plan_audit_data", {"start_date": "2026-11-30", "end_date": "2027-02-07"}),
         ("load_skill", {"skill_name": "plan-audit"}),
     ]  # stray get_weather dropped by drop_disabled_tool_calls
 
-    # Turn 3: fallback report + mutation intent -> Call 2 (idx 4) keeps stage_workout_changes and routing!
+    # Turn 3: fallback report + mutation intent -> inherits Turn 2's completed real thought_signature verbatim
+    # (thought text stripped, signatures untouched, completed load_skill stubbed), and Call 2 keeps stage_workout_changes!
     req3_route, req3_step2 = llm.requests[3], llm.requests[4]
+    turn2_model_fc = req3_route.contents[len(req2_route.contents)]
+    assert [p.thought_signature for p in turn2_model_fc.parts] == [real_sig, real_sig]
+    assert all(not p.thought for p in turn2_model_fc.parts)
+    turn2_tool_resp = req3_route.contents[len(req2_route.contents) + 1]
+    assert turn2_tool_resp.parts[0] == req2_synth.contents[-1].parts[0]
+    assert turn2_tool_resp.parts[1].function_response.response["instructions"] == STALE_SKILL_STUB
     assert req3_route.config.tools
     declared_step2 = [d.name for t in (req3_step2.config.tools or []) for d in (t.function_declarations or [])]
     assert "stage_workout_changes" in declared_step2
     assert "SKILL ROUTING" in _system_text(req3_step2)
 
-    # Turn 4 (warm session): pre-dispatches in 1 LLM call (idx 5) while keeping the warm full-prompt prefix intact!
+    # Turn 4 (warm session): pre-dispatches in 1 LLM call (idx 5) while keeping the warm full-prompt prefix intact,
+    # AND Turn 5 keeps Turn 4's report data verbatim while stubbing Turn 4's completed plan-audit rubric!
     assert len(llm.requests) == 7
     assert _calls(e4) == [
         ("fetch_plan_audit_data", {}),
@@ -558,13 +660,12 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
     ]
     req4_warm, req5_followup = llm.requests[5], llm.requests[6]
     assert _system_text(req4_warm) == _system_text(req3_step2) == _system_text(req5_followup)
-    declared_warm = [d.name for t in (req4_warm.config.tools or []) for d in (t.function_declarations or [])]
-    assert declared_warm == declared_step2
-    # Data tool precedes load_skill in Turn 4's tool-response content, so Turn 5 stubs load_skill AFTER the report:
+    assert req4_warm.config.tools == req3_step2.config.tools == req5_followup.config.tools
     assert [p.function_response.name for p in req4_warm.contents[-1].parts] == ["fetch_plan_audit_data", "load_skill"]
-    turn4_report_part = req4_warm.contents[-1].parts[0]
-    turn5_report_part = req5_followup.contents[-3].parts[0]
-    assert turn4_report_part == turn5_report_part
+    assert req4_warm.contents[:-1] == req5_followup.contents[: len(req4_warm.contents) - 1]
+    assert req4_warm.contents[-1].parts[0] == req5_followup.contents[len(req4_warm.contents) - 1].parts[0]
+    assert req5_followup.contents[len(req4_warm.contents) - 1].parts[1].function_response.response["instructions"] == STALE_SKILL_STUB
+
 
 
 

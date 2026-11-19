@@ -1,14 +1,16 @@
 """Model callbacks for the coaching agent.
 
-- Per call: state-driven thinking (COACH_THINKING_LEVEL, default MEDIUM; LOW only for staged approvals,
-  the Build Plan opener, and rejected staging retries), with `include_thoughts=True` so the UI receives
-  immediate thinking status.
+- Per call: uniform thinking (`COACH_THINKING_LEVEL`, default `MEDIUM`) across all warm coaching turns
+  so Vertex's token-0 `THINKING_SI` never flips mid-session and busts the implicit prefix cache; `LOW`
+  is used only for the separate `plan-builder:intake` opener, with `include_thoughts=True` for live UI status.
 - Internal & skill-gated tools: `fetch_plan_context` and `apply_training_plan` stay runnable in
   `tools_dict` for code dispatches (`plan-builder:intake`, `plan-builder:apply`, `load_skill("plan-builder")`)
   and are never declared as tools to the LLM. `stage_training_plan` is declared only once `plan-builder`
   is loaded in the current turn or while an unapplied `staged_training_plan` sits in session state.
   Declared tool schemas strip redundant Pydantic `title` / null `default` metadata on every call.
-- History: thought signatures and thought parts of completed turns are dropped before each call.
+- History: thought text and empty parts are dropped on all model turns (including active-turn Call 2),
+  while `thought_signature` bytes stay verbatim on retained parts (0 billable input tokens; prevents
+  completed-turn prefix-cache invalidation across follow-up turns).
 """
 
 from typing import Any, Optional
@@ -20,7 +22,6 @@ from google.genai import types
 from opentelemetry import trace
 
 from ...features.plan_builder.fetch_plan_context_tool import resolve_plan_context_window
-from ...features.workout_creator.stage_workout_changes_tool import STAGED_CHANGES_STATE_KEY
 from ...shared.dates import get_today_date, iso_date
 from ...shared.session_state import PLAN_CONTEXT_STATE_KEY, WORKOUT_REPORT_STATE_KEY
 from ..model_config import COACH_THINKING_LEVEL
@@ -29,7 +30,6 @@ from .quick_actions import (
     RUN_WORKOUT_SKILL,
     drop_disabled_tool_calls,
     is_plan_intake,
-    is_quick_action_report,
     is_synthesis_guard,
 )
 from .report_tool_guard import track_turn_calls
@@ -48,7 +48,6 @@ INTERNAL_TOOLS = frozenset({"fetch_plan_context", "apply_training_plan", "refres
 LOAD_SKILL = "load_skill"
 FETCH_PLAN_CONTEXT = "fetch_plan_context"
 STAGE_TRAINING_PLAN = "stage_training_plan"
-STAGE_WORKOUT_CHANGES = "stage_workout_changes"
 ANALYZE_WORKOUT = "analyze_workout"
 _WORKOUT_SKILLS = frozenset({RUN_WORKOUT_SKILL, BIKE_WORKOUT_SKILL})
 
@@ -214,7 +213,7 @@ def expand_plan_builder_context(
     if llm_response.partial or not content or not content.parts:
         return None
     if (
-        is_quick_action_report(callback_context.state, callback_context.invocation_id)
+        is_plan_intake(callback_context.state, callback_context.invocation_id)
         or is_synthesis_guard(callback_context.state, callback_context.invocation_id)
     ):
         return None
@@ -244,10 +243,27 @@ def expand_plan_builder_context(
     return None
 
 
+def _record_span_usage(llm_response: LlmResponse) -> None:
+    """Exposes thinking and prefix-cache token counts on the active OpenTelemetry span."""
+    if llm_response.partial:
+        return
+    usage = getattr(llm_response, "usage_metadata", None)
+    if usage is None:
+        return
+    span = trace.get_current_span()
+    thoughts = getattr(usage, "thoughts_token_count", None)
+    cached = getattr(usage, "cached_content_token_count", None)
+    if isinstance(thoughts, int) and not isinstance(thoughts, bool):
+        span.set_attribute("coach.thoughts_tokens", thoughts)
+    if isinstance(cached, int) and not isinstance(cached, bool):
+        span.set_attribute("coach.cached_tokens", cached)
+
+
 def after_coach_model(
     callback_context: CallbackContext, llm_response: LlmResponse
 ) -> Optional[LlmResponse]:
     """Single `after_model_callback` composing disabled-tool dropping, plan-builder expansion, and turn tracking."""
+    _record_span_usage(llm_response)
     shaped = (
         drop_disabled_tool_calls(callback_context, llm_response)
         or expand_plan_builder_context(callback_context, llm_response)
@@ -264,11 +280,6 @@ EXECUTION_THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW
 DEFAULT_THINKING = types.ThinkingConfig(
     thinking_level=types.ThinkingLevel[COACH_THINKING_LEVEL], include_thoughts=True
 )
-APPROVAL_MAX_WORDS = 12
-
-
-def _text(content: types.Content) -> Optional[str]:
-    return " ".join(p.text for p in content.parts or [] if p.text).strip() or None
 
 
 def _is_runner_message(content: types.Content) -> bool:
@@ -276,67 +287,24 @@ def _is_runner_message(content: types.Content) -> bool:
     return content.role == "user" and any(not p.function_response for p in content.parts or [])
 
 
-def _runner_text(llm_request: LlmRequest) -> Optional[str]:
-    """The runner's message when it is the request's final content (None for tool responses)."""
-    if not llm_request.contents:
-        return None
-    last = llm_request.contents[-1]
-    if last.role != "user" or any(p.function_response for p in last.parts or []):
-        return None
-    return _text(last)
-
-
-def is_staged_approval(state: Any, llm_request: LlmRequest) -> bool:
-    """Changes are staged and the runner's message is a short reply without a question."""
-    staged = state.get(STAGED_CHANGES_STATE_KEY)
-    if not isinstance(staged, dict) or not staged.get("changes"):
-        return False
-    text = _runner_text(llm_request)
-    return bool(text) and "?" not in text and len(text.split()) <= APPROVAL_MAX_WORDS
-
-
-def _has_rejected_staging_step(contents: list[types.Content], tool_name: str) -> bool:
-    """True when the current turn is retrying a rejected staging tool call (`staged: 0`)."""
-    cut = max((i for i, c in enumerate(contents) if _is_runner_message(c)), default=0)
-    for c in contents[cut:]:
-        for p in c.parts or []:
-            resp = p.function_response
-            if resp and resp.name == tool_name:
-                payload = resp.response if isinstance(resp.response, dict) else {}
-                raw = str(payload.get("result", payload))
-                if '"staged": 0' in raw or '"staged":0' in raw:
-                    return True
-    return False
-
-
-def _has_workout_creator_step(contents: list[types.Content]) -> bool:
-    return _has_rejected_staging_step(contents, STAGE_WORKOUT_CHANGES)
-
-
-def _has_plan_builder_retry_step(contents: list[types.Content]) -> bool:
-    return _has_rejected_staging_step(contents, STAGE_TRAINING_PLAN)
-
-
 def thinking_for(
-    state: Any, llm_request: LlmRequest, invocation_id: Optional[str] = None
+    state: Any, invocation_id: Optional[str] = None
 ) -> tuple[types.ThinkingConfig, str]:
-    """The state-driven thinking config for this call and why (recorded on the trace span)."""
-    if is_staged_approval(state, llm_request):
-        return EXECUTION_THINKING, "approval"
+    """The state-driven thinking config for this call and why (recorded on the trace span).
+
+    Warm coaching turns share `DEFAULT_THINKING` uniformly so changing `thinking_level` never
+    invalidates the model's prefix cache; only the cold `plan-builder:intake` opener uses `LOW`.
+    """
     if is_plan_intake(state, invocation_id):
         return EXECUTION_THINKING, "intake"  # short Build Plan opener: the data is already in the request
-    if _has_plan_builder_retry_step(llm_request.contents or []):
-        return EXECUTION_THINKING, "plan_builder"
-    if _has_workout_creator_step(llm_request.contents or []):
-        return EXECUTION_THINKING, "workout_creator"
     return DEFAULT_THINKING, "default"
 
 
 def apply_thinking_policy(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-    """before_model_callback: the call's thinking level. Never changes the prompt (keeps the cache prefix)."""
-    thinking, reason = thinking_for(callback_context.state, llm_request, callback_context.invocation_id)
+    """before_model_callback: sets the call's thinking level without mutating the prompt."""
+    thinking, reason = thinking_for(callback_context.state, callback_context.invocation_id)
     llm_request.config = llm_request.config or types.GenerateContentConfig()
     llm_request.config.thinking_config = thinking
     span = trace.get_current_span()  # no-op span when tracing is off
@@ -348,10 +316,11 @@ def apply_thinking_policy(
 # ------------------------------------------------------------------------------
 # Stale reasoning in history
 # ------------------------------------------------------------------------------
-# Every Gemini 3 model turn carries a `thought_signature` (encrypted reasoning) that ADK replays
-# on every later call and that is billed as input tokens (~35% of a typical coach request).
-# Gemini only validates signatures of the CURRENT turn (the tool loop since the last runner
-# message), so those of completed turns, and any thought parts, are dropped.
+# Gemini model turns may carry `part.thought=True` reasoning text and trailing empty SSE
+# `Part(text="")`, which are stripped on ALL model turns (including active-turn Call 2).
+# `thought_signature` bytes are preserved verbatim on all retained parts: they cost 0 billable
+# input tokens (opaque TYPE_BYTES payload) and stripping them from completed turns invalidates
+# implicit prefix caching at that turn.
 
 
 def _has_payload(part: types.Part) -> bool:
@@ -369,17 +338,12 @@ def _has_payload(part: types.Part) -> bool:
 def strip_stale_thoughts(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-    """before_model_callback: drop thoughts and thought signatures of completed turns."""
+    """before_model_callback: drop thought text and empty SSE parts on all model turns."""
     contents = llm_request.contents or []
-    cut = max((i for i, c in enumerate(contents) if _is_runner_message(c)), default=0)
     kept = []
-    for i, content in enumerate(contents):
-        if i < cut and content.role == "model":
-            parts = [
-                p.model_copy(update={"thought_signature": None})
-                for p in content.parts or []
-                if not p.thought and _has_payload(p)
-            ]
+    for content in contents:
+        if content.role == "model":
+            parts = [p for p in content.parts or [] if not p.thought and _has_payload(p)]
             if not parts:
                 continue
             content = content.model_copy(update={"parts": parts})

@@ -4,7 +4,6 @@ from typing import Any, Optional
 from ...integrations import firestore, open_meteo
 from ...shared.dates import get_today_str, parse_date
 from ...shared.goal_plan import GOAL_TYPE_PLAN, GOAL_TYPE_SINGLE
-from ...shared.key_events import KEY_EVENTS_FIELD
 from ...shared.race_time import normalize_personal_records, normalize_shoe_rotation
 from ...shared.runner_identity import normalize_email, profile_user_id
 from ...shared.session_state import AUTH_EMAIL_STATE_KEY, sync_profile_to_state
@@ -215,9 +214,6 @@ async def create_profile_step(ctx: Context) -> str:
         lon=lon,
         location=location,
     )
-    # The coach's hidden memory survives re-onboarding (save_user_profile replaces the whole document).
-    if existing and existing.get(KEY_EVENTS_FIELD):
-        profile[KEY_EVENTS_FIELD] = existing[KEY_EVENTS_FIELD]
 
     await firestore.save_user_profile(user_id, profile)
     try:

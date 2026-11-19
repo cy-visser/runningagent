@@ -10,7 +10,7 @@ from google.genai import types
 from running_coach.coach.coaching.goal_plan_summary import format_goal_plan
 from running_coach.coach.coaching.instruction import build_profile_context
 from running_coach.coach.coaching.model_callbacks import thinking_for
-from running_coach.coach.coaching.quick_actions import DISPATCHED_SKILL_STATE_KEY, DISPATCHED_STATE_KEY
+from running_coach.coach.coaching.quick_actions import PLAN_INTAKE_STATE_KEY, SYNTHESIS_GUARD_STATE_KEY
 from running_coach.coach.onboarding import profile_creation
 from running_coach.features.plan_builder.apply_training_plan_tool import apply_training_plan
 from running_coach.features.plan_builder.stage_training_plan_tool import stage_training_plan
@@ -83,14 +83,11 @@ def test_profile_block_and_goal_plan_table_show_the_planning_status():
 
 
 def test_plan_intake_opener_uses_low_thinking_only_on_its_own_report_call():
-    intake = {DISPATCHED_STATE_KEY: "inv-1", DISPATCHED_SKILL_STATE_KEY: "plan-builder:intake"}
-    from google.adk.models.llm_request import LlmRequest
-
-    req = LlmRequest(contents=[types.Content(role="user", parts=[types.Part(text="I'd like to build a new training plan")])])
-    assert thinking_for(intake, req, "inv-1") == (thinking_for(intake, req, "inv-1")[0], "intake")
-    assert thinking_for(intake, req, "inv-1")[0].thinking_level == types.ThinkingLevel.LOW
-    assert thinking_for(intake, req, "inv-2")[1] == "default"                      # a later typed turn
-    assert thinking_for({**intake, DISPATCHED_SKILL_STATE_KEY: "trend-analysis"}, req, "inv-1")[1] == "default"
+    intake = {PLAN_INTAKE_STATE_KEY: "inv-1"}
+    assert thinking_for(intake, "inv-1") == (thinking_for(intake, "inv-1")[0], "intake")
+    assert thinking_for(intake, "inv-1")[0].thinking_level == types.ThinkingLevel.LOW
+    assert thinking_for(intake, "inv-2")[1] == "default"                      # a later typed turn
+    assert thinking_for({SYNTHESIS_GUARD_STATE_KEY: "inv-1"}, "inv-1")[1] == "default"
 
 
 def test_fully_applying_a_plan_marks_the_goals_it_covers_as_planned(runner):

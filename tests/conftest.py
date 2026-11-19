@@ -22,6 +22,7 @@ from running_coach.tests.fakes import CANOVA, FakeRunnerEnv
 @pytest.fixture
 def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
     monkeypatch.delenv("DEV_RUNNER_EMAIL", raising=False)
+    firestore.clear_known_runners_cache()
 
     points = []
     for idx, pt in enumerate(CANOVA["series"]):
@@ -97,10 +98,6 @@ def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
     async def fake_save_volume_history(user_id: str, payload: dict) -> None:
         env.volume_history_cache[user_id] = json.loads(json.dumps(payload))
 
-    async def fake_get_race_projection(user_id: str) -> dict | None:
-        doc = env.race_projection_cache.get(user_id)
-        return json.loads(json.dumps(doc)) if doc else None
-
     async def fake_save_race_projection(user_id: str, payload: dict) -> None:
         env.race_projection_cache[user_id] = json.loads(json.dumps(payload))
 
@@ -111,7 +108,6 @@ def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
 
     monkeypatch.setattr(firestore, "get_cached_volume_history", fake_get_volume_history)
     monkeypatch.setattr(firestore, "save_volume_history", fake_save_volume_history)
-    monkeypatch.setattr(firestore, "get_cached_race_projection", fake_get_race_projection)
     monkeypatch.setattr(firestore, "save_race_projection", fake_save_race_projection)
     monkeypatch.setattr(firestore, "delete_race_projection", fake_delete_race_projection)
     monkeypatch.setattr(firestore, "list_training_records", fake_list_records)

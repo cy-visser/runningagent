@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date, timedelta
+from datetime import date
 import logging
 from typing import Any, Optional
 
@@ -11,12 +11,9 @@ from ..analysis_summary import (
     is_complete_summary,
     summarize_analysis,
 )
-from ..athlete_settings import extract_thresholds
 from ..dates import parse_date
-from ..goal_distance import DISTANCE_PROFILES, parse_target_time_minutes
-from ..goal_plan import current_goal, goal_race_dates
+from ..goal_distance import DISTANCE_PROFILES
 from ..parallel_fetch import result_or_none
-from ..runner_identity import profile_user_id
 from ..sports import RUN_SPORTS, is_quality_title, is_race_title
 
 logger = logging.getLogger(__name__)
@@ -232,7 +229,6 @@ def summary_from_training_record(record: Optional[dict]) -> Optional[dict]:
 async def load_workout_summaries(
     tool_context: ToolContext,
     workouts: list[dict],
-    user_id: Optional[str] = None,
     refresh: bool = False,
     training_records: Optional[list[dict]] = None,
     goal_label: Optional[str] = None,
@@ -243,7 +239,6 @@ async def load_workout_summaries(
     included at zero TrainingPeaks API cost; `workouts` (from `select_for_analysis`) fills any
     remaining key sessions via `tp_analyze_workout`.
     """
-    del user_id
     records_by_id = {
         str(r.get("workout_id")): r
         for r in (training_records or [])

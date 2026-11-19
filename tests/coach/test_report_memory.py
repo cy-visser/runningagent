@@ -15,7 +15,7 @@ from running_coach.coach.report_memory import (
     STALE_SKILL_STUB,
     ReportMemorySummarizer,
     keep_latest_reports_and_skills,
-    replaced_stagings,
+    staging_status,
 )
 
 SKILL_TEXT = "# Plan Audit & Assessment Skill\n" + "Audit protocol step. " * 200
@@ -148,24 +148,30 @@ def test_an_applied_set_is_compacted_and_a_failed_restaging_keeps_the_earlier_se
                                                       {"result": json.dumps({"staged": 0, "needs_structure": [{}]})})])]
     request = _staging_request()
     request.contents[2:2] = failed  # s1, failed retry, then s2: only s2 replaces s1
-    assert replaced_stagings(request.contents) == {"s1"}
+    assert staging_status(request.contents)[0] == {"s1"}
     request = _staging_request()
     request.contents[2:] = failed  # s1 then only a failed retry: s1 is still the current set
-    assert replaced_stagings(request.contents) == set()
+    assert staging_status(request.contents)[0] == set()
 
 
-def test_skill_instructions_of_completed_turns_become_a_stub_and_the_current_turn_keeps_them():
+def test_completed_turn_skills_are_stubbed_while_active_turn_skill_stays_verbatim_and_large_apply_bounds():
     from google.adk.models.llm_request import LlmRequest
+    from running_coach.coach.report_memory import applied_summary
 
     def load(call_id: str, skill: str) -> list[types.Content]:
         return [types.Content(role="model", parts=[_call("load_skill", call_id, skill_name=skill)]),
                 types.Content(role="user", parts=[_resp("load_skill", call_id,
                                                         {"skill_name": skill, "instructions": SKILL_TEXT})])]
 
+    # All completed-turn skills become STALE_SKILL_STUB (after report data in msg[2]), while the active
+    # turn's loaded skill stays verbatim.
     request = LlmRequest(contents=[
         types.Content(role="user", parts=[types.Part(text="Audit my schedule")]),
         *load("k1", "plan-audit"),
         types.Content(role="model", parts=[types.Part(text="### Assessment")]),
+        types.Content(role="user", parts=[types.Part(text="Build my plan")]),
+        *load("k_pb", "plan-builder"),
+        types.Content(role="model", parts=[types.Part(text="Staged plan")]),
         types.Content(role="user", parts=[types.Part(text="Analyze my run today")]),
         *load("k2", "workout-analysis"),
     ])
@@ -173,19 +179,38 @@ def test_skill_instructions_of_completed_turns_become_a_stub_and_the_current_tur
     skills = {p.function_response.response["skill_name"]: p.function_response.response["instructions"]
               for c in request.contents for p in c.parts
               if p.function_response and p.function_response.name == "load_skill"}
-    assert skills == {"plan-audit": STALE_SKILL_STUB, "workout-analysis": SKILL_TEXT}
+    assert skills == {
+        "plan-audit": STALE_SKILL_STUB,
+        "plan-builder": STALE_SKILL_STUB,
+        "workout-analysis": SKILL_TEXT,
+    }
 
-    # Next turn: completed-turn skill instructions become a stub too.
-    follow_up = LlmRequest(contents=[
+    # Reloading plan-audit in the active turn keeps the newest copy verbatim while older completed copies stay stubbed.
+    reload_req = LlmRequest(contents=[
         *request.contents,
         types.Content(role="model", parts=[types.Part(text="Solid aerobic session.")]),
-        types.Content(role="user", parts=[types.Part(text="yes update Thursday")]),
+        types.Content(role="user", parts=[types.Part(text="Audit my schedule again")]),
+        *load("k3", "plan-audit"),
     ])
-    keep_latest_reports_and_skills(None, follow_up)
-    follow_skills = {p.function_response.response["skill_name"]: p.function_response.response["instructions"]
-                     for c in follow_up.contents for p in c.parts
-                     if p.function_response and p.function_response.name == "load_skill"}
-    assert follow_skills == {"plan-audit": STALE_SKILL_STUB, "workout-analysis": STALE_SKILL_STUB}
+    keep_latest_reports_and_skills(None, reload_req)
+    by_id = {p.function_response.id: p.function_response.response["instructions"]
+             for c in reload_req.contents for p in c.parts
+             if p.function_response and p.function_response.name == "load_skill"}
+    assert by_id["k1"] == STALE_SKILL_STUB
+    assert by_id["k2"] == STALE_SKILL_STUB
+    assert by_id["k_pb"] == STALE_SKILL_STUB
+    assert by_id["k3"] == SKILL_TEXT
+
+    # Large batch applies (> 12 workouts) collapse into one compact counts + window line instead of 100 item rows.
+    hundred = [
+        {"ok": True, "action": "create" if i < 60 else "update", "date": f"2027-01-{(i % 28) + 1:02d}",
+         "sport": "Run", "title": f"Session {i}", "id": f"w_{i}"}
+        for i in range(100)
+    ]
+    summary = applied_summary(_resp("apply_staged_changes", "ap1", {"result": json.dumps({"results": hundred})}).function_response)
+    assert "Applied 100/100 (2027-01-01..2027-01-28" in summary
+    assert "60 create, 40 update" in summary
+    assert len(summary) < 160
 
 
 def test_an_applied_plan_is_stubbed_and_its_week_applies_collapse_into_one_line():

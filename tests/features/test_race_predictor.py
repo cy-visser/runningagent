@@ -136,7 +136,6 @@ def test_training_log_summaries_and_untitled_key_runs_feed_12_week_projection(ru
         load_workout_summaries(
             ctx,
             [untitled_run],
-            "cyrille_visser",
             training_records=list(runner.training_records.values()),
         )
     )

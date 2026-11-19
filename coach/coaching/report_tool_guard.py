@@ -24,7 +24,6 @@ from .quick_actions import (
     SYNTHESIS_GUARD_STATE_KEY,
     has_action_or_event_intent,
     is_plan_intake,
-    is_quick_action_report,
     is_synthesis_guard,
 )
 
@@ -40,7 +39,7 @@ REPORT_TOOL_SKILLS = {
     "fetch_trend_data": "trend-analysis",
     "fetch_plan_audit_data": "plan-audit",
 }
-_SYNTHESIS_TOOLS = frozenset({*REPORT_TOOL_SKILLS, "fetch_nutrition_context"})
+_SYNTHESIS_TOOLS = frozenset({*REPORT_TOOL_SKILLS, "fetch_nutrition_context", "get_schedule"})
 _RACE_RE = re.compile(r"\b(?:race|parkrun|time\s+trial|tt)\b", re.IGNORECASE)
 
 _REPORT_NAMES = {
@@ -151,7 +150,7 @@ def mark_report_synthesis(
     invocation_id = getattr(tool_context, "invocation_id", None)
     if (
         not invocation_id
-        or is_quick_action_report(tool_context.state, invocation_id)
+        or is_plan_intake(tool_context.state, invocation_id)
         or is_synthesis_guard(tool_context.state, invocation_id)
     ):
         return None

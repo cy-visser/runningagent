@@ -5,7 +5,7 @@ from typing import Any, AsyncGenerator, Optional
 from google.adk import Context, Event
 from google.adk.workflow import node
 
-from ..integrations import config
+from ..integrations import config, firestore
 from ..integrations.trainingpeaks import credentials, tp_calls
 from ..shared.runner_identity import normalize_email, profile_user_id
 from ..shared.session_state import AUTH_EMAIL_STATE_KEY
@@ -60,6 +60,26 @@ def _schedule_tp_warmup(runner_id: Optional[str]) -> None:
     task.add_done_callback(_warmup_tasks.discard)
 
 
+async def _resolve_profile_and_connection(
+    email: str, known_runner_id: Optional[str]
+) -> tuple[Optional[tuple[str, dict]], bool]:
+    """Loads `(runner_id, profile)` and TP credential status, running both in parallel when `runner_id` is known."""
+    candidate_id = known_runner_id or firestore.cached_runner_id_for_email(email)
+    if candidate_id:
+        doc, connected = await asyncio.gather(
+            firestore.get_user_profile(candidate_id),
+            credentials.has_tp_credential(candidate_id),
+        )
+        if doc is not None and normalize_email(doc.get("email")) == email:
+            firestore.remember_email_runner_id(email, candidate_id)
+            return (candidate_id, doc), connected
+    found = await find_profile_by_email(email)
+    if not found:
+        return None, False
+    firestore.remember_email_runner_id(email, found[0])
+    return found, await credentials.has_tp_credential(found[0])
+
+
 @node(name="profile_router", rerun_on_resume=True)
 async def profile_router(ctx: Context, node_input: Any = None) -> None:
     """Identifies the runner by email and routes. No blocking TrainingPeaks call, no shared credential.
@@ -68,7 +88,9 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
     Evals and local runs reuse a session-cached `user_profile` when already present.
     """
     auth_email = normalize_email(ctx.state.get(AUTH_EMAIL_STATE_KEY))
-    profile = None if auth_email else ctx.state.get("user_profile")
+    cached_profile = ctx.state.get("user_profile")
+    known_id = profile_user_id(cached_profile) if isinstance(cached_profile, dict) else None
+    profile = None if auth_email else cached_profile
     runner_id: Optional[str] = None
     if not profile:
         email = _caller_email(ctx)
@@ -76,8 +98,7 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
             ctx.route = ROUTE_NOT_LINKED
             return
         try:
-            found = await find_profile_by_email(email)
-            connected = bool(found) and await credentials.has_tp_credential(found[0])
+            found, connected = await _resolve_profile_and_connection(email, known_id)
         except Exception:
             logger.exception("Failed to resolve the runner profile for %s", email)
             ctx.route = ROUTE_UNAVAILABLE
@@ -91,7 +112,7 @@ async def profile_router(ctx: Context, node_input: Any = None) -> None:
         runner_id = found[0]
         profile = await activate_profile(ctx, *found)
     elif isinstance(profile, dict):
-        runner_id = profile_user_id(profile)
+        runner_id = known_id
 
     if needs_onboarding(profile) or ctx.state.get("reonboard_requested"):
         ctx.state["temp_onboarding_data"] = onboarding_prefill(profile)

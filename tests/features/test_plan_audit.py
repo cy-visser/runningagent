@@ -127,8 +127,7 @@ def test_plan_audit_over_90_days_is_chunked_and_populated(runner):
 
     list_calls = [kw for name, kw in runner.tp_calls if name in ("tp_get_workouts", "tp_list_notes")]
     assert list_calls and all(_span_days(kw) <= 90 for kw in list_calls)
-    assert "Run@07:30 'Far Tempo Run' 11km TSS 70 [w_far_am]" in out
-    assert "Run@18:00 'Shakeout Double' 5km TSS 28 [w_far_pm]" in out
+    assert "Run@07:30 'Far Tempo Run' 11km [w_far_am]; Run@18:00 'Shakeout Double' 5km [w_far_pm]" in out
     assert "Taper starts" in out
     assert "Threshold 2 x 15'" in out           # planned sessions near the start of the window too
     assert "unavailable" not in out.lower()

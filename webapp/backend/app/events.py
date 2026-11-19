@@ -31,6 +31,7 @@ TOOL_LABELS: dict[str, str] = {
     "fetch_trend_data": "Analysing 6-month training log & load capacity",
     "analyze_workout": "Analysing workout telemetry & recovery",
     "fetch_plan_audit_data": "Auditing weekly schedule & calendar notes",
+    "get_schedule": "Checking your TrainingPeaks calendar",
     "fetch_nutrition_context": "Loading fueling & weather forecast",
     "stage_workout_changes": "Staging plan changes",
     "apply_staged_changes": "Updating TrainingPeaks",
@@ -39,11 +40,8 @@ TOOL_LABELS: dict[str, str] = {
     "apply_training_plan": "Updating TrainingPeaks",
     "get_weather": "Checking local weather forecast",
     "request_new_goal": "Starting goal setup",
-    "record_key_event": "Taking note",
     "load_skill": "Loading coaching protocol",
 }
-# Tools that never show a progress chip: the coach's hidden memory must stay invisible to the runner.
-SILENT_TOOLS = frozenset({"record_key_event"})
 
 TOOL_TO_MESSAGE_KIND: dict[str, MessageKind] = {
     "fetch_checkin_data": "checkin",
@@ -212,8 +210,6 @@ class TurnEventTranslator:
             fn_call = part.get("functionCall") or part.get("function_call")
             if isinstance(fn_call, dict) and fn_call.get("name"):
                 t_name = str(fn_call["name"])
-                if t_name in SILENT_TOOLS:
-                    continue
                 self.tools_used.add(t_name)
                 self._thinking_emitted = False
                 out.append(("tool", {"name": t_name, "label": label_for_tool(t_name), "state": "start"}))
@@ -222,8 +218,6 @@ class TurnEventTranslator:
             fn_resp = part.get("functionResponse") or part.get("function_response")
             if isinstance(fn_resp, dict) and fn_resp.get("name"):
                 t_name = str(fn_resp["name"])
-                if t_name in SILENT_TOOLS:
-                    continue
                 self.tools_used.add(t_name)
                 out.append(("tool", {"name": t_name, "label": label_for_tool(t_name), "state": "done"}))
                 continue

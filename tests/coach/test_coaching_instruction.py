@@ -8,16 +8,16 @@ from google.genai import types
 
 from running_coach.coach.coaching.instruction import build_coach_instruction, build_profile_context
 from running_coach.coach.coaching.model_callbacks import apply_thinking_policy
-from running_coach.coach.coaching.quick_actions import DISPATCHED_STATE_KEY
+from running_coach.coach.coaching.quick_actions import PLAN_INTAKE_STATE_KEY, SYNTHESIS_GUARD_STATE_KEY
 from running_coach.tests.fakes import FakeContext, PLAN_PROFILE, SINGLE_PROFILE
 
 
 STAGED = {"staged_workout_changes": {"staged_id": "s-1", "changes": [{"kind": "workout", "title": "Tempo"}]}}
 
 
-def _thinking(part: types.Part, state: dict | None = None) -> types.ThinkingLevel:
+def _thinking(part: types.Part, state: dict | None = None, invocation_id: str = "inv-1") -> types.ThinkingLevel:
     req = LlmRequest(contents=[types.Content(role="user", parts=[part])], config=types.GenerateContentConfig())
-    apply_thinking_policy(FakeContext(state=state), req)
+    apply_thinking_policy(FakeContext(state=state, invocation_id=invocation_id), req)
     return req.config.thinking_config.thinking_level
 
 
@@ -25,8 +25,8 @@ def _thinking_after(tool_name: str) -> types.ThinkingLevel:
     return _thinking(types.Part(function_response=types.FunctionResponse(name=tool_name, response={"result": "ok"})))
 
 
-def _thinking_for(text: str, state: dict | None = None) -> types.ThinkingLevel:
-    return _thinking(types.Part(text=text), state)
+def _thinking_for(text: str, state: dict | None = None, invocation_id: str = "inv-1") -> types.ThinkingLevel:
+    return _thinking(types.Part(text=text), state, invocation_id=invocation_id)
 
 
 def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(runner):
@@ -34,6 +34,9 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     plan_instr = build_coach_instruction(SimpleNamespace(state={"user_profile": dict(PLAN_PROFILE)}))
     plan_ctx = build_profile_context(dict(PLAN_PROFILE))
     assert "GOAL PLAN (" in plan_ctx
+    assert "Today: 2026-10-27 (Tuesday)" in plan_ctx
+    # Today's date lives inside <runner_profile> (after </available_skills>), never in the static instruction head.
+    assert "Today's date is" not in plan_instr and "Today:" not in plan_instr
     # Every profile gets the GOAL REASONING frame; a plan reasons toward the sub goal AND the north star.
     assert "GOAL REASONING" in plan_ctx and "- North star: Sub-3:15 Marathon" in plan_ctx
     assert "BOTH current goal" in plan_ctx and "never alter or invent tool numbers" in plan_ctx
@@ -43,8 +46,8 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     # The staging call carries the coaching message (reasoning and context) and ends the turn.
     assert "put your coaching message in its `message` argument" in plan_instr
     assert "That one call shows your message and ends the turn" in plan_instr
-    # Skills from earlier turns are stubs: reloaded together with their data tool.
-    assert "call load_skill again\n  in the same step as its data tool" in plan_instr
+    # Skills are never reloaded within the same turn (and only reloaded when stubbed).
+    assert "never reload a skill in the same turn, only reload if stubbed" in plan_instr
     assert "GOAL PLAN LENS" not in plan_ctx and "long-run target the tools report" not in plan_ctx
     assert "SUB-GOAL RACE DONE: sub goal Sub-21 5K was raced on 2026-10-20" in plan_ctx
     assert "Do not offer onboarding." in plan_ctx
@@ -63,13 +66,18 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     no_goal_ctx = build_profile_context(no_goal)
     assert "- No goal is set" in no_goal_ctx and "Goal: not set" in no_goal_ctx and "None" not in no_goal_ctx
 
-    # Thinking: MEDIUM by default; LOW for a short chat approval of staged changes (it just applies them).
-    assert _thinking_for("update them", STAGED) == types.ThinkingLevel.LOW
-    assert _thinking_for("Yes, but make Saturday 18 km", STAGED) == types.ThinkingLevel.LOW
-    assert _thinking_for("Why move the long run?", STAGED) == types.ThinkingLevel.MEDIUM     # a question
-    assert _thinking_for("update them") == types.ThinkingLevel.MEDIUM                       # nothing staged
-    assert _thinking_for(" ".join(["word"] * 13), STAGED) == types.ThinkingLevel.MEDIUM     # not a short reply
-    assert _thinking_for("Lets move the 5k of Nov 25th to Nov 26th") == types.ThinkingLevel.MEDIUM
+    # Thinking: uniform MEDIUM across all warm coaching turns (keeps prefix cache intact); LOW only on plan intake.
+    for text, state in (
+        ("update them", STAGED),
+        ("Yes, but make Saturday 18 km", STAGED),
+        ("Why move the long run?", STAGED),
+        ("update them", None),
+        (" ".join(["word"] * 13), STAGED),
+        ("Lets move the 5k of Nov 25th to Nov 26th", None),
+    ):
+        assert _thinking_for(text, state) == types.ThinkingLevel.MEDIUM
+    assert _thinking_for("Build plan", {PLAN_INTAKE_STATE_KEY: "inv-1"}, "inv-1") == types.ThinkingLevel.LOW
+    assert _thinking_for("Build plan", {PLAN_INTAKE_STATE_KEY: "inv-1"}, "inv-2") == types.ThinkingLevel.MEDIUM
     for tool in ("stage_workout_changes", "apply_staged_changes", "request_new_goal", "fetch_checkin_data"):
         assert _thinking_after(tool) == types.ThinkingLevel.MEDIUM
     # A clean staging is never followed by an explanation call: no prompt change, tools stay on.
@@ -83,24 +91,32 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     assert after_stage.config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
     assert after_stage.config.tool_config is None and after_stage.config.system_instruction is None
     # Rule 2: staged changes are confirmed with the button, so the coach stages its safer version.
-    assert "the Update TrainingPeaks button is the\n   runner's confirmation" in plan_instr
+    assert "the Update TrainingPeaks button is the runner's confirmation" in plan_instr
     # Moves / renames go straight to stage_workout_changes (no load_skill round trip).
-    assert "Move / swap / rename planned sessions (no new content): NO load_skill" in plan_instr
+    assert "move / swap / rename without new content): NO load_skill" in plan_instr
+    # Calendar check vs plan audit routing clarity and concise reply cap.
+    assert "Calendar check (<= 6 wk" in plan_instr and "<= 140w focused on conflicts/options" in plan_instr
+    assert "fetch_plan_audit_data + plan-audit (only when asked to audit a plan/block)" in plan_instr
     # No "write nothing" rule: it silenced the post-staging coaching message.
     assert "write nothing" not in plan_instr.lower()
 
-    # Typed chat always gets the routing rules; only a dispatched quick action's report call drops them.
+    # All coaching and report synthesis turns keep SKILL ROUTING for prefix caching; only plan intake swaps it.
     assert "SKILL ROUTING" in plan_instr
     assert "⚠️ (caution/watch) or 🔴 (high risk/conflict)" in plan_instr
     # Report tools render a report: never a data lookup for a follow-up or another skill.
     assert "REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data)" in plan_instr
     assert "Never use one as a data lookup" in plan_instr
-    report_ctx = SimpleNamespace(
-        state={"user_profile": dict(PLAN_PROFILE), DISPATCHED_STATE_KEY: "inv-1"}, invocation_id="inv-1"
+    synthesis_ctx = SimpleNamespace(
+        state={"user_profile": dict(PLAN_PROFILE), SYNTHESIS_GUARD_STATE_KEY: "inv-1"}, invocation_id="inv-1"
     )
-    assert "SKILL ROUTING" not in build_coach_instruction(report_ctx)
+    assert build_coach_instruction(synthesis_ctx) == plan_instr
+    intake_ctx = SimpleNamespace(
+        state={"user_profile": dict(PLAN_PROFILE), PLAN_INTAKE_STATE_KEY: "inv-1"}, invocation_id="inv-1"
+    )
+    assert "PLAN INTAKE" in build_coach_instruction(intake_ctx)
+    assert "SKILL ROUTING" not in build_coach_instruction(intake_ctx)
     later_chat = SimpleNamespace(
-        state={"user_profile": dict(PLAN_PROFILE), DISPATCHED_STATE_KEY: "inv-1"}, invocation_id="inv-2"
+        state={"user_profile": dict(PLAN_PROFILE), PLAN_INTAKE_STATE_KEY: "inv-1"}, invocation_id="inv-2"
     )
     assert "SKILL ROUTING" in build_coach_instruction(later_chat)
 
@@ -169,16 +185,34 @@ def test_full_runner_profile_block_stays_within_50_percent_byte_budget():
                 "planned": False,
             },
         ],
-        "key_events": [
-            {
-                "date": "2026-11-01",
-                "type": "race",
-                "summary": "Completed marathon on 2026-11-01, followed by 1 week full rest and bike-only week before first run on 2026-11-17.",
-            }
-        ],
     }
     block = build_profile_context(full_profile, date(2026, 11, 16))
+    assert "Today: 2026-11-16 (Monday)" in block
     assert "No injuries" not in block
+    assert "KEY EVENTS" not in block
     assert "Tempo/Interval Saucony Speed 5" in block
     assert "2027-08-02..2027-10-31 | NEXT UNPLANNED GOAL" in block
     assert len(block.encode("utf-8")) <= 1604  # >= 50% smaller than the prior 3,208-byte block
+
+
+def test_inject_profile_context_strips_redundant_adk_agent_identity_boilerplate():
+    from google.adk.models.llm_request import LlmRequest
+    from google.genai import types
+
+    from running_coach.coach.coaching.profile_context import inject_profile_context
+
+    req = LlmRequest(
+        config=types.GenerateContentConfig(
+            system_instruction=(
+                "You are an expert running coach.\n\n"
+                "Today's date is 2026-11-18 (Wednesday).\n\n"
+                'You are an agent. Your internal name is "coaching_agent". '
+                'The description about you is "Running coach and exercise physiologist.".\n\n'
+                "Available skills:\n\n<available_skills>\n- plan-audit: Audits.\n</available_skills>"
+            )
+        )
+    )
+    inject_profile_context(req, "<runner_profile>\nRUNNER PROFILE: Test\n</runner_profile>")
+    sys_text = req.config.system_instruction
+    assert 'internal name is "coaching_agent"' not in sys_text
+    assert "<runner_profile>" in sys_text and "</available_skills>\n\n<runner_profile>" in sys_text

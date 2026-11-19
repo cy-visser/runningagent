@@ -1,11 +1,26 @@
-"""Weekly (ISO week) aggregation of workouts, shared by the plan audit and the check-in."""
+"""Weekly (ISO week) aggregation of workouts, shared by plan audit, schedule lookup, and check-in."""
 
+from collections import Counter
 from datetime import date, timedelta
 from typing import Any, Optional
 
 from .dates import iso_week_key, parse_date
 from .sports import BIKE_SPORTS, NON_TRAINING_SPORTS, RUN_SPORTS, STRENGTH_SPORTS, is_quality_title
 from .workout_status import is_workout_completed
+
+_SPORT_SHORT = {
+    "run": "Run",
+    "running": "Run",
+    "bike": "Bike",
+    "cycling": "Bike",
+    "strength": "Str",
+    "gym": "Str",
+}
+
+
+def _sport_label(sport: Optional[str]) -> str:
+    raw = (sport or "Run").strip()
+    return _SPORT_SHORT.get(raw.lower(), raw)
 
 
 def _float(value: Any) -> float:
@@ -120,6 +135,77 @@ def build_week_buckets(workouts: Optional[list[dict]], start: date, end: date) -
         if bucket:
             tally_workout(bucket, w, w_date)
     return weeks
+
+
+def _title_has_km(title: str, km: float) -> bool:
+    import re
+    return bool(re.search(rf"(?<![\d.]){re.escape(f'{km:g}')}\s*k(?:m)?\b", title, re.IGNORECASE))
+
+
+def _format_session_item(item: dict, multi_day: bool, dup_sport_days: set[tuple[date, str]]) -> str:
+    sport_raw = (item.get("sport") or "Run").strip()
+    sport = _sport_label(sport_raw)
+    time_str = f"@{item['time']}" if multi_day and item.get("time") else ""
+    title = str(item.get("title") or sport_raw)
+    km = round(float(item.get("km") or 0.0), 1)
+    minutes = round(float(item.get("minutes") or 0.0))
+    if km > 0:
+        metric = "" if _title_has_km(title, km) else f" {km:g}km"
+    elif minutes > 0:
+        metric = f" {minutes}'"
+    else:
+        metric = ""
+    need_id = (
+        not item.get("completed")
+        and bool(item.get("id"))
+        and (item["date"], sport_raw.lower()) in dup_sport_days
+    )
+    id_str = f" [{item['id']}]" if need_id else ""
+    prefix = f"{sport}{time_str} " if (sport != "Run" or time_str) else ""
+    return f"{prefix}'{title}'{metric}{id_str}"
+
+
+def format_week_sessions(items: list[dict]) -> str:
+    """Formats a week's sessions grouped chronologically by weekday (`Tue: ... | Wed/Thu: ...`)."""
+    if not items:
+        return ""
+    ordered = sorted(items, key=lambda s: (s["date"], s.get("time") or ""))
+    planned_counts = Counter(
+        (s["date"], (s.get("sport") or "Run").strip().lower())
+        for s in ordered
+        if not s.get("completed")
+    )
+    dup_sport_days = {k for k, n in planned_counts.items() if n >= 2}
+    by_day: dict[date, list[dict]] = {}
+    for s in ordered:
+        by_day.setdefault(s["date"], []).append(s)
+
+    groups: list[tuple[list[date], str, bool]] = []
+    for day, day_items in by_day.items():
+        multi_day = len(day_items) >= 2
+        rendered = "; ".join(_format_session_item(s, multi_day, dup_sport_days) for s in day_items)
+        mergeable = not multi_day and "[" not in rendered
+        if (
+            mergeable
+            and groups
+            and groups[-1][2]
+            and groups[-1][1] == rendered
+            and (day - groups[-1][0][-1]).days == 1
+        ):
+            groups[-1][0].append(day)
+        else:
+            groups.append(([day], rendered, mergeable))
+
+    day_parts = []
+    for days, rendered, _ in groups:
+        if len(days) == 1:
+            label = days[0].strftime("%a")
+        elif len(days) == 2:
+            label = f"{days[0].strftime('%a')}/{days[1].strftime('%a')}"
+        else:
+            label = f"{days[0].strftime('%a')}-{days[-1].strftime('%a')}"
+        day_parts.append(f"{label}: {rendered}")
+    return " | ".join(day_parts)
 
 
 def format_week_line(w: dict) -> str:

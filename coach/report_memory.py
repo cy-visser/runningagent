@@ -13,17 +13,18 @@ its [workout_id]s) or a workout analysis's numbers used to be lost after compact
   (summary blocks) or replaced by a one-line pointer (raw responses, so every function call keeps
   its response). A staged set replaced by a later staging (no apply in between) is cut to a pointer
   too, call and response, so only the current staged set is verbatim. What the app already settled
-  is compacted: an apply result becomes one line per change (with ids) and the staged set it applied
-  a stub (its `message` kept). Skill instructions from completed turns become a stub (the coach
-  reloads a skill with its data tool). An applied training plan's spec becomes a stub (its `message`
-  kept) and its per-week apply events collapse into one summary line. The stored session (and so the
-  UI) is never changed.
+  is compacted: an apply result becomes one line per change (or a counts + window line for > 12 items)
+  and the staged set it applied a stub (its `message` kept). Skill instructions from completed turns
+  become a stub (`load_skill` sits after report data in tool responses, preserving prefix caching on
+  `system_instruction + tools + report_data` while saving ~1-1.4k uncached tokens on follow-up turns).
+  An applied training plan's spec becomes a stub (its `message` kept) and its per-week apply events
+  collapse into one summary line. The stored session (and so the UI) is never changed.
 """
 
 import json
 import re
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
@@ -37,6 +38,7 @@ from google.genai import types
 # trend and workout analysis).
 REPORT_LABELS = {
     "fetch_plan_audit_data": "Plan audit",
+    "get_schedule": "Schedule",
     "analyze_workout": "Workout analysis",
     "fetch_checkin_data": "Check-in",
     "fetch_trend_data": "Trend analysis",
@@ -48,7 +50,7 @@ REPLACED_STAGE_ARGS = {"changes": "[replaced by a later staging below]"}
 REPLACED_STAGE_RESULT = {"result": "[replaced: the current staged set is further below]"}
 APPLIED_STAGE_CHANGES = "[applied: see the apply_staged_changes result below]"
 APPLIED_STAGE_RESULT = {"result": "[applied: see the apply_staged_changes result below]"}
-STALE_SKILL_STUB = "[skill instructions from an earlier turn: call load_skill again before following this skill]"
+STALE_SKILL_STUB = "[completed-turn skill rubric omitted; call load_skill only when generating a new report]"
 PLAN_STAGE = "stage_training_plan"
 PLAN_APPLY = "apply_training_plan"
 PLAN_CONTEXT = "fetch_plan_context"
@@ -214,11 +216,6 @@ def staging_status(contents: list[types.Content]) -> tuple[set[str], set[str]]:
     return replaced, applied
 
 
-def replaced_stagings(contents: list[types.Content]) -> set[str]:
-    """Call ids of staged sets replaced by a later staging; an apply in between keeps them (history)."""
-    return staging_status(contents)[0]
-
-
 def superseded_failed_stagings(contents: list[types.Content]) -> set[str]:
     """Call ids of failed `stage_workout_changes` (`staged: 0`) superseded by a later staging attempt."""
     superseded: set[str] = set()
@@ -290,7 +287,7 @@ def keep_latest_reports_and_skills(
                 _compact_plan(part, plans, ci)
                 or _without_replaced_staging(part, replaced)
                 or _compact_applied(part, applied)
-                or _stale_skill_stub(part, ci, pi, turn_start, latest, call_skills)
+                or _stale_skill_stub(part, ci, turn_start, call_skills)
                 or _keep_latest_in_part(part, ci, pi, latest, call_skills)
             )
             changed = changed or new is not part
@@ -419,14 +416,36 @@ def _without_replaced_staging(part: types.Part, replaced: set[str]) -> Optional[
     return None
 
 
+MAX_APPLIED_ITEM_LINES = 12
+
+
 def applied_summary(response: types.FunctionResponse) -> str:
-    """One compact line per applied change (ids kept for later edits); the runner saw the full table."""
-    results = _result_json(response).get("results") or []
-    ok = sum(1 for r in results if isinstance(r, dict) and r.get("ok"))
+    """Compact summary of an applied change set (per-item with [id] for <= 12 items; counts + window for large sets)."""
+    results = [r for r in (_result_json(response).get("results") or []) if isinstance(r, dict)]
+    ok_items = [r for r in results if r.get("ok")]
+    failed_items = [r for r in results if not r.get("ok")]
+    if len(results) > MAX_APPLIED_ITEM_LINES:
+        dates = sorted(str(r.get("date") or "")[:10] for r in results if str(r.get("date") or "")[:10])
+        window = f" ({dates[0]}..{dates[-1]})" if dates else ""
+        counts: dict[str, int] = {}
+        for r in ok_items:
+            act = str(r.get("action") or "updated")
+            counts[act] = counts.get(act, 0) + 1
+        parts = [f"{counts[k]} {k}" for k in ("create", "update", "delete") if counts.get(k)]
+        summary = (
+            f"Applied {len(ok_items)}/{len(results)}{window} (the app confirmed this to the runner): "
+            + (", ".join(parts) or "none")
+        )
+        if failed_items:
+            fail_bits = [
+                f'{str(r.get("date") or "")[:10]} "{r.get("title") or ""}": {r.get("error") or "failed"}'
+                for r in failed_items[:5]
+            ]
+            summary += "; FAILED: " + "; ".join(fail_bits)
+        return summary
+
     items = []
     for r in results:
-        if not isinstance(r, dict):
-            continue
         what = r.get("kind") if r.get("kind") == "note" else r.get("sport") or "workout"
         item = f'{r.get("action") or "change"} {str(r.get("date") or "")[:10]} {what} "{r.get("title") or ""}"'
         if r.get("id"):
@@ -434,7 +453,7 @@ def applied_summary(response: types.FunctionResponse) -> str:
         if not r.get("ok"):
             item += f' FAILED: {r.get("error") or "unknown error"}'
         items.append(item)
-    return f"Applied {ok}/{len(results)} (the app confirmed this to the runner): " + "; ".join(items)
+    return f"Applied {len(ok_items)}/{len(results)} (the app confirmed this to the runner): " + "; ".join(items)
 
 
 def _compact_applied(part: types.Part, applied: set[str]) -> Optional[types.Part]:
@@ -454,9 +473,11 @@ def _compact_applied(part: types.Part, applied: set[str]) -> Optional[types.Part
 
 
 def _stale_skill_stub(
-    part: types.Part, ci: int, pi: int, turn_start: int, latest: dict, call_skills: dict[str, str]
+    part: types.Part, ci: int, turn_start: int, call_skills: dict[str, str]
 ) -> Optional[types.Part]:
-    """Skill instructions from a completed turn as a stub (data-backed skills reload with their data tool)."""
+    """Stubs all completed-turn `load_skill` rubrics (`ci < turn_start`). `load_skill` sits after report data in
+    the tool-response content, so stubbing it preserves prefix caching on `system_instruction + tools + report`
+    while saving ~1,000-1,400 uncached tokens on every follow-up turn."""
     response = part.function_response
     if not response or response.name != LOAD_SKILL or ci >= turn_start:
         return None

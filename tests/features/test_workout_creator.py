@@ -254,7 +254,8 @@ def test_compact_session_codes_stage_multi_week_audit_changes_in_one_call(runner
 
     tue_run = by_day_sport[("2026-11-03", "Run")]
     assert tue_run["action"] == "update" and tue_run["title"] == "Threshold 4x2km"
-    assert tue_run["strides_added"] == "kept"  # preserved 4x(15"/45") from existing TP workout
+    assert tue_run["strides_added"] == "added"  # deterministic strides without per-workout tp_get_workout bursts
+    assert "tp_get_workout" not in [n for n, _ in runner.tp_calls]
     assert "Plan code:" not in tue_run["description"]
 
     tue_str = by_day_sport[("2026-11-03", "Strength")]
@@ -423,6 +424,7 @@ def test_clock_pace_codes_stage_the_stated_paces_and_show_them_in_the_result(run
         {"date_str": "2026-11-07", "code": "L 16 @5:31-5:52"},      # update the Sat long run
     ])
     assert result["staged"] == 2
+    assert "tp_get_workout" not in [n for n, _ in runner.tp_calls]
     staged = {c["date"][:10]: c for c in ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]}
     intervals, long_run = staged["2026-11-10"], staged["2026-11-07"]
     # Code-built titles: no pace in the title, the pace lives in the builder.
@@ -430,10 +432,107 @@ def test_clock_pace_codes_stage_the_stated_paces_and_show_them_in_the_result(run
     assert intervals["main_pace"] == "4:08–4:12/km" and long_run["main_pace"] == "5:31–5:52/km"
 
     lines = {line.split()[1][:10]: line for line in result["changes"]}
-    for day, pace in (("2026-11-10", "4:08–4:12/km"), ("2026-11-07", "5:31–5:52/km")):  # both update planned runs
-        before = staged[day]["replaces"].get("main_pace")
-        assert before and before != pace, "the update reads the current builder, so the old pace is known"
-        assert f"main {pace}, was {before}" in lines[day]
+    for day, pace in (("2026-11-10", "4:08–4:12/km"), ("2026-11-07", "5:31–5:52/km")):
+        assert f"main {pace}" in lines[day]
 
 
+def test_compact_string_changes_stage_runs_doubles_moves_deletes_and_notes(runner):
+    ctx = runner.ctx()
+    result = _stage(_fresh(ctx), [
+        "2026-11-10: I 4x1.2k @4:10 r2'",
+        "2026-11-02,2026-11-06: E 8 -strides",
+        "2026-11-03: T 4x2k r2'; S 40' heavy-lower +create",
+        "2026-11-05 -> 2026-11-06: bike",
+        "2026-11-01: delete note Berlin",
+        "2026-11-08: note Race Prep | Hydrate well",
+    ])
+    assert result["staged"] == 8
+    changes = ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    mon_run = next(c for c in changes if c["date"] == "2026-11-02" and c.get("sport") == "Run")
+    fri_run = next(c for c in changes if c["date"] == "2026-11-06" and c.get("sport") == "Run")
+    tue_str = next(c for c in changes if c["date"] == "2026-11-03" and c.get("sport") == "Strength")
+    moved_bike = next(c for c in changes if c.get("sport") == "Bike" and c["action"] == "update")
+    del_note = next(c for c in changes if c["kind"] == "note" and c["action"] == "delete")
+    add_note = next(c for c in changes if c["kind"] == "note" and c["action"] == "create")
+    assert mon_run.get("strides_added") is None and "15\"" not in mon_run["structure_summary"]
+    assert fri_run.get("strides_added") is None and "15\"" not in fri_run["structure_summary"]
+    assert tue_str["action"] == "create" and tue_str["duration_minutes"] == 40
+    assert moved_bike["date"] == "2026-11-06" and moved_bike["replaces"]["date"] == "2026-11-05"
+    assert del_note["note_id"] == "n2"
+    assert add_note["title"] == "Race Prep" and add_note["description"] == "Hydrate well"
 
+
+def test_apply_staged_changes_throttles_100_workouts_handles_429_and_retries_failed_subset(runner, monkeypatch):
+    from datetime import date, timedelta
+    from running_coach.features.workout_creator import apply_staged_changes_tool
+    from running_coach.features.workout_creator.helpers.staged_changes import APPLIED_CHANGES_STATE_KEY
+    from running_coach.shared.workout_upsert import WRITE_CONCURRENCY
+
+    sleeps: list[float] = []
+    in_flight = 0
+    max_in_flight = 0
+    orig_run_tp = runner.run_tp_tool
+
+    async def tracked_run_tp(tool_context, name: str, **kw):
+        nonlocal in_flight, max_in_flight
+        is_write = name in ("tp_create_workout", "tp_update_workout", "tp_delete_workout", "tp_create_note")
+        if is_write:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        try:
+            await asyncio.sleep(0)
+            return await orig_run_tp(tool_context, name, **kw)
+        finally:
+            if is_write:
+                in_flight -= 1
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(tp_calls, "run_tp_tool", tracked_run_tp)
+    monkeypatch.setattr(apply_staged_changes_tool, "_sleep", fake_sleep)
+
+    # 1. Scale test: 25 compact week lines = 100 workouts applied with concurrency <= 3 and 429 cooldown retry.
+    ctx = runner.ctx()
+    base_mon = date(2027, 1, 4)
+    week_lines = [
+        f"W{w + 1} {(base_mon + timedelta(weeks=w)).isoformat()} | Tue: I 5x1k r2' | Wed/Thu: E 8 | Sun: L 18"
+        for w in range(25)
+    ]
+    staged_res = _stage(_fresh(ctx), week_lines)
+    assert staged_res["staged"] == 100
+    assert len(staged_res["changes"]) == 13  # 12 preview lines + "... (+88 more staged)"
+
+    runner.tp_calls.clear()
+    runner.write_429s = 2
+    applied_100 = json.loads(asyncio.run(apply_staged_changes(_fresh(ctx))))
+    assert applied_100["success"] is True and applied_100["remaining"] == 0 and len(applied_100["results"]) == 100
+    assert max_in_flight <= WRITE_CONCURRENCY
+    assert sleeps and all(d == 2 for d in sleeps)
+    assert ctx.state[STAGED_CHANGES_STATE_KEY] is None
+    assert ctx.state[APPLIED_CHANGES_STATE_KEY]["applied"] == 100
+
+    # 2. Partial-failure test: creates succeed, failed updates stay staged with structured_workout for 0-LLM retry.
+    ctx2 = runner.ctx()
+    _stage(_fresh(ctx2), [
+        "2026-11-03: T 4x2k r2'",         # update planned Tue run
+        "2026-11-04: E 6 +create",        # create Wed run
+    ])
+    runner.tp_calls.clear()
+    runner.failing_tools = {"tp_update_workout"}
+    partial = json.loads(asyncio.run(apply_staged_changes(_fresh(ctx2))))
+    assert partial["success"] is False and partial["partial"] is True and partial["remaining"] == 1
+    assert APPLIED_CHANGES_STATE_KEY not in ctx2.state
+    remaining = ctx2.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    assert len(remaining) == 1 and remaining[0]["action"] == "update"
+    assert remaining[0]["structured_workout"] is not None
+
+    # Retry button click after transient error clears: only the 1 remaining update is sent (0 duplicate creates).
+    runner.failing_tools.clear()
+    runner.tp_calls.clear()
+    retried = json.loads(asyncio.run(apply_staged_changes(_fresh(ctx2))))
+    assert retried["success"] is True and retried["remaining"] == 0 and len(retried["results"]) == 1
+    assert [n for n, _ in runner.tp_calls] == ["tp_update_workout"]
+    assert ctx2.state[STAGED_CHANGES_STATE_KEY] is None
+    assert ctx2.state[APPLIED_CHANGES_STATE_KEY]["applied"] == 1

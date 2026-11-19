@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 _PROFILE_BLOCK_RE = re.compile(
     rf"\n*{re.escape(PROFILE_CONTEXT_START)}.*?{re.escape(PROFILE_CONTEXT_END)}", re.DOTALL
 )
+_ADK_IDENTITY_RE = re.compile(
+    r'\n*You are an agent\. Your internal name is "coaching_agent"\.'
+    r'(?: The description about you is "[^"]*?"\.)?'
+)
 
 
 def inject_profile_context(llm_request: LlmRequest, block: str) -> None:
@@ -47,7 +51,7 @@ def inject_profile_context(llm_request: LlmRequest, block: str) -> None:
         logger.warning("Unexpected system_instruction type %s; appending profile block", type(current))
         llm_request.append_instructions([block])
         return
-    base = _PROFILE_BLOCK_RE.sub("", current or "").rstrip()
+    base = _ADK_IDENTITY_RE.sub("", _PROFILE_BLOCK_RE.sub("", current or "")).rstrip()
     if SKILL_CATALOG_END in base:
         head, tail = base.split(SKILL_CATALOG_END, 1)
         tail = tail.strip()

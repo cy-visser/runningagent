@@ -10,7 +10,6 @@ apply resumes where it stopped.
 import asyncio
 import json
 import logging
-import re
 from datetime import timedelta
 from typing import Any
 
@@ -23,7 +22,7 @@ from ...shared.goal_plan import planned_update
 from ...shared.runner_identity import profile_user_id
 from ...shared.session_state import PLAN_CONTEXT_STATE_KEY
 from ...shared.ui_channel import reply
-from ...shared.workout_upsert import write_change
+from ...shared.workout_upsert import WRITE_CONCURRENCY, write_changes_throttled
 from .helpers.plan_diff import diff_week, write_change as plan_write_change
 from .helpers.plan_expand import cutoff_date, effective_plan_end, end_cutoff_date, expand_week, plan_window, week_monday
 from .helpers.plan_summary_text import (
@@ -40,9 +39,6 @@ from .helpers.web_payload import (
     new_applied,
 )
 
-WRITE_CONCURRENCY = 3
-BACKOFF_SECONDS = (2, 4, 8)
-_RATE_LIMITED = re.compile(r"\b429\b|too many requests", re.IGNORECASE)
 _sleep = asyncio.sleep  # module-level so tests can skip the real backoff
 logger = logging.getLogger(__name__)
 
@@ -64,17 +60,6 @@ async def mark_goals_planned(tool_context: ToolContext, staged: dict) -> bool:
     except Exception as e:
         logger.error("Failed to mark goals planned: %s", e)
         return False
-
-
-async def _write_with_backoff(tool_context: ToolContext, change: dict, gate: asyncio.Semaphore) -> dict:
-    """One TrainingPeaks write; a 429 is retried after 2, 4 and 8 seconds (outside the concurrency gate)."""
-    for delay in (*BACKOFF_SECONDS, None):
-        async with gate:
-            result = await write_change(tool_context, change)
-        if result.get("ok") or delay is None or not _RATE_LIMITED.search(str(result.get("error") or "")):
-            return result
-        await _sleep(delay)
-    return result
 
 
 def _finish(tool_context: ToolContext, staged: dict, applied: dict, week: int, text: str = "") -> None:
@@ -130,8 +115,7 @@ async def apply_training_plan(tool_context: ToolContext, staged_id: str, week: i
         return json.dumps({"success": False, "week": week, "reason": "calendar_unavailable", APPLIED_PLAN_STATE_KEY: applied})
 
     changes = [c for c in (plan_write_change(d) for d in diff_week(expanded, workouts, spec["mode"])) if c]
-    gate = asyncio.Semaphore(WRITE_CONCURRENCY)
-    results = list(await asyncio.gather(*(_write_with_backoff(tool_context, c, gate) for c in changes)))
+    results = await write_changes_throttled(tool_context, changes, concurrency=WRITE_CONCURRENCY, sleep=_sleep)
     ok: dict[str, int] = {}
     for r in results:
         if r.get("ok"):

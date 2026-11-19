@@ -178,9 +178,9 @@ export function StagedChangesCard({ staged, status, busy, onApply }: StagedChang
       </div>
 
       {workouts.length > 0 && (
-        <div className="overflow-x-auto">
+        <div className={workouts.length > 12 ? "max-h-[28rem] overflow-auto" : "overflow-x-auto"}>
           <table className="w-full text-sm">
-            <thead>
+            <thead className={workouts.length > 12 ? "sticky top-0 z-10 bg-white" : undefined}>
               <tr className="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-200">
                 <th className="py-2 pr-3 font-semibold">Change</th>
                 <th className="py-2 pr-3 font-semibold">Date</th>

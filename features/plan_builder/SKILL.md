@@ -1,17 +1,17 @@
 ---
 name: plan-builder
-description: Builds a new training block or overhauls > 10 sessions via session codes.
+description: Builds a new training block or full-block overhaul via weekly session codes.
 ---
 
 # Plan Builder Skill
 
-Builds a **new plan/block** or **overhauls** > 10 sessions (`<= 10` sessions use `stage_workout_changes`). `load_skill("plan-builder", start_date, end_date, mode)` automatically loads `PLAN CONTEXT` (zones, recent training, weekly calendar) in the same step. You write session codes; the app builds exact workouts, builders, strides, and calendar diffs.
+Builds a **new training block** or **full-block overhaul** (`stage_workout_changes` handles targeted calendar edits of any count). `load_skill("plan-builder", start_date, end_date, mode)` automatically loads `PLAN CONTEXT` (zones, recent training, weekly calendar) in the same step. You write session codes; the app builds exact workouts, builders, strides, and calendar diffs.
 
 ## Protocol
 
 1. **Scope & Context**:
    - New plans target the **NEXT UNPLANNED GOAL** in the profile block after block intake agreement (never re-plan a `planned` goal unless asked). Overhauls (`mode="overhaul"`) need no prior intake.
-   - Ground periodization, weekly volume, intensity distribution, recovery spacing, long-run progression, and strength/cross-training in `PLAN CONTEXT`, `KEY EVENTS`, the North Star trajectory, and the runner's stated baselines and requests—decide from exercise physiology for this specific runner, goal distance, and phase rather than fixed ratios or generic caps (for future blocks after intervening blocks, anchor `W1` to the expected entry baseline rather than today's snapshot).
+   - Ground periodization, weekly volume, intensity distribution, recovery spacing, long-run progression, and strength/cross-training in `PLAN CONTEXT`, the North Star trajectory, and the runner's stated baselines and requests—decide from exercise physiology for this specific runner, goal distance, and phase rather than fixed ratios or generic caps (for future blocks after intervening blocks, anchor `W1` to the expected entry baseline rather than today's snapshot).
    - When scaling weekly volume high or bridging a 5K/10K/HM block toward a Marathon North Star, absorb the volume across run frequency, a mid-week medium-long run, and easy aerobic runs rather than scaling `L` mechanically as a `%` of weekly km—check single-run **time-on-feet at `ZONES` `L` pace** for the **current** goal distance, and trade off peak long-run duration (Base/early Build) against peak race-pace density (step total `L` distance down in Peak phase when embedding heavy `@HM`/`@10K` segments).
    - When `W1` is marked `partial` (mid-week start), schedule only the active days of `W1` and scale `W1` volume proportionally—never squeeze a full week or standalone opener long run onto a 1-2 day partial week.
 2. **Workout & Slot Mechanics**:

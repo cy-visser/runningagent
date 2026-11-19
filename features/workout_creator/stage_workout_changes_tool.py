@@ -1,26 +1,27 @@
-"""Tool that stages proposed workout / note changes for the runner's "Update TrainingPeaks" button."""
+"""Tool that stages proposed workout / note changes (1 to 150+ items) for the "Update TrainingPeaks" button."""
 
 import asyncio
 import json
 import logging
 import uuid
-from datetime import date, timedelta
-from typing import Any, Optional
+from datetime import date
+from typing import Any, Optional, Union
 
 from google.adk.tools import FunctionTool, ToolContext
 from opentelemetry import trace
 
 from ...integrations.trainingpeaks import tp_calls
-from ...shared.dates import get_today_date, iso_date, monday_of, parse_date
+from ...shared.dates import get_today_date, iso_date, parse_date
 from ...shared.session_codes.session_codes import code_sport, normalize as normalize_code
 from ...shared.sports import RUN_SPORTS
 from ...shared.tp_payloads import coerce_mcp_payload
 from ...shared.ui_channel import reply
 from ...shared.workout_builder import needs_builder
+from ...shared.workout_upsert import run_throttled
+from .helpers.compact_changes import expand_change_entries
 from .helpers.staged_changes import (
     BUILDER_CHECK,
     BUILDER_COACH,
-    BUILDER_CODE,
     KIND_WORKOUT,
     STAGED_CHANGES_STATE_KEY,
     change_label,
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 _AMBIGUOUS_MESSAGE = (
     "Some changes were not staged: ask the runner which item to change or delete for each `ambiguous` entry and "
-    "stage the full set again with its workout_id (a note: its exact title), or create=true to add a session."
+    "stage the full set again with its workout_id (a note: its exact title), or +create / create=true to add a session."
 )
 _NOT_FOUND_MESSAGE = (
     "Some changes were not staged: the `not_found` items do not exist in TrainingPeaks. Use the [workout_id] of the "
@@ -46,33 +47,21 @@ _REFUSED_MESSAGE = "Completed workouts are never deleted: tell the runner which 
 _NEEDS_STRUCTURE_MESSAGE = (
     "Nothing was staged: every Run/Bike workout you create, or whose distance/duration you change, needs a session "
     "`code` (e.g. 'E 8', 'T 2x15\\' r2\\'', 'L 22 +6@M', 'B 60\\' Z2') or complete `structure` (when "
-    "`current_structure` is given and only one step changes, copy untouched blocks verbatim). Ready items from this "
-    "turn are kept automatically—re-send ONLY the `needs_structure` entries (without distance_km/duration_minutes) "
-    "and do not ask the runner."
+    "`current_structure` is given and only one step changes, copy untouched blocks verbatim). "
+    'Fallback `structure` schema (only for custom WU/CD, ladders, or `current_structure` edits): '
+    '{"steps":[step|{"type":"repetition","reps":N,"steps":[work,rest]}]} '
+    '(primaryIntensityMetric: omit for run pace; "percentOfThresholdHr"|bike "percentOfFtp"); '
+    'step={"name","intensityClass":"warmUp"|"active"|"rest"|"coolDown"|"other","distance_m"|"duration_seconds",'
+    '"pace":"M:SS-M:SS"|"intensity_min"+"intensity_max"}. '
+    "Ready items from this turn are kept automatically—re-send ONLY the `needs_structure` entries "
+    "(without distance_km/duration_minutes) and do not ask the runner."
 )
-# Above MAX_WORKOUT_CHANGES the change is a plan overhaul: plan-builder stages it in one compact call.
-MAX_WORKOUT_CHANGES = 10
 # Rejected (needs_structure) staging attempts allowed in one turn before the app stops the retries.
 MAX_NEEDS_STRUCTURE_ATTEMPTS = 3
+MAX_STAGED_PREVIEW_LINES = 12
 _ATTEMPTS_STATE_KEY = "temp:needs_structure_attempts"
 _TP_CACHE_STATE_KEY = "temp:staging_tp_cache"
 _READY_DRAFT_STATE_KEY = "temp:staging_ready_draft"
-
-
-def plan_builder_redirect(workout_changes: int, days: list[date]) -> Optional[dict]:
-    """The redirect result when the set is too big for stage_workout_changes (> MAX_WORKOUT_CHANGES workout changes),
-    else None. Nothing is staged then."""
-    if workout_changes <= MAX_WORKOUT_CHANGES:
-        return None
-    window = ""
-    if days:
-        start, end = monday_of(min(days)), monday_of(max(days)) + timedelta(days=6)
-        window = f'start_date="{iso_date(start)}", end_date="{iso_date(end)}", '
-    return {"staged": 0, "use_plan_builder": True, "message": (
-        f"Nothing was staged: {workout_changes} workout changes is a plan overhaul "
-        f"(stage_workout_changes: <= {MAX_WORKOUT_CHANGES} workout changes). Use plan-builder: "
-        f'call load_skill(skill_name="plan-builder", {window}mode="overhaul"), then '
-        "stage the plan with ONE stage_training_plan call.")}
 
 
 def staged_text(staged: int) -> str:
@@ -203,24 +192,29 @@ async def _current_workouts(tool_context: ToolContext, workout_ids: list[str], c
     cached_details: dict[str, dict] = cache.setdefault("details", {})
     missing = [w for w in dict.fromkeys(workout_ids) if w not in cached_details]
     if missing:
-        pairs = await asyncio.gather(*(_current_workout(tool_context, w) for w in missing))
+        pairs = await run_throttled(missing, lambda w: _current_workout(tool_context, w))
         cached_details.update({w: d for w, d in pairs if d})
     return {w: cached_details[w] for w in dict.fromkeys(workout_ids) if w in cached_details}
 
 
+def _preview_staged_lines(staged: list[dict]) -> list[str]:
+    lines = [compact_staged_line(c) for c in staged[:MAX_STAGED_PREVIEW_LINES]]
+    extra = len(staged) - MAX_STAGED_PREVIEW_LINES
+    if extra > 0:
+        lines.append(f"... +{extra} more staged on the runner's card")
+    return lines
+
+
 async def stage_workout_changes(
-    tool_context: ToolContext, changes: list[dict[str, Any]], message: str = ""
+    tool_context: ToolContext, changes: list[Union[str, dict[str, Any]]], message: str = ""
 ) -> str:
-    """Stages <= 10 workout/note changes (> 10 -> plan-builder). `message`: <= 35w if already discussed in chat, else <= 80w rationale + ⚠️/🔴 numeric risks (omit on plain move/rename).
-    `changes` (`date_str` YYYY-MM-DD[THH:MM:SS]):
-    - move/swap/rename: (workout_id | from_date_str+sport) + date_str [+ title].
-    - delete: delete=true + (workout_id | date_str+sport | kind='note'+date_str+title).
-    - note: kind='note', date_str, title [+ description].
-    - workout (`code` default; omit title/distance_km/duration_minutes/tss_planned/structure; create=true adds 2nd same-sport; strides=false drops strides):
-      lengths 8|1.5k|10mi|400m|50'|90"|1h30, reps 6x1k, rec r2'|r90"|r200, slot am|mid|pm.
-      Run: E 8 (+strides), R 6, L 22 (+6@M|+4x4k@HM r1k [+2@E]), RACE/EVENT [16k @HM] [Name] (no auto WU/CD); quality (15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M), H 8x60" r90". Stated/kept pace -> @M:SS[-M:SS] (P 3x1.6k @4:08 r3').
-      Other: B 60' Z2 (Z1-Z3) | B 4x8' @SS r4' (@SS|@T|@VO2), S 40' heavy-lower (full|core-hips|plyo|mobility), X 40' swim (walk|crosstrain).
-    - fallback `structure` (ONLY custom WU/CD, ladders, or current_structure edits): {"steps":[step|{"type":"repetition","reps":N,"steps":[work,rest]}]} (primaryIntensityMetric: omit for run pace; "percentOfThresholdHr"|bike "percentOfFtp"); step={"name","intensityClass":"warmUp"|"active"|"rest"|"coolDown"|"other","distance_m"|"duration_seconds","pace":"M:SS-M:SS"|"intensity_min"+"intensity_max"}."""
+    """Stages workout/note changes of any count (1 to 150+). `message`: coaching rationale (<= 35w if already discussed, else <= 80w + ⚠️/🔴 numeric risks; omit on plain move/rename). When staging agreed recommendations, map directly to compact strings without re-auditing.
+    Prefer compact 1-line strings in `changes`:
+    - Workout: `"2027-01-05: P 4x1.2k @4:08-4:10 r2'"` | multi-date `"2026-12-30,2026-12-31: E 8 -strides"` (`+create` adds 2nd same-sport; `-strides` drops strides; `;` adds same-day double).
+    - Full week (for multi-week batches): `"2026-11-30 | Tue: I 6x400 @4:18 r90\\"; S 45' heavy-lower | Wed/Thu: E 6 | Sun: L 14"`.
+    - Move / Delete / Note: `"2026-12-25 -> 2026-12-26: run"` | `"2027-01-29: delete strength"` (`delete id=<wid>`) | `"2026-12-19: note Holiday | Travel"`.
+    - Codes: lengths 8|1.5k|10mi|400m|50'|90"|1h30, reps 6x1k, rec r2'|r90"|r200, slot am|mid|pm. Run: E 8 (+strides), R 6, L 22 (+6@M|+4x4k@HM r1k [+2@E]), RACE/EVENT [16k @HM] [Name] (no auto WU/CD); quality (15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M) or @M:SS[-M:SS], H 8x60" r90", REST. Other: B 60' Z2 (Z1-Z3) | B 4x8' @SS r4' (@SS|@T|@VO2), S 40' heavy-lower (full|core-hips|plyo|mobility), X 40' swim (walk|crosstrain).
+    - Dict items also supported for `[workout_id]` renames or custom `structure` ladders/WU/CD (schema returned on retry)."""
     invocation = getattr(tool_context, "invocation_id", None)
     saved_cache = tool_context.state.get(_TP_CACHE_STATE_KEY)
     tp_cache: dict[str, Any] = (
@@ -233,14 +227,10 @@ async def stage_workout_changes(
     saved_draft = tool_context.state.get(_READY_DRAFT_STATE_KEY)
     draft = saved_draft if isinstance(saved_draft, dict) and saved_draft.get("invocation") == invocation else None
 
-    raw = [c for c in (changes or []) if isinstance(c, dict)]
+    raw = expand_change_entries(changes)
     workout_raw = [c for c in raw if str(c.get("kind") or KIND_WORKOUT).lower() != "note"]
     note_deletes = [c for c in raw if c not in workout_raw and c.get("delete")]
     days = staged_dates(workout_raw)
-    draft_ready_count = len(draft.get("ready") or []) if draft else 0
-    redirect = plan_builder_redirect(len(workout_raw) + draft_ready_count, days)
-    if redirect:
-        return json.dumps(redirect)
     wants_settings = any(
         not c.get("delete")
         and normalize_code(c.get("code")).upper() != "REST"
@@ -251,9 +241,12 @@ async def stage_workout_changes(
         )
         for c in workout_raw
     )
-    # Explicit ids are read with the calendar (one parallel round): a move to another date still
-    # knows the session it moves, and the card shows its builder.
-    explicit_ids = [str(c["workout_id"]).strip() for c in workout_raw if str(c.get("workout_id") or "").strip()]
+    # Explicit ids are read with the calendar (throttled): a move to another date still knows the session it moves.
+    explicit_ids = [
+        str(c["workout_id"]).strip()
+        for c in workout_raw
+        if str(c.get("workout_id") or "").strip() and not c.get("code")
+    ]
     workouts, settings_raw, details, notes = await asyncio.gather(
         _planned_workouts(tool_context, days, tp_cache),
         _athlete_settings(tool_context, wants_settings, tp_cache),
@@ -262,12 +255,12 @@ async def stage_workout_changes(
     )
 
     staged, problems = resolve_changes(raw, workouts, details, notes)
-    # The current builder is needed to keep a session's strides when the coach rewrites a run,
-    # and to show `structure_summary` on the card for `from_date_str` Run/Bike moves.
+    # `BUILDER_CODE` builds deterministic workouts/strides directly from the code (zero per-workout tp_get_workout
+    # calls, scaling cleanly to 150+ workouts); only custom `structure`, totals checks, or moves fetch details.
     to_check = [str(c["workout_id"]) for c in staged
                 if c.get("workout_id") and str(c["workout_id"]) not in details
                 and (c.get("builder") == BUILDER_CHECK
-                     or (c.get("builder") in (BUILDER_COACH, BUILDER_CODE)
+                     or (c.get("builder") == BUILDER_COACH
                          and str(c.get("sport") or "").lower() in RUN_SPORTS)
                      or (change_label(c) == "Moved" and needs_builder(c.get("sport"))))]
     if to_check:
@@ -320,15 +313,15 @@ async def stage_workout_changes(
             result.update({
                 "staged": len(staged),
                 "staged_id": staged_id,
-                "changes": [compact_staged_line(c) for c in staged],
+                "changes": _preview_staged_lines(staged),
                 "message": "Staged. The runner sees the changes with an Update TrainingPeaks button.",
             })
             if totals_notes:
                 result["totals_from_builder"] = totals_notes
             strides = [{"date": c["date"][:10], "title": c.get("title"), "strides": c["strides_added"]}
-                       for c in staged if c.get("strides_added")]
+                       for c in staged[:MAX_STAGED_PREVIEW_LINES] if c.get("strides_added")]
             if strides:
-                result["strides_added"] = strides  # kept from the current builder, or added after the warm-up
+                result["strides_added"] = strides
             if not problems:
                 # One model call: the coach's message (unless already written as text) + the coded line end the turn.
                 reply(tool_context, staged_reply(tool_context, message, staged))

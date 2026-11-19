@@ -96,7 +96,7 @@ async def fetch_plan_context(
             "end": w_end,
             "workouts": raw["workouts"],
         }
-    return plan_context_text(profile, start, end, mode, today, zones, history_entries, raw["workouts"],
+    return plan_context_text(profile, start, end, mode, zones, history_entries, raw["workouts"],
                              raw["notes"], fitness)
 
 

@@ -66,7 +66,7 @@ def slope_s_per_pct_lthr(model: Optional[dict], lthr: Optional[float]) -> Option
     return 1000.0 / faster - 1000.0 / base if base > 0 and faster > 0 else None
 
 
-def easy_discipline(runs: list[dict], zones: list[dict], lthr: Optional[float]) -> Optional[dict]:
+def easy_discipline(runs: list[dict], zones: list[dict]) -> Optional[dict]:
     """Share of easy-run lap time above the zone-2 ceiling, and median easy-run HR as %LTHR."""
     if len(zones) < 2 or not zones[1]["max"]:
         return None
@@ -197,7 +197,7 @@ def analyse_pacing(records: list[dict], thresholds: dict, zones: list[dict], tod
         "runs": len(runs),
         "model": model,
         "easy": easy,
-        "discipline": easy_discipline(runs, zones, lthr),
+        "discipline": easy_discipline(runs, zones),
         "threshold": thr,
         "lthr_check": lthr_check,
         "calibration": cal,

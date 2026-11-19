@@ -61,7 +61,3 @@ def fmt_clock(seconds: Optional[float]) -> str:
 
 def fmt_pace(pace_s: Optional[float]) -> str:
     return f"{fmt_clock(pace_s)}/km" if pace_s else "-"
-
-
-def fmt_num(value: Optional[float], fmt: str = "{:.0f}", suffix: str = "") -> str:
-    return fmt.format(value) + suffix if value is not None else "-"

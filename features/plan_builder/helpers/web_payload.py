@@ -5,8 +5,6 @@ at apply time: no native builders are stored for 150 sessions (keeps the Firesto
 `applied_training_plan` tracks the per-week apply loop (weeks_done, failed_weeks, totals, done).
 """
 
-from typing import Optional
-
 from ....shared.session_state import APPLIED_PLAN_STATE_KEY, STAGED_PLAN_STATE_KEY
 from .plan_diff import ROW_FIELDS, counts
 from .plan_expand import effective_plan_end, plan_window
@@ -65,7 +63,3 @@ def applied_after_week(applied: dict, staged: dict, week: int, ok: dict[str, int
         out["failed_weeks"] = [w for w in out["failed_weeks"] if w != week]
     out["done"] = set(out["weeks_done"]) >= {w["week"] for w in staged["weeks"]}
     return out
-
-
-def staged_week(staged: dict, week: int) -> Optional[dict]:
-    return next((w for w in staged.get("weeks") or [] if w["week"] == week), None)

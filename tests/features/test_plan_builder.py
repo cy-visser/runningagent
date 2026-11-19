@@ -608,21 +608,22 @@ def test_apply_writes_one_week_backs_off_on_429_and_is_idempotent(runner, monkey
     assert _apply(ctx, "00000000-0000-0000-0000-000000000000", 1) == {"success": False, "reason": "replaced"}
 
 
-def test_a_rate_limited_write_backs_off_2_4_8_seconds_then_gives_up(runner, monkeypatch):
+def test_a_rate_limited_write_backs_off_2_4_8_seconds_then_gives_up(runner):
+    from running_coach.shared.workout_upsert import write_with_backoff
+
     delays: list[float] = []
 
     async def no_sleep(seconds):
         delays.append(seconds)
 
-    monkeypatch.setattr(apply_module, "_sleep", no_sleep)
     change = {"kind": "workout", "action": "create", "date": "2026-11-10", "sport": "Run", "title": "Easy Run 8 km",
               "workout_id": None, "distance_km": 8.0}
     runner.write_429s = 3
-    ok = asyncio.run(apply_module._write_with_backoff(runner.ctx(), change, asyncio.Semaphore(3)))
+    ok = asyncio.run(write_with_backoff(runner.ctx(), change, asyncio.Semaphore(3), sleep=no_sleep))
     assert ok["ok"] is True and delays == [2, 4, 8]
     delays.clear()
     runner.write_429s = 4
-    failed = asyncio.run(apply_module._write_with_backoff(runner.ctx(), change, asyncio.Semaphore(3)))
+    failed = asyncio.run(write_with_backoff(runner.ctx(), change, asyncio.Semaphore(3), sleep=no_sleep))
     assert failed["ok"] is False and "429" in failed["error"] and delays == [2, 4, 8]
 
 
@@ -645,28 +646,35 @@ def test_a_week_that_keeps_failing_goes_to_failed_weeks_for_resume(runner, monke
 
 
 # ------------------------------------------------------------------------------
-# Guard: workout-creator hands big sets to plan-builder
+# Unified cap-free staging: 1 to 100+ workouts stage directly without throttling
 # ------------------------------------------------------------------------------
 
-def test_stage_workout_changes_redirects_big_sets_to_plan_builder(runner):
-    eleven = [{"date_str": f"2026-11-0{2 + i % 6}", "title": f"Run {i}", "create": True,
+def test_stage_workout_changes_scales_from_small_edits_to_100_workouts_without_redirect_or_throttling(runner):
+    from datetime import date, timedelta
+    # 11 dict changes stage directly (no arbitrary MAX_WORKOUT_CHANGES cliff or plan-builder redirect).
+    eleven = [{"date_str": f"2026-11-{(2 + i):02d}", "title": f"Run {i}", "create": True,
                "structure": {"steps": [{"name": "Easy", "distance_m": 5000, "pace": "6:00-6:20"}]}}
               for i in range(11)]
     ctx = runner.ctx()
-    result = json.loads(asyncio.run(stage_workout_changes(ctx, eleven)))
-    assert result["staged"] == 0 and result["use_plan_builder"] is True
-    assert 'load_skill(skill_name="plan-builder"' in result["message"]
-    assert 'start_date="2026-11-02"' in result["message"] and "fetch_plan_context" not in result["message"]
-    assert runner.tp_calls == [] and "staged_workout_changes" not in ctx.state
+    result = json.loads(asyncio.run(stage_workout_changes(ctx, eleven, message="Staged all 11 runs.")))
+    assert result.get("use_plan_builder") is not True and result["staged"] == 11
+    assert len(ctx.state["staged_workout_changes"]["changes"]) == 11
 
-    # Workout count (<= 10) governs, so 2 workout changes spanning 3 ISO weeks stage directly.
-    spread = [{"date_str": "2026-11-03", "title": "Easy 1", "create": True,
-               "structure": {"steps": [{"name": "Easy", "distance_m": 5000, "pace": "6:00-6:20"}]}},
-              {"date_str": "2026-11-17", "title": "Easy 2", "create": True,
-               "structure": {"steps": [{"name": "Easy", "distance_m": 6000, "pace": "6:00-6:20"}]}}]
-    result = json.loads(asyncio.run(stage_workout_changes(ctx, spread, message="Moved both runs two weeks out.")))
-    assert result.get("use_plan_builder") is not True and result["staged"] == 2
-    assert len(ctx.state["staged_workout_changes"]["changes"]) == 2
+    # 100 workouts across 20 weeks via compact week lines: 0 tp_get_workout calls, chunked tp_get_workouts,
+    # and bounded <= 13-line LLM preview echo while UI state holds all 100 resolved workouts.
+    runner.tp_calls.clear()
+    twenty_weeks = [
+        f"{(date(2026, 11, 30) + timedelta(weeks=w)).isoformat()} | "
+        "Tue: I 5x1k r2' | Wed/Thu: E 8 -strides | Sat: B 45' Z2 | Sun: L 18"
+        for w in range(20)
+    ]
+    ctx100 = runner.ctx()
+    res100 = json.loads(asyncio.run(stage_workout_changes(ctx100, twenty_weeks, message="Staged 20-week block.")))
+    assert res100["staged"] == 100
+    assert len(ctx100.state["staged_workout_changes"]["changes"]) == 100
+    assert len(res100["changes"]) == 13 and "+88 more staged" in res100["changes"][-1]
+    assert "tp_get_workout" not in [n for n, _ in runner.tp_calls]
+    assert len([n for n, _ in runner.tp_calls if n == "tp_get_workouts"]) == 2  # two <=89d chunks for 140 days
 
 
 def test_tuneup_races_and_controlled_events_stage_at_exact_distance_and_protect_race_predictor(runner):

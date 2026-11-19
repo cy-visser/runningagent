@@ -63,11 +63,6 @@ async def _close_entry(entry: _ToolsetEntry) -> None:
             logger.debug("Ignoring error closing evicted tp-mcp toolset: %s", exc)
 
 
-def reset_tp_tool_cache() -> None:
-    """Forgets all cached per-cookie toolsets."""
-    _toolsets_by_key.clear()
-
-
 async def _ensure_entry(cookie: str) -> _ToolsetEntry:
     clean_cookie = (cookie or "").strip()
     if not clean_cookie:

@@ -9,7 +9,7 @@ from google.genai import types
 
 from ...integrations import package_paths
 from ...shared.session_state import APPLIED_PLAN_STATE_KEY, STAGED_PLAN_STATE_KEY
-from .quick_actions import is_quick_action_report
+from .quick_actions import is_plan_intake
 
 # Feature folders that ship a SKILL.md, in catalog order (order is part of the prompt).
 SKILL_FEATURES = (
@@ -57,9 +57,6 @@ def has_active_plan_context(contents: list[types.Content] | None) -> bool:
             elif resp.name in ("apply_training_plan", "apply_staged_changes"):
                 active = False
     return active
-
-
-has_unconsumed_plan_context = has_active_plan_context
 
 
 def unapplied_staged_plan_id(state: Any) -> str | None:
@@ -162,8 +159,8 @@ class CompactSkillToolset(SkillToolset):
         self._tools = [CoachLoadSkillTool(self)]
 
     async def process_llm_request(self, *, tool_context: ToolContext, llm_request: Any) -> None:
-        # A web quick action's report call already holds its skill and cannot call tools.
-        if is_quick_action_report(tool_context.state, tool_context.invocation_id):
+        # Build Plan intake opener uses `_PLAN_INTAKE_RULES` and cannot call tools.
+        if is_plan_intake(tool_context.state, tool_context.invocation_id):
             return
         skills = self._list_skills()
         extra = [_SKILL_INSTRUCTION, format_skill_catalog(skills)]

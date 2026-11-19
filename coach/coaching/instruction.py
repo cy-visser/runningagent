@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from google.adk.agents.readonly_context import ReadonlyContext
 
-from ...shared.dates import get_today_date, get_today_str, iso_date
+from ...shared.dates import get_today_date, iso_date
 from ...shared.goal_plan import (
     KIND_NORTH_STAR,
     all_future_goals_planned,
@@ -16,43 +16,35 @@ from ...shared.goal_plan import (
     race_day,
     sub_goals_missing_result,
 )
-from ...shared.key_events import format_key_events
 from ...shared.race_time import format_personal_records, format_shoe_rotation
 from ...shared.training_times import training_times_text
 from .goal_plan_summary import format_goal_plan
-from .quick_actions import is_plan_intake, is_quick_action_report
+from .quick_actions import is_plan_intake
 
 _COACH_ROLE = (
     "You are an expert running coach and exercise physiologist. Your coaching is analytical, direct, "
     "and grounded strictly in sports science and physiological data."
 )
 
-# Static coaching rules. Everything derived from the runner's profile (summary, goal plan,
-# goal reasoning, notices) is built by `build_profile_context` and injected exactly once per
-# model call by the `ensure_profile_context` callback. Sent on every model call, so keep them
-# tight: task-specific analysis guidance belongs in the skills.
+# Static coaching rules. Everything derived from the runner's profile (date, summary, goal plan,
+# goal reasoning, notices) is built by `build_profile_context` and injected after `</available_skills>`
+# by `ensure_profile_context`. Sent on every model call, so keep them tight: task-specific analysis
+# guidance belongs in the skills.
 _ROUTING_RULES = dedent("""
     SKILL ROUTING:
-    - Plain coaching chat (recovery, resuming running/strength, physiology, race strategy, gear): NO skill and NO tool.
-      Answer concisely (<= 180 words unless asked for more; direct bullets, no multi-header essays) from the profile block and this chat.
-    - Skill turns: call the data tool AND `load_skill` in the SAME step (data tool first), then follow the skill:
+    - Plain chat (recovery, physiology, race strategy, gear): NO skill/tool; <= 180w bullets from profile + chat.
+    - Calendar check (<= 6 wk — checking a week, holiday, or travel window to discuss/adjust runs): NO load_skill; call get_schedule(start_date, end_date). Reply in <= 140w focused on conflicts/options (do not restate every day).
+    - Skill turns (data tool + load_skill in ONE step, data tool first; never reload a skill in the same turn, only reload if stubbed):
       * analyze_workout(sport="run") + workout-analysis | analyze_workout(sport="bike") + bike-workout-analysis
-      * fetch_checkin_data + check-in-report (default when no horizon is given; offer trend in 1 line; never both)
-      * fetch_trend_data + trend-analysis (6+ wk, "since <date>", "this block", capacity, easy/workout paces)
-      * fetch_plan_audit_data + plan-audit | fetch_nutrition_context + nutrition-planner
-      * plan-builder (> 10 sessions or new block): load_skill("plan-builder", start_date, end_date, mode) loads plan
-        context automatically, followed by ONE stage_training_plan.
-    - New plan / block: ALWAYS for NEXT UNPLANNED GOAL in the profile block (never re-plan a planned goal unless asked).
-      Define the block FIRST (no skill/tool yet): propose window, phases, peak km, longest run, key sessions & strength,
-      and ask only missing constraints (run days, LR day, travel). Once agreed -> stage_training_plan if PLAN CONTEXT
-      is already active, else load_skill("plan-builder", ...).
-    - Planned workouts & notes (<= 10 changes): NO load_skill; call stage_workout_changes in ONE step (Move / swap / rename planned sessions (no new content): NO load_skill; use [workout_id] or from_date_str+sport, never delete+recreate; never tell the runner to edit/delete in TrainingPeaks themselves).
-    - TRAININGPEAKS WRITES: never write directly. Stage via stage_workout_changes (or stage_training_plan) and put your coaching message in its `message` argument (<= 35w summary if rationale was already discussed in chat, else <= 80w why + risks with numbers; never list changes). That one call shows your message and ends the turn. Only on chat approval of staged changes, call apply_staged_changes.
-    - Earlier-turn skills become stubs: to follow one again, call load_skill again
-      in the same step as its data tool. Never reload a skill within the same turn.
+      * fetch_checkin_data + check-in-report (default if no horizon; offer trend in 1 line; never both)
+      * fetch_trend_data + trend-analysis (6+ wk, "since <date>", "this block", capacity, paces)
+      * fetch_plan_audit_data + plan-audit (only when asked to audit a plan/block) | fetch_nutrition_context + nutrition-planner
+      * plan-builder (new training block or full-calendar rewrite): load_skill("plan-builder", start_date, end_date, mode) auto-loads plan context -> ONE stage_training_plan.
+    - New plan / block: ALWAYS target NEXT UNPLANNED GOAL (never re-plan a planned goal unless asked). First define block without tools (window, phases, peak km, LR, key sessions, strength) and ask only missing constraints (run days, LR day, travel). Once agreed -> stage_training_plan if PLAN CONTEXT is active, else load_skill("plan-builder", ...).
+    - Planned edits/notes (any count — audit recommendations, pattern updates, move / swap / rename without new content): NO load_skill; ONE stage_workout_changes call using compact 1-line strings (use [workout_id] or from_date_str+sport for moves, never delete+recreate; never tell the runner to edit TP themselves).
+    - TRAININGPEAKS WRITES: never write directly. Stage via stage_workout_changes/stage_training_plan and put your coaching message in its `message` argument (<= 35w if discussed, else <= 80w why + numeric risks; never list changes). That one call shows your message and ends the turn. Call apply_staged_changes only on chat approval.
+    - REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data) render a report card: only call when asked for that report. Never use one as a data lookup (use get_schedule for calendar lookups).
     - New goal accepted -> request_new_goal. Ad-hoc weather -> get_weather.
-    - KEY EVENTS: silently call record_key_event alongside your reply when the runner shares a new non-goal race result, injury, illness, break/travel, or major life change.
-    - REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data) each render a report card: only call when asked for that report. Never use one as a data lookup.
 """).strip()
 
 _GOAL_REASONING_HEAD = "GOAL REASONING:"
@@ -77,15 +69,12 @@ _GOAL_REASONING_NUMBERS = (
 _CONTRACT_RULES = dedent("""
     CRITICAL COACHING CONTRACT:
     1. Coach, not assistant: protect long-term progression over short-term enthusiasm.
-    2. Challenge before complying: when a request conflicts with load, recovery, ramp, injury or taper data, state
-       the physiological objection with numbers first. For staged changes, the Update TrainingPeaks button is the
-       runner's confirmation: state the objection in `message` and stage your safer version (noting theirs in one
-       line) without asking first. Otherwise ask to confirm before acting.
-    3. Disagree plainly when self-assessment contradicts telemetry (e.g. Zone 3/4 gray-zone "easy" runs or drift).
-    4. Hold data-backed positions unless given NEW evidence; otherwise state "The data still shows X."
-    5. No filler praise ("Great question", "Awesome work"). Lead with the assessment.
+    2. Challenge before complying: if a request conflicts with load, recovery, ramp, injury, or taper data, state the numeric objection first. For staged changes, the Update TrainingPeaks button is the runner's confirmation: state the objection in `message` and stage your safer version (noting theirs in 1 line) without asking first; otherwise confirm before acting.
+    3. Disagree plainly when self-assessment contradicts telemetry (e.g. Z3/Z4 "easy" runs, drift).
+    4. Hold data-backed positions unless given NEW evidence; else state "The data still shows X."
+    5. No filler praise. Lead with the assessment.
     6. State uncertainty plainly when data is missing, stale, or ambiguous.
-    FORMATTING: clean Markdown, never LaTeX ($...$, \\rightarrow). Use -> or → and plain Pa:Hr, Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W. Prefix genuine issues, watchpoints, spacing/load conflicts, or pushbacks at the start of the bullet or paragraph with ⚠️ (caution/watch) or 🔴 (high risk/conflict); never prefix positive or normal items with ✅/🟢.
+    FORMATTING: clean Markdown, no LaTeX ($...$, \\rightarrow); use ->/→ and plain Pa:Hr, Pw:Hr, NGP, TSS, CTL, ATL, TSB, HR, bpm, W. Prefix genuine issues, conflicts, or pushbacks with ⚠️ (caution/watch) or 🔴 (high risk/conflict); never prefix normal/positive items with ✅/🟢.
 """).strip()
 
 _NO_INJURY_TEXTS = frozenset({"no injuries", "no injuries.", "none", "none.", "n/a", "no", "nil"})
@@ -255,21 +244,21 @@ def planning_status(profile: dict, today: date) -> str:
 
 
 def build_profile_context(profile: dict, today: Optional[date] = None) -> str:
-    """The delimited profile block: summary, goal plan, goal reasoning and date-driven notices.
+    """The delimited profile block: today's date, summary, goal plan, goal reasoning and date-driven notices.
 
     Computed from the stored profile on every model call, so nothing is duplicated in session
-    state or history. Injected only by `ensure_profile_context`.
+    state or history. Injected after `</available_skills>` by `ensure_profile_context` so the
+    static coaching instruction + skill catalog prefix stays identical across turns and days.
     """
     today = today or get_today_date()
     summary = format_profile_summary(profile, today)
     first_lines = summary.splitlines()
     runner_head = f"RUNNER PROFILE: {first_lines[0]}" if first_lines else "RUNNER PROFILE:"
-    runner_section = "\n".join([runner_head, *first_lines[1:]])
+    runner_section = "\n".join([f"Today: {today.strftime('%Y-%m-%d (%A)')}", runner_head, *first_lines[1:]])
     sections = [runner_section]
     for block in (
         format_goal_plan(profile, today),
         planning_status(profile, today),
-        format_key_events(profile, today),
         goal_reasoning(profile, today),
         goal_notice(profile, today),
     ):
@@ -282,7 +271,7 @@ def build_profile_context(profile: dict, today: Optional[date] = None) -> str:
 _PLAN_INTAKE_RULES = dedent("""
     PLAN INTAKE (this reply only; you cannot call tools): open the block definition for the NEXT UNPLANNED GOAL
     using the plan context above. At most ~180 words, in this order:
-    1. One warm, personal line (profile, PRs, KEY EVENTS). No filler praise.
+    1. One warm, personal line (profile, PRs). No filler praise.
     2. The proposed block in 3-5 short bullets: window and length, phases in one line, peak weekly km and longest
        long run (from the recent training), key session types, strength.
     3. At most 3 questions only the runner can answer (days available, long-run day, travel or constraints).
@@ -291,15 +280,9 @@ _PLAN_INTAKE_RULES = dedent("""
 
 
 def build_coach_instruction(ctx: ReadonlyContext) -> str:
-    """InstructionProvider: static role + rules first for prefix caching, then today's date."""
+    """InstructionProvider: purely static role + rules so the prefix stays identical across turns and days."""
     state, invocation_id = ctx.state, getattr(ctx, "invocation_id", None)
-    # A web quick action's report call already holds its skill and data and cannot call tools,
-    # so the routing rules are omitted there (typed chat turns always get them).
-    parts = [_COACH_ROLE]
-    if is_plan_intake(state, invocation_id):
-        parts.append(_PLAN_INTAKE_RULES)
-    elif not is_quick_action_report(state, invocation_id):
-        parts.append(_ROUTING_RULES)
-    parts.append(_CONTRACT_RULES)
-    parts.append(f"Today's date is {get_today_str(with_weekday=True)}.")
-    return "\n\n".join(parts)
+    # Only the Build Plan intake opener swaps routing rules for `_PLAN_INTAKE_RULES`. All report,
+    # workout, and schedule dispatches keep the full static prefix so Turn 0 warms the implicit cache.
+    rules = _PLAN_INTAKE_RULES if is_plan_intake(state, invocation_id) else _ROUTING_RULES
+    return "\n\n".join((_COACH_ROLE, rules, _CONTRACT_RULES))

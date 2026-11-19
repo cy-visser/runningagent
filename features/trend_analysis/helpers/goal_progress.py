@@ -158,13 +158,12 @@ def goal_progress(
     return {"goal": goal_payload, "north_star": ns_payload}
 
 
-def format_goal_context(progress: dict, profile: dict, today: date) -> str:
+def format_goal_context(progress: dict, profile: dict) -> str:
     """Goal context for the coach: projection, CTL trajectory and the north-star mapping.
 
     The goal-plan table (sub goals, results, equivalents) is in the coach instruction on every
     call, so it is referenced here rather than repeated.
     """
-    del today
     g, ns = progress["goal"], progress["north_star"]
     lines = []
     if north_star(profile):

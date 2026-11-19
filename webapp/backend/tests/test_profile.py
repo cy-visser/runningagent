@@ -99,3 +99,28 @@ def test_profile_edit_saves_training_times_and_deletes_the_legacy_strength_text(
     with pytest.raises(ValidationError):
         ProfileUpdatePayload(goal_type="single", training_goal="Sub-3:20", timeline="2027-04-11",
                              run_time_of_day="noon")
+
+
+def test_profile_store_hides_internal_coordinates():
+    import asyncio
+    from app.profiles import INTERNAL_PROFILE_FIELDS, ProfileStore
+
+    assert INTERNAL_PROFILE_FIELDS == ("latitude", "longitude")
+    store = ProfileStore(settings=None, client=object())  # type: ignore[arg-type]
+
+    async def find_by_email(email: str):
+        return "cyrille_visser", {
+            "firstname": "Cyrille",
+            "lastname": "Visser",
+            "email": email,
+            "location": "Amsterdam",
+            "latitude": 52.37,
+            "longitude": 4.89,
+            "goal_type": "single",
+            "training_goal": "Sub-3:20 Marathon",
+        }
+
+    store.find_by_email = find_by_email  # type: ignore[method-assign]
+    _, clean = asyncio.run(store.get_clean_profile("cyrille@example.com"))
+    assert "latitude" not in clean and "longitude" not in clean
+    assert clean["training_goal"] == "Sub-3:20 Marathon"

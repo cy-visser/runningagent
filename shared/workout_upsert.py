@@ -1,7 +1,9 @@
-"""TrainingPeaks create/update/delete dispatch for staged workouts and notes (pure execution, no lookups)."""
+"""TrainingPeaks create/update/delete dispatch and shared throttled batch execution (pure code)."""
 
+import asyncio
 import logging
-from typing import Any
+import re
+from typing import Any, Awaitable, Callable, Iterable, TypeVar
 
 from google.adk.tools import ToolContext
 
@@ -17,9 +19,20 @@ ACTION_CREATE = "create"
 ACTION_UPDATE = "update"
 ACTION_DELETE = "delete"
 
+WRITE_CONCURRENCY = 3
+BACKOFF_SECONDS = (2, 4, 8)
+_RATE_LIMITED = re.compile(r"\b429\b|too many requests", re.IGNORECASE)
+
 # Per-action differences between the create and update MCP tools.
 _CREATE_SPEC = {"tool": "tp_create_workout", "duration_cast": lambda v: int(round(v)), "verb": "create"}
 _UPDATE_SPEC = {"tool": "tp_update_workout", "duration_cast": lambda v: int(round(v)), "verb": "update"}
+
+T = TypeVar("T")
+R = TypeVar("R")
+
+
+def is_rate_limited_error(error: Any) -> bool:
+    return bool(_RATE_LIMITED.search(str(error or "")))
 
 
 async def _run(tool_context: ToolContext, tool: str, verb: str, what: str, node_input: dict) -> dict[str, Any]:
@@ -94,3 +107,79 @@ async def write_change(tool_context: ToolContext, change: dict) -> dict[str, Any
         writer = write_note if change.get("kind") == KIND_NOTE else write_workout
     outcome = await writer(tool_context, change)
     return {**{k: v for k, v in change.items() if k != "structured_workout"}, **outcome}
+
+
+async def write_with_backoff(
+    tool_context: ToolContext,
+    change: dict,
+    gate: asyncio.Semaphore,
+    *,
+    unpaused: asyncio.Event | None = None,
+    cooldown_state: list[int] | None = None,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+) -> dict[str, Any]:
+    """Writes one change under `gate` (`WRITE_CONCURRENCY`), backing off 2s, 4s, 8s on 429s and pausing queued tasks."""
+    for delay in (*BACKOFF_SECONDS, None):
+        if unpaused is not None:
+            await unpaused.wait()
+        async with gate:
+            result = await write_change(tool_context, change)
+        if result.get("ok") or delay is None or not is_rate_limited_error(result.get("error")):
+            return result
+        if unpaused is not None and cooldown_state is not None:
+            cooldown_state[0] += 1
+            unpaused.clear()
+        try:
+            await sleep(delay)
+        finally:
+            if unpaused is not None and cooldown_state is not None:
+                cooldown_state[0] -= 1
+                if cooldown_state[0] <= 0:
+                    unpaused.set()
+    return result
+
+
+async def write_changes_throttled(
+    tool_context: ToolContext,
+    changes: Iterable[dict],
+    *,
+    concurrency: int = WRITE_CONCURRENCY,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+) -> list[dict[str, Any]]:
+    """Writes any number of staged changes (1..150+) with bounded concurrency and shared global 429 cooldown."""
+    items = list(changes)
+    if not items:
+        return []
+    gate = asyncio.Semaphore(concurrency)
+    unpaused = asyncio.Event()
+    unpaused.set()
+    cooldown_state = [0]
+    return list(
+        await asyncio.gather(
+            *(
+                write_with_backoff(
+                    tool_context, c, gate, unpaused=unpaused, cooldown_state=cooldown_state, sleep=sleep
+                )
+                for c in items
+            )
+        )
+    )
+
+
+async def run_throttled(
+    items: Iterable[T],
+    fn: Callable[[T], Awaitable[R]],
+    *,
+    concurrency: int = WRITE_CONCURRENCY,
+) -> list[R]:
+    """Runs async `fn(item)` across `items` with bounded concurrency so large batches never burst TrainingPeaks."""
+    seq = list(items)
+    if not seq:
+        return []
+    gate = asyncio.Semaphore(concurrency)
+
+    async def _one(item: T) -> R:
+        async with gate:
+            return await fn(item)
+
+    return list(await asyncio.gather(*(_one(x) for x in seq)))

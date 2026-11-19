@@ -5,7 +5,6 @@ volume and longest runs, weeks to race). There is deliberately no coded target, 
 coach judges progression toward the goal (and North Star, when set) from this runner's actual data.
 """
 
-from datetime import date
 from typing import Optional
 
 from ....shared.goal_plan import block_on_date
@@ -142,13 +141,10 @@ def format_audit_week_header(w: dict) -> str:
 
 
 def format_goal_context(
-    profile: Optional[dict],
-    today: date,
     ctl: Optional[float] = None,
     history_entries: Optional[list[dict]] = None,
 ) -> str:
     """Compact audit context: dynamic training facts not already in `<runner_profile>`."""
-    del profile, today  # goal plan & profile fields are already in `<runner_profile>`
     entries = history_entries or []
     if ctl is None and not entries:
         return ""

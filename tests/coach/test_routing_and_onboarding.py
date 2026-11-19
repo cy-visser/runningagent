@@ -69,16 +69,42 @@ def test_router_outcomes_profile_guards_and_sub_goal_result_preservation(runner)
     assert merged["sub_goals"][0]["result"] == saved
 
 
-def test_re_onboarding_keeps_the_coachs_key_events(runner):
-    events = [{"date": "2026-10-20", "type": "race", "summary": "Amsterdam 5K: finished in 20:45", "source": "workout_analysis"}]
-    runner.profiles["cyrille_visser"]["key_events"] = events
+def test_re_onboarding_drops_legacy_key_events_and_router_uses_parallel_email_cache(runner, monkeypatch):
+    from running_coach.integrations import firestore
+
+    runner.profiles["cyrille_visser"]["key_events"] = [
+        {"date": "2026-10-20", "type": "race", "summary": "Amsterdam 5K: finished in 20:45", "source": "workout_analysis"}
+    ]
     ctx = FakeContext(state={
         "temp_onboarding_data": {"firstname": "Cyrille", "lastname": "Visser", "email": EMAIL},
         "onboarding_answers": {"goal_type": "single", "training_goal": "Sub-3:20 Marathon", "timeline": "2027-04-11"},
     })
     assert asyncio.run(profile_creation.create_profile_step(ctx)) == profile_creation.PROFILE_SAVED
     stored = runner.profiles["cyrille_visser"]
-    assert stored["training_goal"] == "Sub-3:20 Marathon" and stored["key_events"] == events
+    assert stored["training_goal"] == "Sub-3:20 Marathon" and "key_events" not in stored
+
+    # Turn 1 resolves email via find_user_profile_by_email and caches email -> runner_id;
+    # Turn 2 hits the parallel get_user_profile(runner_id) + has_tp_credential(runner_id) fast path (0 email queries).
+    email_queries = 0
+    orig_find = firestore.find_user_profile_by_email
+
+    async def counting_find(email: str):
+        nonlocal email_queries
+        email_queries += 1
+        return await orig_find(email)
+
+    monkeypatch.setattr(firestore, "find_user_profile_by_email", counting_find)
+    firestore.clear_known_runners_cache()
+
+    web_ctx1 = FakeContext(state={AUTH_EMAIL_STATE_KEY: EMAIL})
+    web_ctx1.state.pop("user_profile", None)
+    assert _route(web_ctx1) == profile_router.ROUTE_COACHING and email_queries == 1
+
+    runner.profiles["cyrille_visser"]["training_goal"] = "Sub-3:15 Marathon"
+    web_ctx2 = FakeContext(state={AUTH_EMAIL_STATE_KEY: EMAIL})
+    web_ctx2.state.pop("user_profile", None)
+    assert _route(web_ctx2) == profile_router.ROUTE_COACHING and email_queries == 1  # point-read fast path, zero index queries
+    assert web_ctx2.state["user_profile"]["training_goal"] == "Sub-3:15 Marathon"  # fresh profile edits still reloaded!
 
 
 def test_onboarding_stores_training_times_and_drops_the_legacy_strength_text():

@@ -7,8 +7,6 @@ by focus so strength counts in the weekly load.
 
 from typing import Optional
 
-PHASES = ("base", "build", "peak", "recovery", "taper")
-
 # focus -> card title
 FOCI = {
     "heavy-lower": "Strength: heavy lower body",

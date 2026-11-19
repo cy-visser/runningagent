@@ -6,6 +6,7 @@ from typing import Optional
 from google.adk.tools import FunctionTool, ToolContext
 
 from ...integrations.trainingpeaks import tp_calls
+from ...shared.calendar_notes import add_notes_to_weeks
 from ...shared.dates import get_today_date, iso_date, monday_of, parse_date
 from ...shared.long_run_facts import get_or_fetch_volume_history, read_cached_volume_history
 from ...shared.parallel_fetch import gather_labeled
@@ -13,7 +14,6 @@ from ...shared.runner_identity import profile_user_id
 from ...shared.tp_payloads import coerce_mcp_payload
 from ...shared.weekly_buckets import build_week_buckets
 from .helpers.audit_summary_text import format_plan_audit_summary
-from .helpers.calendar_notes_by_week import add_notes_to_weeks
 from .helpers.long_run_annotations import (
     annotate_long_runs,
     annotate_week_over_week,
@@ -79,7 +79,7 @@ async def fetch_plan_audit_data(
     tool_context.state[AUDIT_REPORT_STATE_KEY] = audit_report_data(q_start, q_end, week_list)
     daily = coerce_mcp_payload(raw["fitness PMC"]).get("daily_data") or [] if raw["fitness PMC"] else []
     ctl = next((d.get("ctl") for d in reversed(daily) if d.get("ctl") is not None), None)
-    goal_context = format_goal_context(profile, today_date, ctl, history_entries)
+    goal_context = format_goal_context(ctl, history_entries)
     summary = format_plan_audit_summary(week_list, goal_context=goal_context)
     if raw["calendar notes"] is None:
         summary += ("\n\n⚠️ Calendar notes unavailable (TrainingPeaks error): travel, illness or other "

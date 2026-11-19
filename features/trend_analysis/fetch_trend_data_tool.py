@@ -145,7 +145,7 @@ async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
         f"{len(new)} added by gap-fill now, {len(unrecorded)} could not be recorded now (no data, still syncing, "
         "or a TrainingPeaks error such as a rate limit; retried on the next call). Weeks with unrecorded "
         "workouts are marked and excluded from progress, capacity and pattern conclusions.",
-        "### Goal context\n" + format_goal_context(goal, profile, today),
+        "### Goal context\n" + format_goal_context(goal, profile),
         tables,
         f"### Weekly rows (last {len(recent)} of {len(rows)} weeks; the summaries above cover all weeks "
         "and the web charts show every week)\n" + format_weekly_table(recent),

@@ -703,6 +703,9 @@ def _before_cell(change: dict) -> str:
     return cell
 
 
+MAX_CONFIRMATION_TABLE_ROWS = 15
+
+
 def confirmation_text(results: list[dict]) -> str:
     """Markdown confirmation of an applied staged set: summary line, applied table, failures."""
     applied = [r for r in results if r.get("ok")]
@@ -722,17 +725,22 @@ def confirmation_text(results: list[dict]) -> str:
 
     if workouts:
         lines += ["", "| Change | Date | Before | After |", "|---|---|---|---|"]
-        for r in workouts:
+        for r in workouts[:MAX_CONFIRMATION_TABLE_ROWS]:
             after = "–" if r.get("action") == ACTION_DELETE else _workout_cell(r.get("title"), r)
             lines.append(f"| {change_label(r)} | {_display_date(r['date'])} | {_before_cell(r)} | {after} |")
+        extra = len(workouts) - MAX_CONFIRMATION_TABLE_ROWS
+        if extra > 0:
+            lines.append(f"\n*…and {extra} more workouts updated in TrainingPeaks.*")
     for r in notes:
         verb = "🗑️ Note removed" if r.get("action") == ACTION_DELETE else "📝 Note added"
         lines += ["", f"{verb}: {_display_date(r['date'])} · {_cell(r.get('title'))}"]
     if failed:
-        lines += ["", "⚠️ **Not saved:**"]
+        lines += ["", "⚠️ **Not saved (still staged — press Update TrainingPeaks to retry):**"]
         lines += [
             f"- {_display_date(r['date'])} {_cell(r.get('sport') or 'Note')} \"{_cell(r.get('title'))}\": "
             f"{_cell(r.get('error') or 'unknown error')}"
-            for r in failed
+            for r in failed[:MAX_CONFIRMATION_TABLE_ROWS]
         ]
+        if len(failed) > MAX_CONFIRMATION_TABLE_ROWS:
+            lines.append(f"- …and {len(failed) - MAX_CONFIRMATION_TABLE_ROWS} more failed items.")
     return "\n".join(lines)

@@ -16,6 +16,7 @@ from ...features.plan_builder.stage_training_plan_tool import stage_training_pla
 from ...features.plan_audit.fetch_plan_audit_data_tool import (
     fetch_plan_audit_data_tool,
 )
+from ...features.schedule_lookup.get_schedule_tool import get_schedule_tool
 from ...features.trend_analysis.fetch_trend_data_tool import fetch_trend_data_tool
 from ...features.weather_lookup.get_weather_tool import get_weather_tool
 from ...features.workout_analysis.analyze_workout_tool import analyze_workout_tool
@@ -33,7 +34,6 @@ from .model_callbacks import (
     strip_stale_thoughts,
 )
 from .profile_context import ensure_profile_context
-from .record_key_event_tool import record_key_event_tool
 from .quick_actions import dispatch_quick_action
 from .report_tool_guard import guard_report_tools, mark_report_synthesis
 from .skill_toolset import skill_toolset
@@ -45,6 +45,7 @@ coaching_agent_tools = [
     refresh_race_projection_tool,
     fetch_trend_data_tool,
     fetch_plan_audit_data_tool,
+    get_schedule_tool,
     fetch_nutrition_context_tool,
     stage_workout_changes_tool,
     apply_staged_changes_tool,
@@ -52,7 +53,6 @@ coaching_agent_tools = [
     stage_training_plan_tool,
     apply_training_plan_tool,
     request_new_goal_tool,
-    record_key_event_tool,
     get_weather_tool,
 ]
 

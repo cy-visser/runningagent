@@ -539,7 +539,6 @@ async def build_goal_projection(
     summaries = await load_workout_summaries(
         tool_context,
         select_for_analysis(runs, goal_label, records_by_id=records_by_id),
-        user_id,
         refresh=refresh_cache,
         training_records=training_records,
         goal_label=goal_label,

@@ -6,7 +6,6 @@ times the run and strength sessions of a double day in that order in TrainingPea
 
 from typing import Any, Optional
 
-TIMES_OF_DAY = ("morning", "afternoon", "evening")
 CLOCK = {"morning": "07:00", "afternoon": "13:00", "evening": "18:00"}
 # Plan sport -> profile field.
 PROFILE_FIELDS = {"Run": "run_time_of_day", "Strength": "strength_time_of_day"}

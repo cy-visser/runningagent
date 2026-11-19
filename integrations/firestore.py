@@ -9,11 +9,27 @@ from .config import firestore_database, gcp_project_id
 
 _client: Optional[firestore.AsyncClient] = None
 _known_runner_ids: set[str] = set()
+_email_runner_ids: dict[str, str] = {}
 
 
 def clear_known_runners_cache() -> None:
-    """Clears the in-memory set of verified runner IDs (used in tests)."""
+    """Clears the in-memory set of verified runner IDs and email mappings (used in tests)."""
     _known_runner_ids.clear()
+    _email_runner_ids.clear()
+
+
+def cached_runner_id_for_email(email: Optional[str]) -> Optional[str]:
+    """Returns the cached `runner_id` for a normalized email, if previously resolved."""
+    clean = str(email or "").strip().lower()
+    return _email_runner_ids.get(clean) if clean else None
+
+
+def remember_email_runner_id(email: Optional[str], runner_id: Optional[str]) -> None:
+    """Caches an immutable `email -> runner_id` mapping in memory."""
+    clean_email = str(email or "").strip().lower()
+    clean_id = str(runner_id or "").strip()
+    if clean_email and "@" in clean_email and clean_id:
+        _email_runner_ids[clean_email] = clean_id
 
 
 def make_async_client(project: Optional[str] = None) -> firestore.AsyncClient:
@@ -76,6 +92,7 @@ async def get_user_profile(user_id: str) -> Optional[dict[str, Any]]:
     doc = await read_document("users", user_id)
     if doc is not None and user_id:
         _known_runner_ids.add(user_id)
+        remember_email_runner_id(doc.get("email"), user_id)
     return doc
 
 
@@ -92,12 +109,20 @@ async def user_profile_exists(user_id: str) -> bool:
 async def find_user_profile_by_email(email: str) -> Optional[tuple[str, dict[str, Any]]]:
     """Looks up `(runner_id, profile)` in `users` by normalized email (`limit(2)`).
 
-    Raises `RuntimeError` if more than one profile carries the same email so an ambiguous
-    mapping can never silently pick the wrong runner.
+    Uses an in-memory `email -> runner_id` point-read fast path when already known, verifying the
+    stored document's `email` before falling back to the indexed collection query. Raises `RuntimeError`
+    if more than one profile carries the same email.
     """
     clean_email = str(email or "").strip().lower()
     if not clean_email or "@" not in clean_email:
         return None
+    cached_id = _email_runner_ids.get(clean_email)
+    if cached_id:
+        doc = await get_user_profile(cached_id)
+        if doc is not None and str(doc.get("email") or "").strip().lower() == clean_email:
+            return cached_id, doc
+        _email_runner_ids.pop(clean_email, None)
+
     query = (
         _get_client()
         .collection("users")
@@ -112,6 +137,7 @@ async def find_user_profile_by_email(email: str) -> Optional[tuple[str, dict[str
         raise RuntimeError(f"Multiple runner profiles match email {clean_email!r}: {ids}")
     runner_id, profile = matches[0]
     _known_runner_ids.add(runner_id)
+    remember_email_runner_id(clean_email, runner_id)
     return runner_id, profile
 
 
@@ -120,6 +146,7 @@ async def save_user_profile(user_id: str, profile_data: dict[str, Any]) -> None:
     await write_document("users", user_id, profile_data)
     if user_id:
         _known_runner_ids.add(user_id)
+        remember_email_runner_id(profile_data.get("email"), user_id)
 
 
 async def update_user_profile(user_id: str, updates: dict[str, Any]) -> None:
@@ -141,11 +168,6 @@ async def save_volume_history(user_id: str, payload: dict[str, Any]) -> None:
     if not await user_profile_exists(user_id):
         return
     await write_document(f"users/{user_id}/cache", VOLUME_HISTORY_DOC_ID, payload)
-
-
-async def get_cached_race_projection(user_id: str) -> Optional[dict[str, Any]]:
-    """Reads the cached 12-week race projection from 'users/{user_id}/cache/race_projection'."""
-    return await read_document(f"users/{user_id}/cache", RACE_PROJECTION_DOC_ID)
 
 
 async def save_race_projection(user_id: str, payload: dict[str, Any]) -> None:
@@ -181,6 +203,8 @@ async def list_training_records(user_id: str, start: str, end: str) -> list[dict
 __all__ = [
     "make_async_client",
     "clear_known_runners_cache",
+    "cached_runner_id_for_email",
+    "remember_email_runner_id",
     "read_document",
     "write_document",
     "update_document",
@@ -192,7 +216,6 @@ __all__ = [
     "update_user_profile",
     "get_cached_volume_history",
     "save_volume_history",
-    "get_cached_race_projection",
     "save_race_projection",
     "delete_race_projection",
     "save_training_record",

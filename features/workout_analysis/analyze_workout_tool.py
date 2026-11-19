@@ -42,7 +42,7 @@ from .helpers.session_selection import (
     format_other_sessions,
     select_primary_workout,
 )
-from .helpers.sub_goal_race_result import goal_plan_context, save_goal_race_event
+from .helpers.sub_goal_race_result import goal_plan_context
 from .helpers.web_report import WORKOUT_REPORT_STATE_KEY, workout_report_data
 from .helpers.workout_summary_text import format_workout_analysis
 
@@ -299,7 +299,6 @@ async def analyze_workout(
         )
         if goal_context:
             sections.append(goal_context)
-        await save_goal_race_event(tool_context, profile, workout_date, workout_id, sport, meta, data)
         latest_profile = tool_context.state.get("user_profile") or profile
         try:  # web banner only: never let it break the analysis
             tool_context.state[WORKOUT_REPORT_STATE_KEY] = workout_report_data(

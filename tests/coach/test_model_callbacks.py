@@ -1,4 +1,4 @@
-"""strip_stale_thoughts: completed turns lose thoughts/signatures; the current turn keeps them."""
+"""strip_stale_thoughts: drop thought text & empty parts on all model turns; preserve thought_signature verbatim."""
 
 from google.adk.models.llm_request import LlmRequest
 from google.genai import types
@@ -33,43 +33,60 @@ def _run(contents: list[types.Content]) -> list[types.Content]:
     return req.contents
 
 
-def test_completed_turns_lose_thoughts_and_signatures():
+def test_strip_stale_thoughts_drops_thought_and_empty_parts_while_preserving_signatures():
+    from running_coach.coach.coaching.quick_actions import SYNTHETIC_THOUGHT_SIGNATURE
+
     out = _run([
         _user("audit my plan"),
-        _model(types.Part(text="thinking...", thought=True), _call("fetch_plan_audit_data")),
+        _model(
+            types.Part(text="thinking...", thought=True),
+            _call("fetch_plan_audit_data", sig=SYNTHETIC_THOUGHT_SIGNATURE),
+            _call("load_skill", sig=SIG),
+        ),
         _resp("fetch_plan_audit_data"),
         _model(types.Part(text="### Assessment", thought_signature=SIG), types.Part(text="", thought_signature=SIG)),
         _user("yes update it"),
+        # Active turn Call 2: thought text and trailing empty SSE part are stripped, real FC signature stays!
+        _model(
+            types.Part(text="active turn thought...", thought=True),
+            _call("stage_workout_changes", sig=SIG),
+            types.Part(text=""),
+        ),
+        _resp("stage_workout_changes"),
     ])
-    assert len(out) == 5
-    first_model, second_model = out[1], out[3]
-    assert [p.function_call.name for p in first_model.parts] == ["fetch_plan_audit_data"]
-    assert all(p.thought_signature is None and not p.thought for p in first_model.parts + second_model.parts)
+    assert len(out) == 7
+    first_model, second_model, active_model = out[1], out[3], out[5]
+    assert [p.function_call.name for p in first_model.parts] == ["fetch_plan_audit_data", "load_skill"]
+    # Both synthetic and real thought signatures stay verbatim on retained parts (0 billable input tokens;
+    # prevents completed-turn prefix-cache invalidation on follow-up turns).
+    assert first_model.parts[0].thought_signature == SYNTHETIC_THOUGHT_SIGNATURE
+    assert first_model.parts[1].thought_signature == SIG
+    assert all(not p.thought for p in first_model.parts + second_model.parts + active_model.parts)
     assert [p.text for p in second_model.parts] == ["### Assessment"]  # empty signed part dropped
+    assert second_model.parts[0].thought_signature == SIG
+    # Active turn: thought + trailing empty part dropped, active functionCall signature preserved!
+    assert len(active_model.parts) == 1
+    assert active_model.parts[0].function_call.name == "stage_workout_changes"
+    assert active_model.parts[0].thought_signature == SIG
 
 
 def test_thinking_policy_is_strictly_state_driven():
     from running_coach.coach.coaching.model_callbacks import thinking_for
-    from running_coach.coach.coaching.quick_actions import DISPATCHED_SKILL_STATE_KEY, DISPATCHED_STATE_KEY, PLAN_INTAKE
+    from running_coach.coach.coaching.quick_actions import PLAN_INTAKE_STATE_KEY, SYNTHESIS_GUARD_STATE_KEY
 
-    history = [
-        _user("When should I start strength training? Marathon was Nov 1st."),
-        _model(types.Part(text="Start mobility tomorrow; if you'd like I can update your S&C sessions.")),
-    ]
-    # Natural-language follow-up messages without staged state always keep MEDIUM thinking (no phrase regexes).
-    for msg in ("yes update it", "Stage the full set of changes", "My left calf feels tight today", "Yes, why Tuesday?"):
-        cfg, reason = thinking_for({}, LlmRequest(contents=[*history, _user(msg)]))
+    # All warm chat turns (with or without staged state) keep uniform MEDIUM thinking so prefix cache never busts.
+    staged_state = {"staged_workout_changes": {"staged_id": "s-1", "changes": [{"kind": "workout"}]}}
+    for state in ({}, staged_state, {SYNTHESIS_GUARD_STATE_KEY: "inv-synth"}):
+        cfg, reason = thinking_for(state, "inv-synth")
         assert cfg.thinking_level == types.ThinkingLevel.MEDIUM and cfg.include_thoughts is True
         assert reason == "default"
 
-    # State-driven LOW thinking: active staged_workout_changes approval + Build Plan intake opener.
-    staged_state = {"staged_workout_changes": {"staged_id": "s-1", "changes": [{"kind": "workout"}]}}
-    cfg_app, reason_app = thinking_for(staged_state, LlmRequest(contents=[*history, _user("yes update it")]))
-    assert cfg_app.thinking_level == types.ThinkingLevel.LOW and reason_app == "approval"
-
-    intake_state = {DISPATCHED_STATE_KEY: "inv-intake", DISPATCHED_SKILL_STATE_KEY: PLAN_INTAKE}
-    cfg_in, reason_in = thinking_for(intake_state, LlmRequest(contents=[_user("build plan")]), "inv-intake")
+    # Only the cold Build Plan intake opener uses LOW thinking.
+    intake_state = {PLAN_INTAKE_STATE_KEY: "inv-intake"}
+    cfg_in, reason_in = thinking_for(intake_state, "inv-intake")
     assert cfg_in.thinking_level == types.ThinkingLevel.LOW and reason_in == "intake"
+    cfg_later, reason_later = thinking_for(intake_state, "inv-later")
+    assert cfg_later.thinking_level == types.ThinkingLevel.MEDIUM and reason_later == "default"
 
 
 def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expands_in_code():
@@ -180,10 +197,10 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
     ])
     hide_internal_tools(SimpleNamespace(state={}), intake_turn2)
     assert "stage_training_plan" in {d.name for t in intake_turn2.config.tools for d in t.function_declarations}
-    pb_cfg, pb_reason = thinking_for({}, intake_turn2)
+    pb_cfg, pb_reason = thinking_for({})
     assert pb_cfg.thinking_level == types.ThinkingLevel.MEDIUM and pb_reason == "default"
 
-    edit_cfg, edit_reason = thinking_for({"staged_training_plan": {"staged_id": "plan-1"}}, followup_unapplied)
+    edit_cfg, edit_reason = thinking_for({"staged_training_plan": {"staged_id": "plan-1"}})
     assert edit_cfg.thinking_level == types.ThinkingLevel.MEDIUM and edit_reason == "default"
 
     today_iso = iso_date(get_today_date())
@@ -328,9 +345,11 @@ def test_get_runner_tp_cookie_singleflights_concurrent_kms_decrypts(monkeypatch)
         credentials.clear_tp_credential_cache()
 
 
-def test_staging_retries_use_low_thinking_while_unstaged_chat_keeps_medium():
-    from running_coach.coach.coaching.model_callbacks import thinking_for
+def test_warm_staging_retries_keep_medium_thinking_to_preserve_prefix_cache():
+    from types import SimpleNamespace
+    from running_coach.coach.coaching.model_callbacks import apply_thinking_policy
 
+    ctx = SimpleNamespace(state={}, invocation_id="inv-warm")
     history = [
         _user("Audit my plan for the next 4 weeks"),
         _model(types.Part(text="### Assessment\n- ...\n### Recommendations\n- Nov 18: E 10 -> E 8")),
@@ -340,10 +359,12 @@ def test_staging_retries_use_low_thinking_while_unstaged_chat_keeps_medium():
         "Stage the full set of changes",
         "Apply the recommendations",
     ):
-        cfg, reason = thinking_for({}, LlmRequest(contents=[*history, _user(prompt)]))
-        assert cfg.thinking_level == types.ThinkingLevel.MEDIUM and reason == "default", prompt
+        req = LlmRequest(contents=[*history, _user(prompt)])
+        assert apply_thinking_policy(ctx, req) is None
+        assert req.config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM, prompt
 
-    # Validation retry after stage_workout_changes returns staged: 0 -> runs at LOW thinking ("workout_creator").
+    # Validation retries after stage_workout_changes / stage_training_plan return staged: 0 keep MEDIUM
+    # thinking so Vertex's token-0 thinking level never flips mid-turn and invalidates the warm prefix cache.
     retry_req = LlmRequest(contents=[
         _user("Swap Thursday to a custom pyramid session"),
         _model(_call("stage_workout_changes")),
@@ -351,8 +372,8 @@ def test_staging_retries_use_low_thinking_while_unstaged_chat_keeps_medium():
             name="stage_workout_changes", response={"result": '{"staged": 0, "needs_structure": [{}]}'}
         ))]),
     ])
-    cfg_retry, reason_retry = thinking_for({}, retry_req)
-    assert cfg_retry.thinking_level == types.ThinkingLevel.LOW and reason_retry == "workout_creator"
+    assert apply_thinking_policy(ctx, retry_req) is None
+    assert retry_req.config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
 
     pb_retry_req = LlmRequest(contents=[
         _user("Build my marathon plan"),
@@ -361,8 +382,8 @@ def test_staging_retries_use_low_thinking_while_unstaged_chat_keeps_medium():
             name="stage_training_plan", response={"result": '{"staged": 0, "errors": [{"code": "Zz 5"}]}'}
         ))]),
     ])
-    cfg_pb_retry, reason_pb_retry = thinking_for({}, pb_retry_req)
-    assert cfg_pb_retry.thinking_level == types.ThinkingLevel.LOW and reason_pb_retry == "plan_builder"
+    assert apply_thinking_policy(ctx, pb_retry_req) is None
+    assert pb_retry_req.config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
 
 
 def test_create_session_stamps_initial_expire_at(monkeypatch):
@@ -437,5 +458,43 @@ def test_firestore_subcollection_writes_skip_phantom_eval_profiles(monkeypatch):
         assert reads.count(("users", "cyrille_visser")) == 1
     finally:
         fs.clear_known_runners_cache()
+
+
+def test_after_coach_model_records_thoughts_and_cached_tokens_on_span(monkeypatch):
+    from types import SimpleNamespace
+    from google.adk.models.llm_response import LlmResponse
+    from opentelemetry import trace
+    from running_coach.coach.coaching.model_callbacks import after_coach_model
+
+    attrs: dict = {}
+
+    class FakeSpan:
+        def set_attribute(self, key: str, value) -> None:
+            attrs[key] = value
+
+    monkeypatch.setattr(trace, "get_current_span", lambda: FakeSpan())
+    ctx = SimpleNamespace(state={}, invocation_id="inv-usage")
+
+    # Partial streaming chunks do not record usage prematurely.
+    partial_resp = LlmResponse(
+        partial=True,
+        content=types.Content(role="model", parts=[types.Part(text="hi")]),
+        usage_metadata=types.GenerateContentResponseUsageMetadata(
+            thoughts_token_count=99, cached_content_token_count=3500
+        ),
+    )
+    after_coach_model(ctx, partial_resp)
+    assert attrs == {}
+
+    # Finalized response records both thoughts_tokens and cached_tokens.
+    final_resp = LlmResponse(
+        partial=False,
+        content=types.Content(role="model", parts=[types.Part(text="### Assessment")]),
+        usage_metadata=types.GenerateContentResponseUsageMetadata(
+            thoughts_token_count=215, cached_content_token_count=3860
+        ),
+    )
+    after_coach_model(ctx, final_resp)
+    assert attrs == {"coach.thoughts_tokens": 215, "coach.cached_tokens": 3860}
 
 

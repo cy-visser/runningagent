@@ -64,6 +64,7 @@ running_coach/
 │   ├── workout_analysis/            # SKILL.md, analyze_workout_tool.py, helpers/
 │   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
 │   ├── plan_audit/              # SKILL.md, fetch_plan_audit_data_tool.py, helpers/
+│   ├── schedule_lookup/             # get_schedule_tool.py (lightweight <=6-week calendar peek, no report card)
 │   ├── nutrition_planner/           # SKILL.md, fetch_nutrition_context_tool.py, helpers/
 │   ├── workout_creator/             # stage_workout_changes_tool.py, apply_staged_changes_tool.py, helpers/ (staged_changes); <= 10 changes (session codes or custom builders), bigger sets redirect to plan_builder
 │   ├── plan_builder/                # SKILL.md, fetch_plan_context_tool.py, stage_training_plan_tool.py, apply_training_plan_tool.py, helpers/ (plan_expand, plan_diff, plan_context_text, plan_summary_text, web_payload)

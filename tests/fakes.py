@@ -119,13 +119,19 @@ def _range_days(kw: dict) -> int:
 class FakeContext:
     """Minimal ADK ToolContext / Workflow Context double."""
 
-    def __init__(self, profile: dict | None = None, state: dict | None = None, user_id: str | None = None):
+    def __init__(
+        self,
+        profile: dict | None = None,
+        state: dict | None = None,
+        user_id: str | None = None,
+        invocation_id: str = "inv-1",
+    ):
         self.state: dict[str, Any] = dict(state or {})
         if profile is not None and "user_profile" not in self.state:
             self.state["user_profile"] = json.loads(json.dumps(profile))
         self.session = SimpleNamespace(user_id=user_id, events=[])
         self.route: str | None = None
-        self.invocation_id = "inv-1"
+        self.invocation_id = invocation_id
         self.function_call_id: str | None = None
         self.actions = SimpleNamespace(skip_summarization=None)
         self.ui_widgets: list = []

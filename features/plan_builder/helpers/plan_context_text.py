@@ -9,7 +9,6 @@ from ....shared.dates import iso_date, monday_of, parse_date
 from ....shared.goal_plan import blocks, current_goal, north_star, race_day
 from ....shared.long_run_facts import (
     LONG_RUN_HISTORY_WEEKS,
-    VOLUME_HISTORY_WEEKS,
     format_history,
     format_volume_history_facts,
     format_weekly_km_history,
@@ -21,7 +20,6 @@ from ....shared.session_codes.pace_zones import zone_table_text
 from .plan_diff import MANAGED_SPORTS, sport_name
 
 TEMP_PLAN_WORKOUTS_KEY = "temp:plan_workouts"
-HISTORY_WEEKS = VOLUME_HISTORY_WEEKS
 FREQUENCY_WEEKS = 8
 NOTE_CHARS = 60
 _SPORT_SHORT = {"Run": "Run", "Bike": "Bike", "Strength": "Str"}
@@ -133,11 +131,10 @@ def _calendar_lines(
 
 
 def plan_context_text(
-    profile: dict, start: date, end: date, mode: str, today: date, zones: dict,
+    profile: dict, start: date, end: date, mode: str, zones: dict,
     history_entries: Optional[list[dict]], workouts: Optional[list[dict]], notes: Optional[list[dict]],
     fitness: Optional[dict],
 ) -> str:
-    del today
     w1_mon = monday_of(start)
     n_weeks = (monday_of(end) - w1_mon).days // 7 + 1
     if start > w1_mon:
