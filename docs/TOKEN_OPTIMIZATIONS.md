@@ -14,7 +14,7 @@ This document maps **every token, LLM-call, thinking-budget, and prefix-cache op
 | **Workout Analysis** | UI button / typed (short or rich) | **1** (`0` if none found) | `argon` (`MEDIUM`) | **Full cached prefix** (`SYNTHESIS_GUARD`) | Unified grammar + intent pre-dispatch (incl. multi-sentence/paragraph follow-up questions) skips Call 1 & warms Turn-0 prefix cache; `align_workout_skill` swaps run↔bike in code; `reply()` ends turn on missing workout |
 | **Check-In Report** | UI button / typed (short or rich) | **1** | `argon` (`MEDIUM`) | **Full cached prefix** (`SYNTHESIS_GUARD`) | Pre-dispatch warms Turn-0 prefix cache; charts sent via `stateDelta` (not LLM prose); `guard_report_tools` blocks lookup misuse |
 | **Race Predictor** | Web `/api/race-predictor` | **0** | Pure Python | Ephemeral session deleted | `SKILL_FREE_ACTIONS` + `skip_summarization=True` |
-| **Trend Analysis** | UI button / typed (short or rich) | **1** | `argon` (`MEDIUM`) | **Full cached prefix** (`SYNTHESIS_GUARD`) | Pre-dispatch warms Turn-0 prefix cache; only last `LLM_RECENT_WEEKS` rows sent to LLM while full 26–52w goes to UI state |
+| **Trend Analysis** | UI button only | **1** | `argon` (`MEDIUM`) | **Full cached prefix** (`SYNTHESIS_GUARD`) | Skill-free UI quick action (`fetch_trend_data` hidden in `INTERNAL_TOOLS`); transient Turn-0 rubric (`PROMPT.md`) leaves 0 rubric tokens on Turn 1+; only last `LLM_RECENT_WEEKS` rows sent to LLM while full 26–52w goes to UI state |
 | **Plan Audit** | UI button / typed (short or rich) | **1** | `argon` (`MEDIUM`) | **Full cached prefix** (`SYNTHESIS_GUARD`) | Unified grammar + intent pre-dispatch (no arbitrary length cap) warms Turn-0 prefix cache; 28d cached `volume_history`; delta-only `<= 200w` output cap |
 | **Any Report (Free Text)** | Conversational / Dutch / custom | **2** | `argon` (`MEDIUM`) | **Full cached prefix on Call 1 & Call 2** | `mark_report_synthesis` keeps Call 1 & report data cached; active-turn thoughts/empty parts stripped while `thought_signature` stays intact for Turn-1+ caching |
 | **Workout Creator (Stage)** | Chat edit (`1` to `150+` items) | **1** | `argon` (`MEDIUM`, uniform) | Full prompt (cached) | No `SKILL.md`; compact 1-line/multi-date/week strings (`~4–10` tok/workout); `0` `tp_get_workout` on codes; `<= 12`-line preview echo; `reply()` skips Call 2 |
@@ -44,7 +44,7 @@ Before looking at individual features, these nine **model-agnostic** mechanisms 
 ### 2.3 On-Demand Skills & Compact 1-Line Catalog
 - **Where**: [`coach/coaching/skill_toolset.py`](../coach/coaching/skill_toolset.py) (`CompactSkillToolset`, `CoachLoadSkillTool`, `format_skill_catalog`).
 - **What it does**:
-  - Replaces ADK's verbose multi-tool skill loader with a single `load_skill` declaration and a 7-line `<available_skills>` summary (~`160` tokens).
+  - Replaces ADK's verbose multi-tool skill loader with a single `load_skill` declaration and a 6-line `<available_skills>` summary (~`140` tokens).
   - Strips unnecessary metadata from `CoachLoadSkillTool.run_async`, returning only `{"skill_name", "instructions"}`, and keeps each on-demand `SKILL.md` free of duplicated global routing/`GOAL REASONING` boilerplate.
 - **What it solves**: Keeps ~`4,500+` tokens of task-specific `SKILL.md` protocols out of every request until the exact turn that needs one, and minimizes Turn-0 synthesis tokens.
 
@@ -60,7 +60,7 @@ Before looking at individual features, these nine **model-agnostic** mechanisms 
 ### 2.5 Internal Tool Hiding, Schema Metadata Stripping & Stable Tool Declarations
 - **Where**: [`coach/coaching/model_callbacks.py`](../coach/coaching/model_callbacks.py) (`hide_internal_tools`, `_clean_declaration`, `INTERNAL_TOOLS`).
 - **What it does**:
-  - Removes code-only tools (`fetch_plan_context`, `apply_training_plan`, `refresh_race_projection`) from `llm_request.config.tools` while keeping them executable in `tools_dict`.
+  - Removes code-only / UI-button-only tools (`fetch_plan_context`, `apply_training_plan`, `refresh_race_projection`, `fetch_trend_data`) from `llm_request.config.tools` while keeping them executable in `tools_dict`.
   - Hides the large `stage_training_plan` schema unless `plan-builder` is active in context.
   - Strips redundant Pydantic `"title"` metadata and `"default": null` entries from every declared `FunctionDeclaration` (~`250–300` tokens saved per full-prompt call).
   - Keeps `apply_staged_changes` **stably declared** rather than toggling it on/off when `staged_workout_changes` changes.
@@ -105,7 +105,7 @@ Examples: *"Should I swap tomorrow's bike with another 6k run?"*, *"Pull up this
 |---|---|---|
 | **No-Skill / No-Tool Routing Rule** | [`instruction.py`](../coach/coaching/instruction.py) (`_ROUTING_RULES`: *"Plain chat: NO skill/tool"*) | Answers physiology, recovery, gear, and follow-up questions in **1 LLM call** using `<runner_profile>` + recent report memory (`<= 180w` bullets). |
 | **Lightweight Calendar Check (`get_schedule`)** | [`get_schedule_tool.py`](../features/schedule_lookup/get_schedule_tool.py) + [`typed_dispatch.py`](../coach/coaching/typed_dispatch.py) (`_infer_typed_schedule`) + [`instruction.py`](../coach/coaching/instruction.py) | Fetches `<= 6` weeks of workouts + notes with **no `SKILL.md` (`-850` tok)**, **no `tp_get_fitness` / `volume_history` (`-500` tok)**, compact merged session lines, a **`<= 140w`** conflict/options reply cap, and **no unwanted UI report card**. |
-| **Report Lookup Guard** | [`report_tool_guard.py`](../coach/coaching/report_tool_guard.py) (`track_turn_calls`, `guard_report_tools`, `is_turn_report`) | Blocks the LLM from calling `fetch_checkin_data`, `fetch_trend_data`, or `fetch_plan_audit_data` mid-turn as an ad-hoc calendar lookup (saves MCP latency, ~1–3k report tokens, and unwanted UI report cards). |
+| **Report Lookup Guard** | [`report_tool_guard.py`](../coach/coaching/report_tool_guard.py) (`track_turn_calls`, `guard_report_tools`, `is_turn_report`) | Blocks the LLM from calling `fetch_checkin_data` or `fetch_plan_audit_data` mid-turn as an ad-hoc calendar lookup, and blocks `fetch_trend_data` outside the UI Trend Analysis button (saves MCP latency, ~1–3k report tokens, and unwanted UI report cards). |
 | **429 Single-Retry + Flash Fallback** | [`model_config.py`](../coach/model_config.py) (`MODEL_RETRY_OPTIONS`, `FallbackGemini`, `fallback_request`) | Caps 429 retries to 1 attempt before falling back to `gemini-3.8-flash` (rewriting `thought_signature` to `skip_thought_signature_validator` so cross-model signatures never error). |
 
 ---
@@ -138,14 +138,13 @@ Triggers: **"Check-in"** UI button, typed *"Weekly check-in"* / *"How was my wee
 
 ---
 
-### 3.4 Trend Analysis (`trend-analysis`)
-Triggers: **"Trend Analysis"** UI button, typed *"Analyze my trends for the last 12 weeks"*, or free-text long-horizon questions.
+### 3.4 Trend Analysis (`trend-analysis`, UI-button-only)
+Triggers: **"Trend Analysis"** dashboard UI button only (not exposed in `<available_skills>`, `config.tools`, `_ROUTING_RULES`, or typed pre-dispatch so long-horizon/multi-month plan audits never misroute to Trend Analysis).
 
 | Optimization | Code Location | What It Solves |
 |---|---|---|
-| **1-Call Pre-Dispatch (With Optional `weeks` Extraction)** | [`quick_actions.py`](../coach/coaching/quick_actions.py) (`QUICK_ACTIONS["trend-analysis"]`) + [`typed_dispatch.py`](../coach/coaching/typed_dispatch.py) (`_TREND_LEAD_RE`) | Parses `weeks` (`6..52`) in Python and skips Call 1 routing while keeping the full prefix intact to warm the Turn-0 cache for follow-up turns. |
-| **Recent-Row Windowing (`LLM_RECENT_WEEKS`)** | [`fetch_trend_data_tool.py:L141-L159`](../features/trend_analysis/fetch_trend_data_tool.py#L141-L159) + `helpers/weekly_rows.py` | Full 26–52 week series goes to `trend_report_data` (for web charts) and pre-computed summary/capacity/pacing tables, while the raw weekly table and athlete comments sent to the LLM are capped to the most recent `LLM_RECENT_WEEKS` weeks (plus older injury niggles). |
-| **Warm-Cache Synthesis Guard (Free-Text 2-Call)** | [`report_tool_guard.py`](../coach/coaching/report_tool_guard.py) (`mark_report_synthesis`) | Keeps Call 1's cached prefix intact on Call 2 so 2-call fallback trend requests hit the full session prefix cache. |
+| **Skill-Free UI-Only Pre-Dispatch + Transient Rubric** | [`quick_actions.py`](../coach/coaching/quick_actions.py) (`TREND_ANALYSIS` in `SKILL_FREE_ACTIONS`, `_inject_trend_synthesis_prompt`) + [`model_callbacks.py`](../coach/coaching/model_callbacks.py) (`INTERNAL_TOOLS`) + [`report_tool_guard.py`](../coach/coaching/report_tool_guard.py) | Hides `fetch_trend_data` and removes `trend-analysis` from `<available_skills>` (saving catalog + schema tokens on every call and eliminating misrouting), dispatches `fetch_trend_data` directly without `load_skill`, and injects `features/trend_analysis/PROMPT.md` transiently after the tool response on Turn 0 only (byte-identical Turn-0 → Turn-1 prefix cache, 0 rubric tokens on Turn 1+). |
+| **Recent-Row Windowing (`LLM_RECENT_WEEKS`)** | [`fetch_trend_data_tool.py`](../features/trend_analysis/fetch_trend_data_tool.py) + `helpers/weekly_rows.py` | Full 26–52 week series goes to `trend_report_data` (for web charts) and pre-computed summary/capacity/pacing tables, while the raw weekly table and athlete comments sent to the LLM are capped to the most recent `LLM_RECENT_WEEKS` weeks (plus older injury niggles). |
 
 ---
 
@@ -154,7 +153,7 @@ Triggers: **"Plan Audit"** UI button, typed *"Audit my plan"*, rich multi-senten
 
 | Optimization | Code Location | What It Solves |
 |---|---|---|
-| **1-Call Pre-Dispatch (Dated Ranges, `next N weeks`, & Rich Multi-Sentence Briefs)** | [`typed_dispatch.py`](../coach/coaching/typed_dispatch.py) (`_infer_typed_audit`, `_tail_blocks_pre_dispatch`, `infer_typed_quick_action`) + [`quick_actions.py`](../coach/coaching/quick_actions.py) | Uses strict lead grammar + intent-based tail guards (no arbitrary word/newline/semicolon limits) to parse explicit date ranges and *"next N weeks"* even when followed by multi-sentence goal/holiday context, skipping Call 1 while warming the full Turn-0 prefix cache. |
+| **1-Call Pre-Dispatch (Dated Ranges, `next N weeks/months`, & Rich Multi-Sentence Briefs)** | [`typed_dispatch.py`](../coach/coaching/typed_dispatch.py) (`_infer_typed_audit`, `_tail_blocks_pre_dispatch`, `infer_typed_quick_action`) + [`quick_actions.py`](../coach/coaching/quick_actions.py) | Uses strict lead grammar + intent-based tail guards (no arbitrary word/newline/semicolon limits) to parse explicit date ranges, *"next N weeks"*, and *"next N months"* even when followed by multi-sentence goal/holiday context, skipping Call 1 while warming the full Turn-0 prefix cache. |
 | **Compact Weekly Session & Note Formatting** | [`weekly_buckets.py`](../shared/weekly_buckets.py) (`format_week_sessions`) + [`calendar_notes.py`](../shared/calendar_notes.py) (`add_notes_to_weeks`) | Drops per-session `TSS` (weekly `TSS` is in header), omits default `Run` prefix and duplicate title `km`, merges identical consecutive days (`Wed/Thu: '10km Easy Run'`), caps notes at 60 chars, and skips duplicate `Master Goal:` roadmap notes—saving **`~500` tokens per turn (`~1,000` across Turn 0 + Turn 1)** while keeping UI `audit_report_data` untouched. |
 | **28-Day Cached 12-Week Volume & Long-Run History** | [`fetch_plan_audit_data_tool.py`](../features/plan_audit/fetch_plan_audit_data_tool.py) (`read_cached_volume_history`, `get_or_fetch_volume_history`) | Reuses pre-aggregated 12-week km & longest-run history (`users/{id}/cache/volume_history`) shared with `plan_builder`, emitting 2 compact context lines instead of 12 weeks of raw workouts. |
 | **Strict `<= 200 Words`, Delta-Only & Codeable Recommendations** | [`features/plan_audit/SKILL.md`](../features/plan_audit/SKILL.md) | Forbids quoting workout titles, repeating weekly totals, or re-summing sessions, and directs `### Recommendations` to propose clean single-pattern sessions that map 1-to-1 to session codes on Turn 1. |

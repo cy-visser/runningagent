@@ -10,6 +10,7 @@ from ....shared.hr_pace_fit import (
     lt_paces,
 )
 from ....shared.health_metrics import HEALTH_BASELINE_DAYS
+from ....shared.running_dynamics import form_at_speed
 from ....shared.units import fmt_clock
 
 SHORT_GOALS = frozenset({"5K", "10K"})   # key run = tempo/threshold steps (longer goals: the long run)
@@ -111,6 +112,7 @@ def weekly_rows(
     records: list[dict], daily_pmc: list[dict], dated_metrics: dict, start: date, end: date,
     unrecorded_dates: Optional[list[str]] = None, goal_label: Optional[str] = None,
     lthr: Optional[float] = None, lt1_hr: Optional[float] = None,
+    ref_speed_ms: Optional[float] = None,
 ) -> list[dict]:
     """One row per ISO week (Monday) from `start` to `end`.
 
@@ -142,6 +144,8 @@ def weekly_rows(
             health[key] = now
             health[f"{key}_base"] = base
         unrecorded = sum(week.isoformat() <= d[:10] <= week_end.isoformat() for d in unrecorded_dates or [])
+        form = form_at_speed(records, min(week_end, end), ref_speed_ms) if ref_speed_ms else None
+        fades = [r["late_drift"] for r in runs if isinstance(r.get("late_drift"), dict)]
         rows.append({
             "week": week,
             "complete": week_end <= end and not unrecorded,
@@ -166,6 +170,13 @@ def weekly_rows(
             "key_decoupling": _median(key_decs),
             "key_sessions": len(key_decs),
             **lt_paces(records, min(week_end, end), lthr, lt1_hr),
+            "rd_gct_ms": form["gct_ms"] if form else None,
+            "rd_vert_ratio_pct": form["vert_ratio_pct"] if form else None,
+            "rd_vert_osc_cm": form["vert_osc_cm"] if form else None,
+            "rd_cadence": form["cadence"] if form else None,
+            "rd_stride_m": form["stride_m"] if form else None,
+            "rd_fade_runs": sum(1 for f in fades if f.get("fatigue_flag")),
+            "rd_fade_checked": len(fades),
             "rpe": _avg([(r.get("athlete") or {}).get("rpe") for r in recs]),
             "niggle": any(NIGGLE_RE.search(c) for c in comments),
             "comments": comments,

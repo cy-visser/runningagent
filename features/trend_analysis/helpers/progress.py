@@ -33,6 +33,8 @@ def progress_markers(goal_label: Optional[str] = None) -> tuple:
         ("lt2_pace_s", "Pace @ LT2 (LTHR)", False, _pace, _pace_change),
         ("key_decoupling", f"Key-run Pa:Hr % ({key_run_label(goal_label)})", False,
          _num("{:.1f}"), _num("{:+.1f}")),
+        ("rd_gct_ms", "Ground contact @ easy (ms)", False, _num("{:.0f}"), _num("{:+.0f}")),
+        ("rd_vert_ratio_pct", "Vertical ratio @ easy (%)", False, _num("{:.1f}%"), _num("{:+.1f} pp")),
         ("hrv", "HRV (ms)", True, _num("{:.0f}"), _num("{:+.0f}")),
         ("rhr", "Resting HR (bpm)", False, _num("{:.0f}"), _num("{:+.0f}")),
         ("sleep_h", "Sleep (h)", True, _num("{:.1f}"), _num("{:+.1f}")),

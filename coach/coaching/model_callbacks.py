@@ -3,8 +3,9 @@
 - Per call: uniform thinking (`COACH_THINKING_LEVEL`, default `MEDIUM`) across all warm coaching turns
   so Vertex's token-0 `THINKING_SI` never flips mid-session and busts the implicit prefix cache; `LOW`
   is used only for the separate `plan-builder:intake` opener, with `include_thoughts=True` for live UI status.
-- Internal & skill-gated tools: `fetch_plan_context` and `apply_training_plan` stay runnable in
-  `tools_dict` for code dispatches (`plan-builder:intake`, `plan-builder:apply`, `load_skill("plan-builder")`)
+- Internal & skill-gated tools: `fetch_plan_context`, `apply_training_plan`, `refresh_race_projection`,
+  and `fetch_trend_data` stay runnable in `tools_dict` for code dispatches (`plan-builder:intake`,
+  `plan-builder:apply`, `load_skill("plan-builder")`, `check-in-report:project`, `trend-analysis`)
   and are never declared as tools to the LLM. `stage_training_plan` is declared only once `plan-builder`
   is loaded in the current turn or while an unapplied `staged_training_plan` sits in session state.
   Declared tool schemas strip redundant Pydantic `title` / null `default` metadata on every call.
@@ -44,7 +45,12 @@ from .skill_toolset import (
 # ------------------------------------------------------------------------------
 # Internal tools & plan-builder expansion
 # ------------------------------------------------------------------------------
-INTERNAL_TOOLS = frozenset({"fetch_plan_context", "apply_training_plan", "refresh_race_projection"})
+INTERNAL_TOOLS = frozenset({
+    "fetch_plan_context",
+    "apply_training_plan",
+    "refresh_race_projection",
+    "fetch_trend_data",
+})
 LOAD_SKILL = "load_skill"
 FETCH_PLAN_CONTEXT = "fetch_plan_context"
 STAGE_TRAINING_PLAN = "stage_training_plan"

@@ -96,7 +96,9 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     assert "move / swap / rename without new content): NO load_skill" in plan_instr
     # Calendar check vs plan audit routing clarity and concise reply cap.
     assert "Calendar check (<= 6 wk" in plan_instr and "<= 140w focused on conflicts/options" in plan_instr
-    assert "fetch_plan_audit_data + plan-audit (only when asked to audit a plan/block)" in plan_instr
+    assert "fetch_plan_audit_data + plan-audit (only when asked to audit a plan, block, or multi-week/month schedule)" in plan_instr
+    # Trend analysis is UI-button-only: never exposed in static routing rules.
+    assert "trend-analysis" not in plan_instr and "fetch_trend_data" not in plan_instr
     # No "write nothing" rule: it silenced the post-staging coaching message.
     assert "write nothing" not in plan_instr.lower()
 
@@ -104,7 +106,7 @@ def test_coaching_instruction_notices_thinking_policy_and_feature_turn_routing(r
     assert "SKILL ROUTING" in plan_instr
     assert "⚠️ (caution/watch) or 🔴 (high risk/conflict)" in plan_instr
     # Report tools render a report: never a data lookup for a follow-up or another skill.
-    assert "REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data)" in plan_instr
+    assert "REPORT TOOLS (fetch_checkin_data, fetch_plan_audit_data)" in plan_instr
     assert "Never use one as a data lookup" in plan_instr
     synthesis_ctx = SimpleNamespace(
         state={"user_profile": dict(PLAN_PROFILE), SYNTHESIS_GUARD_STATE_KEY: "inv-1"}, invocation_id="inv-1"

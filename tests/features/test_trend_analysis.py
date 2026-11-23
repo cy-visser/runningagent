@@ -90,3 +90,63 @@ def test_trend_analysis_gap_fills_flags_rate_limited_runs_and_builds_web_payload
     flagged = asyncio.run(fetch_trend_data(runner.ctx(), weeks=6))
     assert "w137" not in runner.training_records
     assert "unrecorded)" in flagged
+
+
+def test_trend_analysis_running_dynamics_backfill_does_not_mark_weeks_incomplete(runner):
+    # Initial fill populates all records, then simulate stale pre-dynamics records missing dynamics_version.
+    base_ctx = runner.ctx()
+    asyncio.run(fetch_trend_data(base_ctx, weeks=6))
+    base_complete = {w["week"]: w["complete"] for w in base_ctx.state["trend_report_data"]["weeks"]}
+    run_ids = [
+        wid for wid, r in runner.training_records.items()
+        if str(r.get("sport") or "").lower() == "run"
+    ]
+    assert run_ids
+    for wid in run_ids:
+        runner.training_records[wid].pop("dynamics_version", None)
+    # Rate-limiting one stale run during dynamics backfill must NOT make any previously complete week incomplete!
+    runner.rate_limited_workout_ids.add(run_ids[0])
+
+    ctx = runner.ctx()
+    asyncio.run(fetch_trend_data(ctx, weeks=6))
+    after_complete = {w["week"]: w["complete"] for w in ctx.state["trend_report_data"]["weeks"]}
+    assert after_complete == base_complete
+    # Other stale runs were upgraded to dynamics_version == 1.
+    upgraded = [
+        wid for wid in run_ids[1:]
+        if runner.training_records[wid].get("dynamics_version") == 1
+    ]
+    assert len(upgraded) >= 1
+
+    # Now populate laps with realistic RD across the 6-week window and verify trends + facts-only text.
+    runner.rate_limited_workout_ids.clear()
+    for wid in run_ids:
+        rec = runner.training_records[wid]
+        rec["dynamics_version"] = 1
+        for lap in rec.get("laps") or []:
+            lap["cadence"] = 172.0
+            lap["gct_ms"] = 254.0
+            lap["stride_m"] = 1.11
+            lap["vert_osc_cm"] = 9.5
+            lap["vert_ratio_pct"] = 8.56
+        rec["late_drift"] = {
+            "scope": "session",
+            "speed_delta_pct": -0.5,
+            "gct_delta_ms": 3.0,
+            "cadence_delta": -1.0,
+            "stride_delta_pct": -0.5,
+            "vr_delta_pp": 0.1,
+            "fatigue_flag": False,
+        }
+
+    ctx2 = runner.ctx()
+    out2 = asyncio.run(fetch_trend_data(ctx2, weeks=6))
+    assert "### Running dynamics & form" in out2
+    assert "Running mechanics by pace band" in out2
+    for verdict in ("🟢", "🟡", "🔴", "proven ", "on target"):
+        assert verdict not in out2, verdict
+    dyn = ctx2.state["trend_report_data"]["dynamics"]
+    assert dyn is not None and dyn["ref_pace_s"] is not None
+    assert dyn["bands"] and dyn["late_fade"]["checked"] >= 1
+    assert any(w["rd_gct_ms"] is not None for w in ctx2.state["trend_report_data"]["weeks"])
+

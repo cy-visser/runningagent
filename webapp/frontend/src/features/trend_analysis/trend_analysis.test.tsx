@@ -15,6 +15,9 @@ vi.mock("./TrendCharts", () => ({
 vi.mock("./GoalCharts", () => ({
   default: () => <div data-testid="goal-charts" />,
 }));
+vi.mock("./DynamicsCharts", () => ({
+  default: () => <div data-testid="dynamics-charts" />,
+}));
 
 describe("trend analysis feature", () => {
   it("formats durations, status badges, and progress bars, and renders TrendReport", async () => {
@@ -62,12 +65,15 @@ describe("trend analysis feature", () => {
     expect(rows[1]).toHaveTextContent("Next tier");
     expect(screen.getByText("100 km:", { exact: false })).toBeInTheDocument();
 
-    // Training paces table and the LLM recommendations.
+    // Training paces table, running mechanics card, and the LLM recommendations.
     expect(screen.getByText("Training Paces")).toBeInTheDocument();
+    expect(screen.getByText("Running Mechanics & Late-Run Durability")).toBeInTheDocument();
+    expect(screen.getByText(/Speed modulation \(Easy → Threshold/i)).toBeInTheDocument();
     expect(screen.getByText("4:08/km")).toBeInTheDocument();
     expect(screen.getByText("🎯 Next Block: Top 3")).toBeInTheDocument();
     expect(screen.getByText("🧭 North Star")).toBeInTheDocument();
     expect(await screen.findByTestId("goal-charts")).toBeInTheDocument();
+    expect(await screen.findByTestId("dynamics-charts")).toBeInTheDocument();
   });
 
   it("keeps only the highest proven level plus the next tier", () => {

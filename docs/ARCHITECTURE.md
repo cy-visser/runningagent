@@ -60,7 +60,7 @@ running_coach/
 │   └── coaching/                    # coaching_agent, instruction, skill_toolset, model_callbacks
 ├── features/                        # vertical slices: SKILL.md -> *_tool.py -> private helpers/
 │   ├── check_in_report/             # SKILL.md, fetch_checkin_data_tool.py, helpers/
-│   ├── trend_analysis/              # SKILL.md, fetch_trend_data_tool.py, helpers/
+│   ├── trend_analysis/              # PROMPT.md (UI-button-only), fetch_trend_data_tool.py, helpers/
 │   ├── workout_analysis/            # SKILL.md, analyze_workout_tool.py, helpers/
 │   ├── bike_workout_analysis/       # SKILL.md (reuses analyze_workout)
 │   ├── plan_audit/              # SKILL.md, fetch_plan_audit_data_tool.py, helpers/

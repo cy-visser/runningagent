@@ -1,8 +1,9 @@
-"""Keeps report data tools from being used as data lookups.
+"""Keeps report data tools from being used as data lookups, and gates UI-only tools.
 
-`fetch_checkin_data`, `fetch_trend_data` and `fetch_plan_audit_data` write a web report payload to
-state, which the web app renders as a full report card. Called as a lookup in a follow-up turn (e.g. to
-find workout ids for `stage_workout_changes`), they would open a report the runner never asked for.
+`fetch_checkin_data` and `fetch_plan_audit_data` write a web report payload to state, which the web
+app renders as a full report card. Called as a lookup in a follow-up turn (e.g. to find workout ids
+for `stage_workout_changes`), they would open a report the runner never asked for. `fetch_trend_data`
+is hidden from LLM declarations and only allowed when dispatched by the Trend Analysis dashboard button.
 
 `track_turn_calls` (after_model_callback) records each model step's function calls of the current
 invocation before its tools run. `guard_report_tools` (before_tool_callback) only lets a report tool run
@@ -25,18 +26,19 @@ from .quick_actions import (
     has_action_or_event_intent,
     is_plan_intake,
     is_synthesis_guard,
+    is_trend_synthesis,
 )
 
 TURN_CALLS_STATE_KEY = "temp:turn_calls"
 LOAD_SKILL = "load_skill"
 FETCH_PLAN_CONTEXT = "fetch_plan_context"
+FETCH_TREND_DATA = "fetch_trend_data"
 PLAN_BUILDER_SKILL = "plan-builder"
 ANALYZE_WORKOUT = "analyze_workout"
 
 # report data tool -> the skill whose report it renders
 REPORT_TOOL_SKILLS = {
     "fetch_checkin_data": "check-in-report",
-    "fetch_trend_data": "trend-analysis",
     "fetch_plan_audit_data": "plan-audit",
 }
 _SYNTHESIS_TOOLS = frozenset({*REPORT_TOOL_SKILLS, "fetch_nutrition_context", "get_schedule"})
@@ -44,7 +46,6 @@ _RACE_RE = re.compile(r"\b(?:race|parkrun|time\s+trial|tt)\b", re.IGNORECASE)
 
 _REPORT_NAMES = {
     "fetch_checkin_data": "check-in report",
-    "fetch_trend_data": "trend report",
     "fetch_plan_audit_data": "plan audit report",
 }
 
@@ -124,7 +125,7 @@ def blocked_message(tool_name: str) -> str:
 def guard_report_tools(
     tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
 ) -> Optional[dict]:
-    """before_tool_callback: skips report tools or internal `fetch_plan_context` used as ad-hoc lookups."""
+    """before_tool_callback: skips report tools used as lookups, and blocks internal/UI-only tools from chat."""
     if tool.name == FETCH_PLAN_CONTEXT:
         if is_plan_builder_turn(tool_context):
             return None
@@ -132,6 +133,16 @@ def guard_report_tools(
             "result": (
                 "fetch_plan_context is internal to plan-builder and was not run. Answer directly from "
                 "the profile block and the data already in this conversation."
+            )
+        }
+    if tool.name == FETCH_TREND_DATA:
+        if is_trend_synthesis(tool_context.state, tool_context.invocation_id):
+            return None
+        return {
+            "result": (
+                "fetch_trend_data is triggered only by the Trend Analysis dashboard button and was not run. "
+                "Use fetch_plan_audit_data + plan-audit for multi-week/month plan audits, or answer directly "
+                "from the profile block and the data already in this conversation."
             )
         }
     if tool.name not in REPORT_TOOL_SKILLS:

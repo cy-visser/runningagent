@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import os
 from datetime import timedelta
+from typing import Optional
 
 from google.adk.tools import FunctionTool, ToolContext
 
-from ...integrations import firestore
+from ...integrations import firestore, package_paths
 from ...integrations.trainingpeaks import tp_calls
 from ...shared.athlete_settings import extract_hr_zones, extract_thresholds
 from ...shared.dates import get_today_date, iso_date
@@ -15,6 +17,14 @@ from ...shared.goal_projection.projection_cache import save_projection_to_cache
 from ...shared.goal_projection.race_projection import build_goal_projection
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.runner_identity import profile_user_id
+from ...shared.running_dynamics import (
+    DYNAMICS_SCHEMA_VERSION,
+    dynamics_by_band,
+    format_pace_band_table,
+    format_ref_pace,
+    late_fade_summary,
+    reference_easy_speed,
+)
 from ...shared.sports import NON_TRAINING_SPORTS, RUN_SPORTS
 from ...shared.tp_payloads import coerce_mcp_payload
 from ...shared.health_metrics import HEALTH_BASELINE_DAYS
@@ -45,6 +55,71 @@ from .helpers.weekly_rows import (
 logger = logging.getLogger(__name__)
 
 TREND_MIN_WEEKS, TREND_MAX_WEEKS = 6, 52
+MAX_DYNAMICS_BACKFILL = 20
+
+
+def _format_dynamics_section(
+    dynamics_summary: Optional[dict],
+    band_info: Optional[dict],
+    pending_dynamics: int,
+) -> str:
+    """Facts-only running dynamics section for the Trend Analysis synthesis prompt."""
+    if not dynamics_summary and pending_dynamics <= 0:
+        return ""
+    parts: list[str] = []
+    if dynamics_summary and dynamics_summary.get("ref_pace_s"):
+        parts.append(
+            "Pace-normalized form markers in the Progress table are evaluated at a fixed easy "
+            f"reference pace of `{format_ref_pace(dynamics_summary['ref_pace_s'])}` (rolling 4-week fit)."
+        )
+    table = format_pace_band_table(band_info)
+    if table:
+        parts.append(table)
+    fade = dynamics_summary.get("late_fade") if dynamics_summary else None
+    if isinstance(fade, dict) and fade.get("checked"):
+        meds = []
+        if fade.get("median_gct_delta_ms") is not None:
+            meds.append(f"median GCT `{fade['median_gct_delta_ms']:+.0f} ms`")
+        if fade.get("median_vr_delta_pp") is not None:
+            meds.append(f"median Vert Ratio `{fade['median_vr_delta_pp']:+.2f} pp`")
+        med_str = f" ({', '.join(meds)})" if meds else ""
+        fade_lines = [
+            f"- Late-run mechanical durability (window): `{fade['faded']}/{fade['checked']}` runs flagged{med_str}"
+        ]
+        for item in fade.get("flagged_runs") or []:
+            deltas = []
+            if item.get("gct_delta_ms") is not None:
+                deltas.append(f"GCT {item['gct_delta_ms']:+.0f} ms")
+            if item.get("vr_delta_pp") is not None:
+                deltas.append(f"Vert Ratio {item['vr_delta_pp']:+.2f} pp")
+            if item.get("cadence_delta") is not None:
+                deltas.append(f"Cadence {item['cadence_delta']:+.0f} spm")
+            if item.get("stride_delta_pct") is not None:
+                deltas.append(f"Stride {item['stride_delta_pct']:+.1f}%")
+            if item.get("speed_delta_pct") is not None:
+                deltas.append(f"speed {item['speed_delta_pct']:+.1f}%")
+            if deltas:
+                fade_lines.append(
+                    f"  - {item.get('date') or ''} '{item.get('title') or 'Run'}' "
+                    f"({item.get('scope') or 'session'}): " + ", ".join(deltas)
+                )
+        parts.append("\n".join(fade_lines))
+    if pending_dynamics > 0:
+        parts.append(
+            f"- Dynamics backfill coverage: `{pending_dynamics}` older runs in the window are still "
+            "pending running-dynamics extraction (upgraded incrementally on subsequent runs)."
+        )
+    return "\n\n".join(parts)
+
+
+def _load_trend_synthesis_prompt() -> str:
+    """Loads the UI-only Trend Analysis synthesis instructions co-located in PROMPT.md."""
+    path = os.path.join(package_paths.PACKAGE_DIR, "features", "trend_analysis", "PROMPT.md")
+    with open(path, encoding="utf-8") as f:
+        return f.read().strip()
+
+
+TREND_SYNTHESIS_PROMPT = _load_trend_synthesis_prompt()
 
 
 async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
@@ -93,18 +168,57 @@ async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
     records = sorted(records + new, key=lambda r: (r.get("date") or "", r.get("workout_id") or ""))
     unrecorded = [str(w.get("date") or "") for w, r in zip(missing, filled) if not r]
 
+    # Opportunistically upgrade up to MAX_DYNAMICS_BACKFILL newest stale run records missing running dynamics.
+    by_id = {str(w.get("id")): w for w in (raw["workouts"] or []) if w.get("id") is not None}
+    stale_runs = sorted(
+        (
+            r for r in records
+            if str(r.get("sport") or "").lower() in RUN_SPORTS
+            and (r.get("dynamics_version") or 0) < DYNAMICS_SCHEMA_VERSION
+            and str(r.get("workout_id") or "") in by_id
+        ),
+        key=lambda r: str(r.get("date") or ""),
+        reverse=True,
+    )
+    stale_batch = stale_runs[:MAX_DYNAMICS_BACKFILL]
+    backfilled_count = 0
+    if stale_batch:
+        upgraded = await asyncio.gather(*(
+            gapfill_one(tool_context, sem, profile, by_id[str(r["workout_id"])],
+                        thresholds=thresholds, daily_pmc=daily_pmc, dated_metrics=dated_metrics)
+            for r in stale_batch
+        ))
+        upgraded_by_id = {r["workout_id"]: r for r in upgraded if r and r.get("workout_id")}
+        backfilled_count = len(upgraded_by_id)
+        if upgraded_by_id:
+            records = [upgraded_by_id.get(r.get("workout_id"), r) for r in records]
+    pending_dynamics = max(0, len(stale_runs) - backfilled_count)
+
     goal_label = resolve_goal_distance(current_goal(profile, today)["training_goal"])
     zones = extract_hr_zones(raw["athlete settings"])
     lthr = thresholds.get("lthr")
     lt1_hr = zones[1]["max"] if len(zones) >= 2 else None          # LT1 = top of TP HR zone 2
+    ref_speed = reference_easy_speed(records)
     rows = add_load_ratio(weekly_rows(records, daily_pmc, dated_metrics, start, today, unrecorded,
-                                      goal_label=goal_label, lthr=lthr, lt1_hr=lt1_hr))
+                                      goal_label=goal_label, lthr=lthr, lt1_hr=lt1_hr,
+                                      ref_speed_ms=ref_speed))
     progress = progress_summary(rows, goal_label)
     levels = volume_levels(rows)
     outlook = capacity_outlook(rows, levels)
     rho, n_pairs = ratio_vs_next_hrv(rows)
     pacing = analyse_pacing(records, thresholds, zones, today)
     patterns = training_patterns(rows)
+    band_info = dynamics_by_band(records, thresholds.get("threshold_speed"), today)
+    fade_info = late_fade_summary(records)
+    dynamics_summary = (
+        {
+            "ref_pace_s": round(1000.0 / ref_speed, 1) if ref_speed else None,
+            "bands": band_info["bands"] if band_info else [],
+            "speed_modulation": band_info["speed_modulation"] if band_info else None,
+            "late_fade": fade_info,
+        }
+        if (ref_speed or band_info or fade_info) else None
+    )
 
     # Goal / north-star progress: the same evidence-based projection as the check-in (cache-first).
     fitness = summarize_fitness(raw["fitness PMC"], profile, today)
@@ -122,7 +236,7 @@ async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
     # The report renders charts and tables from this payload; the coach only writes recommendations.
     tool_context.state[TREND_REPORT_STATE_KEY] = trend_report_data(
         start, today, rows, progress, levels, outlook, key_run_label=key_run_label(goal_label),
-        goal_progress=goal, paces=pacing.get("paces"),
+        goal_progress=goal, paces=pacing.get("paces"), dynamics=dynamics_summary,
     )
 
     progress_table = format_progress_table(progress)
@@ -153,6 +267,9 @@ async def fetch_trend_data(tool_context: ToolContext, weeks: int = 26) -> str:
         "### Pacing\n" + format_pacing_details(pacing),
         "### Training patterns\n" + format_patterns(patterns),
     ]
+    dyn_section = _format_dynamics_section(dynamics_summary, band_info, pending_dynamics)
+    if dyn_section:
+        sections.append("### Running dynamics & form\n" + dyn_section)
     if comments:
         sections.append(
             f"### Athlete comments (raw; last {LLM_RECENT_WEEKS} weeks plus older niggles)\n"

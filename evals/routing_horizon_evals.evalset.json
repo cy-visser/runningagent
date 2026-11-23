@@ -94,12 +94,12 @@
             "tool_input": {}
           }
         ],
-        "reference": "Here is your check-in for the last two weeks: training load, recovery markers and goal trajectory, with your top priorities for the coming week. Want the long-term trend since the start of your training block as well?"
+        "reference": "Here is your check-in for the last two weeks: training load, recovery markers and goal trajectory, with your top priorities for the coming week."
       }
     ]
   },
   {
-    "name": "fitness_since_july",
+    "name": "audit_a_few_months_routes_to_plan_audit",
     "initial_session": {
       "state": {
         "user_profile": {
@@ -114,25 +114,25 @@
     },
     "data": [
       {
-        "query": "How has my fitness developed since July?",
+        "query": "Can you audit a few months of my upcoming marathon training?",
         "expected_tool_use": [
+          {
+            "tool_name": "fetch_plan_audit_data",
+            "tool_input": {}
+          },
           {
             "tool_name": "load_skill",
             "tool_input": {
-              "skill_name": "trend-analysis"
+              "skill_name": "plan-audit"
             }
-          },
-          {
-            "tool_name": "fetch_trend_data",
-            "tool_input": {}
           }
         ],
-        "reference": "Here is your long-term trend: progress in fitness and efficiency, the weekly volume you have proven to handle, your easy and workout paces, and which training patterns worked for you."
+        "reference": "Here is the audit of your upcoming training schedule: assessment of weekly volume ramp, hard-day spacing, long-run progression, and concrete schedule recommendations."
       }
     ]
   },
   {
-    "name": "what_works_for_me",
+    "name": "audit_next_3_months_routes_to_plan_audit",
     "initial_session": {
       "state": {
         "user_profile": {
@@ -147,86 +147,20 @@
     },
     "data": [
       {
-        "query": "What works for me?",
+        "query": "Audit my plan for the next 3 months",
         "expected_tool_use": [
+          {
+            "tool_name": "fetch_plan_audit_data",
+            "tool_input": {}
+          },
           {
             "tool_name": "load_skill",
             "tool_input": {
-              "skill_name": "trend-analysis"
+              "skill_name": "plan-audit"
             }
-          },
-          {
-            "tool_name": "fetch_trend_data",
-            "tool_input": {}
           }
         ],
-        "reference": "Here is your long-term trend: progress in fitness and efficiency, the weekly volume you have proven to handle, your easy and workout paces, and which training patterns worked for you."
-      }
-    ]
-  },
-  {
-    "name": "load_capacity",
-    "initial_session": {
-      "state": {
-        "user_profile": {
-          "firstname": "Alex",
-          "lastname": "Runner",
-          "timeline": "2026-11-15",
-          "training_goal": "Sub-3:30 Marathon"
-        }
-      },
-      "app_name": "running_coach",
-      "user_id": "test_user"
-    },
-    "data": [
-      {
-        "query": "How much weekly volume can I handle? Could I do 100 km weeks?",
-        "expected_tool_use": [
-          {
-            "tool_name": "load_skill",
-            "tool_input": {
-              "skill_name": "trend-analysis"
-            }
-          },
-          {
-            "tool_name": "fetch_trend_data",
-            "tool_input": {}
-          }
-        ],
-        "reference": "Here is your long-term trend: progress in fitness and efficiency, the weekly volume you have proven to handle, your easy and workout paces, and which training patterns worked for you."
-      }
-    ]
-  },
-  {
-    "name": "easy_pace",
-    "initial_session": {
-      "state": {
-        "user_profile": {
-          "firstname": "Alex",
-          "lastname": "Runner",
-          "timeline": "2026-11-15",
-          "training_goal": "Sub-3:30 Marathon"
-        }
-      },
-      "app_name": "running_coach",
-      "user_id": "test_user"
-    },
-    "data": [
-      {
-        "query": "What pace should my easy runs be, and can I run my workouts faster?",
-        "expected_tool_use": [
-          {
-            "tool_name": "load_skill",
-            "tool_input": {
-              "skill_name": "trend-analysis"
-            }
-          },
-          {
-            "tool_name": "fetch_trend_data",
-            "tool_input": {}
-          }
-        ],
-        "reference": "Here is your long-term trend: progress in fitness and efficiency, the weekly volume you have proven to handle, your easy and workout paces, and which training patterns worked for you."
+        "reference": "Here is the audit of your next 3 months of scheduled training: weekly volume ramp, spacing, long-run progression, and concrete recommendations."
       }
     ]
   }

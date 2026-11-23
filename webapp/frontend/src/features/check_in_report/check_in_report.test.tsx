@@ -85,6 +85,8 @@ describe("check-in report feature", () => {
 
     // Projection drivers come from the payload; the coach text holds only the judgement sections.
     expect(screen.getByText("Projection Drivers")).toBeInTheDocument();
+    expect(screen.getByText("Running Form & Dynamics")).toBeInTheDocument();
+    expect(screen.getByText("1/4 runs late-run fade")).toBeInTheDocument();
     expect(screen.getByText("Threshold anchor")).toBeInTheDocument();
     expect(screen.getByText("ratio 1.0")).toBeInTheDocument();
     expect(screen.queryByText(/Check-In Overview/i)).not.toBeInTheDocument();

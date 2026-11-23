@@ -20,6 +20,7 @@ import type {
   WorkoutHrZone,
   WorkoutReadiness,
   WorkoutReportData,
+  WorkoutRunningDynamics,
   WorkoutTile,
 } from "../../shared/types";
 import { RichMarkdown, StatusBadge } from "../../shared/RichMarkdown";
@@ -305,6 +306,63 @@ function ReadinessChip({ item }: { item: WorkoutReadiness }) {
   );
 }
 
+function RunningDynamicsStrip({ rd }: { rd: WorkoutRunningDynamics }) {
+  const items = [
+    rd.cadence_spm != null ? { key: "cadence", label: "Cadence", value: `${Math.round(rd.cadence_spm)}`, unit: "spm" } : null,
+    rd.stride_m != null ? { key: "stride", label: "Stride", value: rd.stride_m.toFixed(2), unit: "m" } : null,
+    rd.gct_ms != null ? { key: "gct", label: "GCT", value: `${Math.round(rd.gct_ms)}`, unit: "ms" } : null,
+    rd.vert_osc_cm != null ? { key: "vert_osc", label: "Vert Osc", value: rd.vert_osc_cm.toFixed(1), unit: "cm" } : null,
+    rd.vert_ratio_pct != null ? { key: "vert_ratio", label: "Vert Ratio", value: rd.vert_ratio_pct.toFixed(1), unit: "%" } : null,
+    rd.gct_balance_pct != null ? { key: "balance", label: "Balance", value: `${rd.gct_balance_pct.toFixed(1)}%`, unit: "L" } : null,
+  ].filter(Boolean) as Array<{ key: string; label: string; value: string; unit: string }>;
+
+  if (items.length === 0) return null;
+
+  const drift = rd.late_drift;
+  const fadeBits: string[] = [];
+  if (drift?.fatigue_flag) {
+    if (drift.gct_delta_ms != null && Math.abs(drift.gct_delta_ms) >= 4) {
+      fadeBits.push(`GCT ${drift.gct_delta_ms > 0 ? "+" : ""}${Math.round(drift.gct_delta_ms)} ms`);
+    }
+    if (drift.vr_delta_pp != null && Math.abs(drift.vr_delta_pp) >= 0.3) {
+      fadeBits.push(`VR ${drift.vr_delta_pp > 0 ? "+" : ""}${drift.vr_delta_pp.toFixed(1)} pp`);
+    }
+    if (drift.cadence_delta != null && drift.cadence_delta <= -3) {
+      fadeBits.push(`Cad ${Math.round(drift.cadence_delta)} spm`);
+    }
+    if (drift.stride_delta_pct != null && drift.stride_delta_pct <= -3) {
+      fadeBits.push(`Stride ${drift.stride_delta_pct.toFixed(0)}%`);
+    }
+  }
+  const fadeLabel = drift?.fatigue_flag
+    ? `Late-run form fade${fadeBits.length ? ` · ${fadeBits.join(" · ")}` : ""}`
+    : null;
+
+  return (
+    <div
+      data-testid="running-dynamics-strip"
+      className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/60 px-5 py-3"
+    >
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <Footprints aria-hidden="true" className="h-3.5 w-3.5 text-orange-500" />
+          Running Dynamics
+        </span>
+        {items.map((item) => (
+          <div key={item.key} data-testid="rd-metric" data-key={item.key} className="inline-flex items-baseline gap-1 text-sm tabular-nums">
+            <span className="text-xs text-slate-500">{item.label}</span>
+            <span className="font-display font-bold text-slate-900">{item.value}</span>
+            <span className="text-xs font-medium text-slate-500">{item.unit}</span>
+          </div>
+        ))}
+      </div>
+      {fadeLabel && (
+        <StatusBadge tone="amber" icon="alert" label={fadeLabel} size="sm" />
+      )}
+    </div>
+  );
+}
+
 /* ---------- Banner + report ---------- */
 
 export function WorkoutBanner({ data }: { data: WorkoutReportData }) {
@@ -337,6 +395,7 @@ export function WorkoutBanner({ data }: { data: WorkoutReportData }) {
           )}
         </div>
       )}
+      {data.running_dynamics && <RunningDynamicsStrip rd={data.running_dynamics} />}
       {(readiness.length > 0 || others.length > 0) && (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-5 py-3">
           <div className="flex flex-wrap gap-2">

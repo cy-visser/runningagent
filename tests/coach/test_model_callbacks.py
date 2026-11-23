@@ -101,6 +101,7 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
             for n in (
                 "load_skill",
                 "fetch_plan_context",
+                "fetch_trend_data",
                 "stage_training_plan",
                 "apply_training_plan",
                 "apply_staged_changes",
@@ -140,7 +141,13 @@ def test_internal_tools_are_hidden_from_llm_declarations_and_plan_builder_expand
             "days": {"type": "integer", "default": 3},
         },
     }
-    assert {"fetch_plan_context", "apply_training_plan", "stage_training_plan", "apply_staged_changes"} <= set(req.tools_dict)
+    assert {
+        "fetch_plan_context",
+        "fetch_trend_data",
+        "apply_training_plan",
+        "stage_training_plan",
+        "apply_staged_changes",
+    } <= set(req.tools_dict)
 
     # 2. Current turn loaded plan-builder -> stage_training_plan is declared for Step 2.
     plan_turn = make_req([

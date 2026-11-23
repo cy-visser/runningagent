@@ -53,3 +53,41 @@ def test_check_in_report_populates_sections_tables_and_web_payload(runner):
     assert "->" in by_name["Durability"]["evidence"]
     assert report["projection"]["confidence"] in ("Low", "Medium", "High")
     assert report["projection"]["readiness"] in ("🟢", "🟡", "🔴", "⚪")
+
+
+def test_check_in_report_includes_pace_matched_running_dynamics_facts_only(runner):
+    # Populate training records via trend gap-fill, then attach running dynamics to the recent run laps.
+    asyncio.run(fetch_trend_data(runner.ctx(), weeks=8))
+    for idx, rec in enumerate(sorted(runner.training_records.values(), key=lambda r: r.get("date") or "")):
+        if str(rec.get("sport") or "").lower() != "run" or not rec.get("laps"):
+            continue
+        improving = idx >= len(runner.training_records) // 2
+        for lap in rec["laps"]:
+            lap["cadence"] = 172.0 if improving else 170.0
+            lap["gct_ms"] = 250.0 if improving else 260.0
+            lap["stride_m"] = 1.12
+            lap["vert_osc_cm"] = 9.3 if improving else 9.9
+            lap["vert_ratio_pct"] = round(lap["vert_osc_cm"] / lap["stride_m"], 2)
+        rec["dynamics_version"] = 1
+        rec["late_drift"] = {
+            "scope": "session",
+            "speed_delta_pct": -1.0,
+            "gct_delta_ms": 15.0 if idx == len(runner.training_records) - 1 else 2.0,
+            "cadence_delta": -4.0 if idx == len(runner.training_records) - 1 else 0.0,
+            "stride_delta_pct": -2.0,
+            "vr_delta_pp": 0.8 if idx == len(runner.training_records) - 1 else 0.1,
+            "fatigue_flag": idx == len(runner.training_records) - 1,
+        }
+
+    ctx = runner.ctx()
+    out = asyncio.run(fetch_checkin_data(ctx))
+    assert "**Running Dynamics (pace-matched 4-wk vs prior 4-wk & 14d late-run drift):**" in out
+    assert "Late-run mechanical drift (last 14d):" in out
+    for verdict in ("🟢", "🟡", "🔴", "⚪", "✅", "⚠️"):
+        assert verdict not in out, verdict
+
+    dyn = ctx.state["checkin_report_data"]["dynamics"]
+    assert dyn is not None
+    assert dyn["gct_ms"] is not None
+    assert dyn["late_fade"]["checked"] >= 1
+

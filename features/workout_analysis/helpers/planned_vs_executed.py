@@ -1,6 +1,7 @@
 from typing import Optional
 
 from ....shared.athlete_settings import sport_family
+from ....shared.running_dynamics import extract_session_dynamics, has_running_dynamics
 from ....shared.units import fmt_clock, fmt_pace
 from ....shared.workout_structure import (
     COOLDOWN_INTENSITY,
@@ -152,19 +153,31 @@ def format_structured_execution(
         return (f"{header}\nDevice laps do not line up with the planned steps; planned structure:\n"
                 f"{format_planned_structure(steps, metric, thr)}")
 
+    step_dyns = [None if is_bike else extract_session_dynamics(None, e.laps) for e in alignment.steps]
+    show_rd = not is_bike and any(has_running_dynamics(d) for d in step_dyns)
     actual_col = "Power" if is_bike else "Pace"
-    lines = [header, f"| Step | Planned | Target | {actual_col} | HR avg/max | Cad | Δ vs target |",
+    mech_col = "Form (Cad · SL · GCT · VR)" if show_rd else "Cad"
+    lines = [header, f"| Step | Planned | Target | {actual_col} | HR avg/max | {mech_col} | Δ vs target |",
              "|---|---|---|---|---|---|---|"]
-    for e in alignment.steps:
+    for e, dyn in zip(alignment.steps, step_dyns):
         actual = f"{round(e.power)} W" if is_bike and e.power else fmt_pace(e.pace_s)
         hr = f"{round(e.hr_avg)}/{round(e.hr_max)}" if e.hr_avg and e.hr_max else (f"{round(e.hr_avg)}" if e.hr_avg else "-")
-        cad = f"{round(e.cadence)}" if e.cadence else "-"
+        if show_rd:
+            d = dyn or {}
+            cad_s = f"{round(d['cadence'])}" if d.get("cadence") else (f"{round(e.cadence)}" if e.cadence else "-")
+            sl_s = f"{d['stride_m']:.2f}m" if d.get("stride_m") else "-"
+            gct_s = f"{round(d['gct_ms'])}ms" if d.get("gct_ms") else "-"
+            vr_s = f"{d['vert_ratio_pct']:.1f}%" if d.get("vert_ratio_pct") else "-"
+            mech = f"{cad_s} · {sl_s} · {gct_s} · {vr_s}" if has_running_dynamics(d) else cad_s
+        else:
+            mech = f"{round(e.cadence)}" if e.cadence else "-"
         lines.append(f"| {_step_label(e.step)} | {_fmt_length(e.step)} | {format_target(e.step, metric, thr)} "
-                     f"| {actual} | {hr} | {cad} | {format_target_delta(target_delta(e, metric, thr))} |")
+                     f"| {actual} | {hr} | {mech} | {format_target_delta(target_delta(e, metric, thr))} |")
     for lap in alignment.extra_laps:
         lines.append(f"Extra lap (not in plan): {lap.get('Name') or 'lap'} {fmt_clock(lap_time(lap))}, {lap_km(lap):.2f} km")
 
-    # Repeated blocks: compact rep-to-rep spread, HR drift and target hit rate (individual splits are in the table above).
+    # Repeated blocks: compact rep-to-rep spread, HR drift, target hit rate, and mechanical drift.
+    dyn_by_step = {id(e): d for e, d in zip(alignment.steps, step_dyns)}
     blocks: dict[int, list[ExecutedStep]] = {}
     for e in alignment.steps:
         blocks.setdefault(e.step.block, []).append(e)
@@ -189,6 +202,16 @@ def format_structured_execution(
             hrs = [e.hr_avg for e in p if e.hr_avg]
             if len(hrs) >= 2:
                 parts.append(f"HR {round(hrs[0])}→{round(hrs[-1])} ({round(hrs[-1] - hrs[0]):+d} bpm)")
+            if show_rd:
+                gcts = [dyn_by_step[id(e)]["gct_ms"] for e in p if (dyn_by_step[id(e)] or {}).get("gct_ms")]
+                vrs = [dyn_by_step[id(e)]["vert_ratio_pct"] for e in p if (dyn_by_step[id(e)] or {}).get("vert_ratio_pct")]
+                cads = [dyn_by_step[id(e)]["cadence"] for e in p if (dyn_by_step[id(e)] or {}).get("cadence")]
+                if len(gcts) >= 2:
+                    parts.append(f"GCT {round(gcts[0])}→{round(gcts[-1])}ms ({round(gcts[-1] - gcts[0]):+d})")
+                if len(vrs) >= 2:
+                    parts.append(f"VR {vrs[0]:.1f}→{vrs[-1]:.1f}%")
+                if len(cads) >= 2 and abs(cads[-1] - cads[0]) >= 2:
+                    parts.append(f"Cad {round(cads[0])}→{round(cads[-1])}")
             deltas = [target_delta(e, metric, thr) for e in p]
             if any(d is not None for d in deltas):
                 inside = sum(1 for d in deltas if d is not None and round(d[0]) == 0)

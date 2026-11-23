@@ -85,6 +85,16 @@ def test_direct_fetch_plan_context_is_blocked_outside_plan_builder(runner, monke
     assert runner.tp_calls == []
 
 
+def test_direct_fetch_trend_data_is_blocked_outside_ui_quick_action(runner, monkeypatch):
+    events, s = _run_turn(monkeypatch, [
+        [_call("fetch_trend_data", weeks=12)],
+    ])
+    (resp,) = _responses(events, "fetch_trend_data")
+    assert "Trend Analysis dashboard button" in resp["result"]
+    assert s.state.get("trend_report_data") is None
+    assert runner.tp_calls == []
+
+
 def test_load_skill_plan_builder_auto_runs_fetch_plan_context_and_hides_it_from_declarations(runner, monkeypatch):
     llm = ScriptedLlm(model="fake")
     llm.script = [

@@ -22,6 +22,13 @@ from ...shared.health_metrics import (
     format_recovery_metrics,
 )
 from ...shared.parallel_fetch import gather_labeled, result_or_none
+from ...shared.running_dynamics import (
+    compute_late_run_drift,
+    extract_session_dynamics,
+    format_dynamics_line,
+    format_late_drift_line,
+    has_running_dynamics,
+)
 from ...shared.runner_weather import fetch_weather_text, weather_at
 from ...shared.sports import RUN_SPORTS
 from ...shared.tp_payloads import coerce_mcp_payload, parse_mcp_response
@@ -271,13 +278,24 @@ async def analyze_workout(
             structure_section = format_structured_execution(
                 structured, laps, thresholds, series, sport, alignment
             )
+        is_run = str(sport or "").strip().lower() in RUN_SPORTS
+        run_dyn = extract_session_dynamics(series, laps, data.get("dataChannels")) if is_run else None
+        late_drift = compute_late_run_drift(series, laps, alignment) if is_run else None
+        has_rd = has_running_dynamics(run_dyn)
         sections = [format_workout_analysis(
             data, title=title or None, sport=sport or None,
             include_laps=alignment is None,
             decoupling_override=session_decoupling(series, laps, sport, alignment),
+            suppress_raw_dynamics=has_rd,
         )]
         if other_sessions:
             sections.insert(0, format_other_sessions(other_sessions, target_iso))
+        if has_rd:
+            rd_lines = [format_dynamics_line(run_dyn)]
+            drift_line = format_late_drift_line(late_drift)
+            if drift_line:
+                rd_lines.append(drift_line)
+            sections.append("**Running Dynamics (running-only):**\n" + "\n".join(rd_lines))
         if structure_section:
             sections.append(structure_section)
         notes = planned_notes(meta, structured=alignment is not None)
@@ -309,6 +327,7 @@ async def analyze_workout(
                 weather=extra.get("start conditions"),
                 dated_metrics=dated_metrics if include_recovery else None,
                 start_position=start_pos, structured=is_structured, other_sessions=other_sessions,
+                running_dynamics=run_dyn, late_drift=late_drift,
             )
         except Exception as e:
             logger.warning("Workout banner payload failed for %s: %s", workout_id, e)

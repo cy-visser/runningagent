@@ -1,5 +1,6 @@
 from typing import Any, Optional
 
+from ....shared.running_dynamics import extract_lap_dynamics
 from ....shared.sports import BIKE_SPORTS
 from ....shared.units import as_float, pace_seconds, to_km
 
@@ -9,13 +10,16 @@ NGP_MIN_DIFF_S = 3.0
 # "No value" placeholders TrainingPeaks sends instead of a number (e.g. VAM '--').
 _PLACEHOLDERS = {"", "-", "--", "n/a", "na", "null", "none"}
 
-ALLOWED_DATA_CHANNELS = {
-    "HeartRate", "Pace", "Power", "Cadence", "Speed", "Torque",
+_RAW_DYNAMICS_CHANNELS = {
     "GroundContactTime", "ContactTime", "GCT", "StanceTime",
     "GroundContactTimeBalance", "GCTBalance", "ContactTimeBalance", "Balance",
     "VerticalOscillation", "VertOsc",
     "StrideLength", "StepLength",
     "VerticalRatio",
+}
+ALLOWED_DATA_CHANNELS = {
+    "HeartRate", "Pace", "Power", "Cadence", "Speed", "Torque",
+    *_RAW_DYNAMICS_CHANNELS,
     "Altitude", "Elevation", "Grade", "VAM",
 }
 
@@ -89,6 +93,7 @@ def format_workout_analysis(
     sport: Optional[str] = None,
     include_laps: bool = True,
     decoupling_override: Optional[str] = None,
+    suppress_raw_dynamics: bool = False,
 ) -> str:
     """Sanitizes and formats raw TrainingPeaks workout analysis directly into a token-efficient text summary.
 
@@ -197,8 +202,9 @@ def format_workout_analysis(
 
     if isinstance(channels, list) and channels:
         ch_items = []
+        allowed_ch = (ALLOWED_DATA_CHANNELS - _RAW_DYNAMICS_CHANNELS - {"Cadence"}) if suppress_raw_dynamics else ALLOWED_DATA_CHANNELS
         for ch in channels:
-            if isinstance(ch, dict) and ch.get("identifier") in ALLOWED_DATA_CHANNELS:
+            if isinstance(ch, dict) and ch.get("identifier") in allowed_ch:
                 name = ch.get("name") or ch.get("identifier")
                 unit = ch.get("unit", "")
                 avg_val = _clean(ch.get("average"))
@@ -286,32 +292,15 @@ def format_workout_analysis(
             else:
                 decoup_str = ""
 
-            # Running Dynamics (POD 2 / Stryd / Garmin RD)
-            gct = _clean(lap.get("AverageStanceTime") or lap.get("AverageGroundContactTime") or lap.get("groundContactTime") or lap.get("ContactTime") or lap.get("gct"))
-            gct_str = f"GCT {round(gct, 1)}ms" if isinstance(gct, (int, float)) else f"GCT {gct}" if gct else ""
+            # Running Dynamics (normalized + derived 0.1% Vertical Ratio)
+            lap_dyn = {} if is_bike else extract_lap_dynamics(lap)
+            gct_str = f"GCT {lap_dyn['gct_ms']:.0f}ms" if lap_dyn.get("gct_ms") is not None else ""
+            bal_str = f"Bal {lap_dyn['gct_balance']:.1f}%" if lap_dyn.get("gct_balance") is not None else ""
+            vert_str = f"Vert {lap_dyn['vert_osc_cm']:.1f}cm" if lap_dyn.get("vert_osc_cm") is not None else ""
+            stride_str = f"Stride {lap_dyn['stride_m']:.2f}m" if lap_dyn.get("stride_m") is not None else ""
+            vr_str = f"VR {lap_dyn['vert_ratio_pct']:.1f}%" if lap_dyn.get("vert_ratio_pct") is not None else ""
 
-            bal = _clean(lap.get("AverageGroundContactTimeBalance") or lap.get("groundContactTimeBalance") or lap.get("gctBalance"))
-            bal_str = f"Bal {bal}" if bal else ""
-
-            vert = _clean(lap.get("AverageVerticalOscillation") or lap.get("verticalOscillation") or lap.get("vertOsc"))
-            vert_str = ""
-            if vert is not None:
-                if isinstance(vert, (int, float)):
-                    v_cm = vert / 10.0 if vert > 20 else vert
-                    vert_str = f"Vert {round(v_cm, 1)}cm"
-                else:
-                    vert_str = f"Vert {vert}"
-
-            stride = _clean(lap.get("AverageStepLength") or lap.get("AverageStrideLength") or lap.get("strideLength") or lap.get("stepLength"))
-            stride_str = ""
-            if stride is not None:
-                if isinstance(stride, (int, float)):
-                    s_m = stride / 1000.0 if stride > 20 else stride
-                    stride_str = f"Stride {round(s_m, 2)}m"
-                else:
-                    stride_str = f"Stride {stride}"
-
-            lap_parts = [p for p in [dist_str, dur_str, pace_str, lap_el_str, grade_str, lap_vam_str, hr_str, pwr_str, cad_str, decoup_str, gct_str, bal_str, vert_str, stride_str] if p]
+            lap_parts = [p for p in [dist_str, dur_str, pace_str, lap_el_str, grade_str, lap_vam_str, hr_str, pwr_str, cad_str, decoup_str, gct_str, bal_str, vert_str, stride_str, vr_str] if p]
             lines.append(f"- {l_num}: " + " | ".join(lap_parts))
 
     return "\n".join(lines)

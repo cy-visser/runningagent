@@ -14,7 +14,8 @@ description: Telemetry and physiological analysis of one completed run.
 
 2. **Synthesis** (follow `GOAL REASONING`; use windowed `Pa:Hr` and aligned deltas as-is—never recompute):
    - **Easy / Recovery**: Z1/Z2 HR compliance, Z3/Z4 creep, surges, drift.
-   - **Structured / Long**: **Repeated blocks** + per-block decoupling or **Laps Breakdown** (consistency, HR recovery drops, cadence); separate quality blocks from easy km on quality LRs.
+   - **Structured / Long**: **Repeated blocks** + per-block decoupling or **Laps Breakdown** (consistency, HR recovery drops, rep-to-rep GCT/VR/cadence drift); separate quality blocks from easy km on quality LRs.
+   - **Running Dynamics (signal-only)**: inspect **Running Dynamics** and `Late-run drift` (weigh runner height & injury watchpoints). Mention mechanics **ONLY** when `Late-run drift` flags late-run mechanical fatigue (rising GCT/VR, cadence drop, or stride collapse at equal/slower pace), rep-to-rep form fade shows up, or a concrete cadence/stride/overstriding limiter appears (e.g., high VR + long GCT at easy pace, or cadence/stride bottleneck on quality reps). **NEVER** write obvious filler like "cadence is ok", "stride length is good", or "form looks solid"—the banner already shows the numbers.
    - **Terrain, Drift & Readiness**: weigh elevation/grade/`NGP` vs raw pace, `Pa:Hr` against session design + weather, and Sleep/HRV/RHR. On a **Sub-goal race**, congratulate, frame via north-star equivalent/gap, and note if the result was saved.
 
 ## Output (no `Session Overview`, no intro/closing prose, do not repeat web-banner stats except to back a judgement)

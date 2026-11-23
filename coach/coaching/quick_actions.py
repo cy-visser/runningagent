@@ -37,7 +37,10 @@ from ...features.plan_audit.fetch_plan_audit_data_tool import (
 from ...features.plan_builder.apply_training_plan_tool import apply_training_plan_tool
 from ...features.plan_builder.fetch_plan_context_tool import fetch_plan_context_tool
 from ...features.schedule_lookup.get_schedule_tool import get_schedule_tool
-from ...features.trend_analysis.fetch_trend_data_tool import fetch_trend_data_tool
+from ...features.trend_analysis.fetch_trend_data_tool import (
+    TREND_SYNTHESIS_PROMPT,
+    fetch_trend_data_tool,
+)
 from ...features.workout_analysis.analyze_workout_tool import analyze_workout_tool
 from ...features.workout_creator.apply_staged_changes_tool import apply_staged_changes_tool
 from .typed_dispatch import (
@@ -58,15 +61,20 @@ QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
 PLAN_INTAKE_STATE_KEY = "temp:plan_intake_invocation"
 # Invocation id of a report/schedule synthesis call: keeps the full prefix cached while dropping stray tool calls.
 SYNTHESIS_GUARD_STATE_KEY = "temp:report_synthesis_guard"
+# Invocation id of a UI-button Trend Analysis turn: authorizes `fetch_trend_data` and injects the transient rubric.
+TREND_SYNTHESIS_STATE_KEY = "temp:trend_synthesis_invocation"
 
 PLAN_INTAKE = "plan-builder:intake"
 PROJECT_RACE = "check-in-report:project"
+TREND_ANALYSIS = "trend-analysis"
+TREND_PROTOCOL_START = "<trend_analysis_protocol>"
+TREND_PROTOCOL_END = "</trend_analysis_protocol>"
 
 # skill -> (data tool, arguments the web app may set)
 QUICK_ACTIONS = {
     "check-in-report": (fetch_checkin_data_tool, frozenset({"start_date", "end_date"})),
     PROJECT_RACE: (refresh_race_projection_tool, frozenset({"refresh_analysis_cache"})),
-    "trend-analysis": (fetch_trend_data_tool, frozenset({"weeks"})),
+    TREND_ANALYSIS: (fetch_trend_data_tool, frozenset({"weeks"})),
     "plan-audit": (fetch_plan_audit_data_tool, frozenset({"start_date", "end_date"})),
     RUN_WORKOUT_SKILL: (analyze_workout_tool, frozenset({"date_str", "sport"})),
     # "Update TrainingPeaks" button: applies the staged changes in code (zero LLM calls).
@@ -76,15 +84,16 @@ QUICK_ACTIONS = {
     # Apply to TrainingPeaks on a staged plan: one silent action per week in code (zero LLM calls).
     "plan-builder:apply": (apply_training_plan_tool, frozenset({"staged_id", "week"})),
 }
-# Internal dispatch table adds bike-workout-analysis and schedule-lookup for typed chat pre-dispatch.
+# Internal dispatch table adds bike-workout-analysis and schedule-lookup for typed chat pre-dispatch
+# (UI-button-only `trend-analysis` is excluded so typed chat can never dispatch it).
 _TYPED_DISPATCH_ACTIONS = {
-    **QUICK_ACTIONS,
+    **{k: v for k, v in QUICK_ACTIONS.items() if k != TREND_ANALYSIS},
     BIKE_WORKOUT_SKILL: (analyze_workout_tool, frozenset({"date_str", "sport"})),
     SCHEDULE_LOOKUP: (get_schedule_tool, frozenset({"start_date", "end_date"})),
 }
 # Actions that only execute code or need no SKILL.md instructions loaded.
 SKILL_FREE_ACTIONS = frozenset({
-    "workout-creator", "plan-builder:apply", PLAN_INTAKE, PROJECT_RACE, SCHEDULE_LOOKUP,
+    TREND_ANALYSIS, "workout-creator", "plan-builder:apply", PLAN_INTAKE, PROJECT_RACE, SCHEDULE_LOOKUP,
 })
 # Pure-code actions that end inside the tool via `skip_summarization=True` (no LLM call follows).
 _ZERO_LLM_ACTIONS = frozenset({"workout-creator", "plan-builder:apply", PROJECT_RACE})
@@ -106,6 +115,33 @@ def is_plan_intake(state: Any, invocation_id: Optional[str]) -> bool:
 def is_synthesis_guard(state: Any, invocation_id: Optional[str]) -> bool:
     """True during a report/schedule synthesis call (keeps full prefix cached while dropping stray tool calls)."""
     return bool(invocation_id) and state.get(SYNTHESIS_GUARD_STATE_KEY) == invocation_id
+
+
+def is_trend_synthesis(state: Any, invocation_id: Optional[str]) -> bool:
+    """True during a UI-button Trend Analysis turn (this invocation only)."""
+    return bool(invocation_id) and state.get(TREND_SYNTHESIS_STATE_KEY) == invocation_id
+
+
+def _inject_trend_synthesis_prompt(llm_request: LlmRequest) -> None:
+    """Attaches the UI-only Trend Analysis rubric transiently after `fetch_trend_data`'s response.
+
+    Never placed in `system_instruction` and never persisted in session history, so Turn 0 warms and
+    Turn 1 hits the byte-identical `(system_instruction + tools + trend_data)` prefix cache with zero
+    rubric tokens carried into follow-up turns.
+    """
+    if any(
+        TREND_PROTOCOL_START in (p.text or "")
+        for c in (llm_request.contents or [])
+        for p in (c.parts or [])
+    ):
+        return
+    prompt = f"{TREND_PROTOCOL_START}\n{TREND_SYNTHESIS_PROMPT}\n{TREND_PROTOCOL_END}"
+    transient = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+    insert = getattr(llm_request, "_insert_transient_user_content", None)
+    if callable(insert):
+        insert([transient])
+    else:
+        llm_request.contents = [*(llm_request.contents or []), transient]
 
 
 def _is_turn_start(llm_request: LlmRequest) -> bool:
@@ -183,6 +219,8 @@ def dispatch_quick_action(
         llm_request.config.tools = []
         return None
     if is_synthesis_guard(state, invocation_id):
+        if is_trend_synthesis(state, invocation_id):
+            _inject_trend_synthesis_prompt(llm_request)
         return None
 
     action, inferred = _consume_or_infer_action(callback_context, llm_request)
@@ -197,6 +235,8 @@ def dispatch_quick_action(
         state[PLAN_INTAKE_STATE_KEY] = invocation_id
     elif skill not in _ZERO_LLM_ACTIONS:
         state[SYNTHESIS_GUARD_STATE_KEY] = invocation_id
+        if skill == TREND_ANALYSIS and not inferred:
+            state[TREND_SYNTHESIS_STATE_KEY] = invocation_id
     if inferred:
         trace.get_current_span().set_attribute("coach.typed_pre_dispatch", skill)
     return LlmResponse(content=types.Content(role="model", parts=parts))
@@ -274,6 +314,10 @@ __all__ = [
     "SKILL_FREE_ACTIONS",
     "SYNTHESIS_GUARD_STATE_KEY",
     "SYNTHETIC_THOUGHT_SIGNATURE",
+    "TREND_ANALYSIS",
+    "TREND_PROTOCOL_END",
+    "TREND_PROTOCOL_START",
+    "TREND_SYNTHESIS_STATE_KEY",
     "dispatch_quick_action",
     "drop_disabled_tool_calls",
     "extract_quick_action",
@@ -281,5 +325,6 @@ __all__ = [
     "infer_typed_quick_action",
     "is_plan_intake",
     "is_synthesis_guard",
+    "is_trend_synthesis",
     "quick_action_calls",
 ]

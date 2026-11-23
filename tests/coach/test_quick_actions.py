@@ -18,6 +18,8 @@ from running_coach.coach.coaching.quick_actions import (
     QUICK_ACTION_STATE_KEY,
     SYNTHESIS_GUARD_STATE_KEY,
     SYNTHETIC_THOUGHT_SIGNATURE,
+    TREND_PROTOCOL_START,
+    TREND_SYNTHESIS_STATE_KEY,
 )
 from running_coach.shared.session_state import AUTH_EMAIL_STATE_KEY
 from running_coach.tests.fakes import EMAIL
@@ -88,35 +90,42 @@ def test_quick_action_dispatches_without_routing_and_chat_keeps_full_capabilitie
 
     feature, feature_requests, chat, s = asyncio.run(scenario())
 
-    assert _calls(feature) == [("fetch_trend_data", {"weeks": 12}), ("load_skill", {"skill_name": "trend-analysis"})]
+    assert _calls(feature) == [("fetch_trend_data", {"weeks": 12})]            # UI-only skill-free dispatch
     assert s.state.get("trend_report_data", {}).get("version") == 1          # the tool really ran
     assert len(feature_requests) == 1                                          # report call only
     report = feature_requests[0]
     assert _tool_mode(report) is None
     assert report.config.tools                                                 # full prefix kept to warm cache
+    declared = {d.name for t in report.config.tools for d in getattr(t, "function_declarations", None) or []}
+    assert "fetch_trend_data" not in declared                                  # hidden from LLM tool declarations
     report_si = _system_text(report)
     assert "SKILL ROUTING" in report_si and "<available_skills>" in report_si
+    assert "trend-analysis" not in report_si and "fetch_trend_data" not in report_si
     assert "CRITICAL COACHING CONTRACT" in report_si
     roles = [(c.role, [bool(p.function_call) for p in c.parts]) for c in report.contents]
-    assert ("model", [True, True]) in roles                                    # synthesized calls in history
+    assert ("model", [True]) in roles                                          # synthesized fetch_trend_data only
+    # Transient trend synthesis rubric sits after the tool response on Turn 0 only (never persisted).
+    assert report.contents[3].role == "user"
+    assert TREND_PROTOCOL_START in (report.contents[3].parts[0].text or "")
+    assert "### 🎯 Next Block: Top 3" in (report.contents[3].parts[0].text or "")
 
     assert _calls(chat) == []
     chat_req = llm.requests[-1]
     assert len(llm.requests) == 2
     assert _tool_mode(chat_req) is None
     # Prefix-cache & token invariant across Turn 0 -> Turn 1: thinking_level, system_instruction, tools,
-    # contents[0..1] (including SYNTHETIC_THOUGHT_SIGNATURE), AND Turn-0 report data (parts[0]) stay byte-identical,
-    # while completed-turn load_skill (parts[1]) is stubbed to save ~1k+ uncached follow-up tokens!
-    from running_coach.coach.report_memory import STALE_SKILL_STUB
-
+    # and contents[0..2] (including SYNTHETIC_THOUGHT_SIGNATURE and Turn-0 trend data) stay byte-identical,
+    # while the transient Turn-0 rubric is completely absent from Turn 1 (0 rubric tokens carried forward).
     assert report.config.thinking_config == chat_req.config.thinking_config
     assert _system_text(report) == _system_text(chat_req)
     assert report.config.tools == chat_req.config.tools
-    assert report.contents[:2] == chat_req.contents[:2]
-    assert report.contents[2].parts[0] == chat_req.contents[2].parts[0]
-    assert chat_req.contents[2].parts[1].function_response.response["instructions"] == STALE_SKILL_STUB
+    assert report.contents[:3] == chat_req.contents[:3]
+    assert not any(
+        TREND_PROTOCOL_START in (p.text or "") for c in chat_req.contents for p in c.parts or []
+    )
     assert chat_req.contents[1].parts[0].thought_signature == SYNTHETIC_THOUGHT_SIGNATURE
     assert QUICK_ACTION_STATE_KEY not in s.state and SYNTHESIS_GUARD_STATE_KEY not in s.state
+    assert TREND_SYNTHESIS_STATE_KEY not in s.state
     # The action part never reaches the persisted history or any LLM request.
     user_texts = [p.text or "" for e in s.events if e.author == "user" for p in e.content.parts or []]
     assert "Trend analysis for the past 6 months" in user_texts
@@ -505,13 +514,21 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
         "skill": "plan-audit",
         "args": {"start_date": "2026-11-16", "end_date": "2026-12-28"},
     }
+    assert infer_typed_quick_action("Audit the next 6 weeks", today) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2026-11-16", "end_date": "2026-12-28"},
+    }
+    assert infer_typed_quick_action("Audit the next 3 months. Are my volume trends sustainable?", today) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2026-11-16", "end_date": "2027-02-16"},
+    }
+    assert infer_typed_quick_action("Audit my plan for the next 2 months", date(2026, 12, 31)) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2026-12-31", "end_date": "2027-02-28"},
+    }
     assert infer_typed_quick_action("Audit my plan. Am I ramping too fast?", today) == {
         "skill": "plan-audit",
         "args": {},
-    }
-    assert infer_typed_quick_action("Analyze my trends for the last 12 weeks. Are my easy paces improving?", today) == {
-        "skill": "trend-analysis",
-        "args": {"weeks": 12},
     }
     assert infer_typed_quick_action("Weekly check-in. Am I ready for Sunday's long run?", today) == {
         "skill": "check-in-report",
@@ -526,14 +543,19 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
         "skill": "plan-audit",
         "args": {"start_date": "2026-12-15", "end_date": "2027-02-14"},
     }
-    # Mutation/staging/weather/event, tail date-window, second report, pasted plan, or undated named-block stay on LLM routing:
+    # Typed trend prompts (UI-button-only), mutation/staging/weather/event, tail date-window, second report,
+    # pasted plan, or undated named/vague blocks stay on LLM routing (never pre-dispatched to trend-analysis):
     for non_match in (
+        "Analyze my trends for the last 12 weeks. Are my easy paces improving?",
+        "Trend analysis for the past 6 months",
+        "Analyze my trends for the last 3 weeks",
+        "Analyze my trends. Look at the last 16 weeks.",
+        "Audit the next few months",
+        "Audit my plan. Look at the next 3 months.",
         "Audit my plan from Nov 30 to Feb 7 and move Friday S&C",
         "Audit my plan and drop Friday's S&C",
         "Audit my Amsterdam Half block",
-        "Analyze my trends for the last 3 weeks",
         "Audit my plan. Specifically look at Nov 30th until Feb 7th.",
-        "Analyze my trends. Look at the last 16 weeks.",
         "Audit my 5k block from Nov 30th until Feb 7th. Also analyze yesterday's run.",
         "Audit my 5k block from Nov 30th until Feb 7th. Can you rework the January weeks?",
         "Audit my 5k block from Nov 30th until Feb 7th. Build me a new January block.",

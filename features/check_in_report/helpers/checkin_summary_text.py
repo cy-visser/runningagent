@@ -3,6 +3,7 @@ from typing import Optional
 from ....shared.calendar_notes import truncate_note
 from ....shared.dates import format_display_date
 from ....shared.health_metrics import format_recovery_metrics
+from ....shared.running_dynamics import FORM_FIT_WEEKS, format_ref_pace
 from .metrics_tables import format_fitness_pmc
 from .weekly_totals import format_weekly_totals
 
@@ -78,6 +79,68 @@ def format_calendar_notes(notes_list: Optional[list[dict]]) -> str:
     return "\n".join(notes_summary_list) if notes_summary_list else "No calendar notes."
 
 
+def format_checkin_dynamics(dynamics: Optional[dict]) -> str:
+    """Facts-only pace-matched 4-wk form vs prior 4-wk + 14d late-run drift."""
+    if not dynamics:
+        return ""
+    lines: list[str] = []
+    now, prev = dynamics.get("now") or {}, dynamics.get("prev") or {}
+    if now:
+        ref = format_ref_pace(now.get("ref_pace_s"))
+        bits: list[str] = []
+        if now.get("gct_ms") is not None:
+            delta = (
+                f" ({now['gct_ms'] - prev['gct_ms']:+.0f} ms vs prior {FORM_FIT_WEEKS} wk)"
+                if prev.get("gct_ms") is not None else ""
+            )
+            bits.append(f"GCT `{now['gct_ms']:.0f} ms`{delta}")
+        if now.get("vert_ratio_pct") is not None:
+            delta = (
+                f" ({now['vert_ratio_pct'] - prev['vert_ratio_pct']:+.2f} pp vs prior {FORM_FIT_WEEKS} wk)"
+                if prev.get("vert_ratio_pct") is not None else ""
+            )
+            bits.append(f"Vert Ratio `{now['vert_ratio_pct']:.1f}%`{delta}")
+        if now.get("cadence") is not None:
+            bits.append(f"Cadence `{now['cadence']:.0f} spm`")
+        if now.get("stride_m") is not None:
+            bits.append(f"Stride `{now['stride_m']:.2f} m`")
+        if now.get("vert_osc_cm") is not None:
+            bits.append(f"Vert Osc `{now['vert_osc_cm']:.1f} cm`")
+        if bits:
+            at = f" @ `{ref}`" if ref else ""
+            lines.append(f"- Pace-matched form{at} (last {FORM_FIT_WEEKS} wk): " + " | ".join(bits))
+
+    fade = dynamics.get("late_fade")
+    if isinstance(fade, dict) and fade.get("checked"):
+        meds = []
+        if fade.get("median_gct_delta_ms") is not None:
+            meds.append(f"median GCT `{fade['median_gct_delta_ms']:+.0f} ms`")
+        if fade.get("median_vr_delta_pp") is not None:
+            meds.append(f"median Vert Ratio `{fade['median_vr_delta_pp']:+.2f} pp`")
+        med_str = f" ({', '.join(meds)})" if meds else ""
+        lines.append(
+            f"- Late-run mechanical drift (last 14d): `{fade['faded']}/{fade['checked']}` runs flagged{med_str}"
+        )
+        for item in fade.get("flagged_runs") or []:
+            deltas = []
+            if item.get("gct_delta_ms") is not None:
+                deltas.append(f"GCT {item['gct_delta_ms']:+.0f} ms")
+            if item.get("vr_delta_pp") is not None:
+                deltas.append(f"Vert Ratio {item['vr_delta_pp']:+.2f} pp")
+            if item.get("cadence_delta") is not None:
+                deltas.append(f"Cadence {item['cadence_delta']:+.0f} spm")
+            if item.get("stride_delta_pct") is not None:
+                deltas.append(f"Stride {item['stride_delta_pct']:+.1f}%")
+            if item.get("speed_delta_pct") is not None:
+                deltas.append(f"speed {item['speed_delta_pct']:+.1f}%")
+            if deltas:
+                lines.append(
+                    f"  - {item.get('date') or ''} '{item.get('title') or 'Run'}' ({item.get('scope') or 'session'}): "
+                    + ", ".join(deltas)
+                )
+    return "\n".join(lines)
+
+
 def compile_checkin_summary(
     lookback_days: int,
     lookahead_days: int,
@@ -91,6 +154,7 @@ def compile_checkin_summary(
     weekly_totals: Optional[list[dict]] = None,
     recovery_baseline: Optional[str] = None,
     lt_paces: Optional[dict] = None,
+    dynamics: Optional[dict] = None,
 ) -> str:
     """Compiles a complete, unified Check-In Summary payload for the check-in-report skill."""
     parts = ["### Weekly Check-In Training & Physiological Report\n"]
@@ -118,5 +182,9 @@ def compile_checkin_summary(
 
     if workouts_future is not None:
         parts.append(f"**6. Upcoming Scheduled Workouts (Next {lookahead_days} days):**\n{format_planned_workouts(workouts_future)}\n")
+
+    dyn_block = format_checkin_dynamics(dynamics)
+    if dyn_block:
+        parts.append(f"**Running Dynamics (pace-matched 4-wk vs prior 4-wk & 14d late-run drift):**\n{dyn_block}\n")
 
     return "\n".join(parts)

@@ -36,6 +36,35 @@ describe("workout analysis feature", () => {
     const chips = screen.getAllByTestId("readiness-chip");
     expect(chips.map((c) => c.dataset.key)).toEqual(["hrv", "rhr", "sleep"]);
     expect(chips[0]).toHaveAccessibleName("HRV 52 ms, up");
+
+    const rdStrip = screen.getByTestId("running-dynamics-strip");
+    expect(rdStrip).toHaveTextContent("178");
+    expect(rdStrip).toHaveTextContent("1.19");
+    expect(rdStrip).toHaveTextContent("238");
+    expect(rdStrip).toHaveTextContent("8.0");
+    expect(rdStrip).not.toHaveTextContent("Late-run form fade");
+  });
+
+  it("shows amber late-run form fade badge when running dynamics flags mechanical fatigue", () => {
+    const faded: WorkoutReportData = {
+      ...DEMO_WORKOUT_DATA,
+      running_dynamics: {
+        ...DEMO_WORKOUT_DATA.running_dynamics!,
+        late_drift: {
+          scope: "session",
+          speed_delta_pct: -2.0,
+          gct_delta_ms: 16.0,
+          cadence_delta: -5.0,
+          stride_delta_pct: -3.2,
+          vr_delta_pp: 0.9,
+          fatigue_flag: true,
+        },
+      },
+    };
+    render(<WorkoutReport data={faded} markdown={DEMO_WORKOUT_MARKDOWN} />);
+    expect(screen.getByTestId("running-dynamics-strip")).toHaveTextContent(
+      "Late-run form fade · GCT +16 ms · VR +0.9 pp · Cad -5 spm · Stride -3%",
+    );
   });
 
   it("drops the coach's Session Overview but keeps the assessment headings and takeaways", () => {

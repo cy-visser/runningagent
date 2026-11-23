@@ -225,6 +225,49 @@ export interface CheckinReportData {
     series: CheckinRecoveryPoint[];
   } | null;
   lt?: CheckinLtPaces | null;
+  dynamics?: CheckinRunningDynamics | null;
+}
+
+export interface LateRunDrift {
+  scope: string;
+  speed_delta_pct?: number | null;
+  gct_delta_ms?: number | null;
+  cadence_delta?: number | null;
+  stride_delta_pct?: number | null;
+  vr_delta_pp?: number | null;
+  fatigue_flag: boolean;
+}
+
+export interface LateFadeFlaggedRun {
+  date?: string | null;
+  title: string;
+  scope: string;
+  gct_delta_ms?: number | null;
+  vr_delta_pp?: number | null;
+  cadence_delta?: number | null;
+  stride_delta_pct?: number | null;
+  speed_delta_pct?: number | null;
+}
+
+export interface LateFadeSummary {
+  checked: number;
+  faded: number;
+  median_gct_delta_ms?: number | null;
+  median_vr_delta_pp?: number | null;
+  flagged_runs: LateFadeFlaggedRun[];
+}
+
+/** Pace-matched 4-week running form vs prior 4 weeks + recent 14d late-run fatigue. */
+export interface CheckinRunningDynamics {
+  ref_pace_s?: number | null;
+  gct_ms?: number | null;
+  gct_prev_ms?: number | null;
+  vert_ratio_pct?: number | null;
+  vert_ratio_prev_pct?: number | null;
+  vert_osc_cm?: number | null;
+  cadence_spm?: number | null;
+  stride_m?: number | null;
+  late_fade?: LateFadeSummary | null;
 }
 
 /** Pace (s/km) at LT1 (top of zone 2) / LT2 (LTHR): current 4-week fit vs previous 4 weeks. */
@@ -261,6 +304,14 @@ export interface TrendWeekPoint {
   /** Finish time implied by the week's LT2 pace for the goal / north-star distance (s). */
   implied_goal_s?: number | null;
   implied_ns_s?: number | null;
+  /** Rolling 4-week pace-normalized running dynamics @ fixed easy reference pace. */
+  rd_gct_ms?: number | null;
+  rd_vert_ratio_pct?: number | null;
+  rd_vert_osc_cm?: number | null;
+  rd_cadence?: number | null;
+  rd_stride_m?: number | null;
+  rd_fade_runs?: number;
+  rd_fade_checked?: number;
 }
 
 export interface TrendProgressItem {
@@ -346,6 +397,36 @@ export interface TrendPaceRow {
   pace: string;
 }
 
+export interface TrendDynamicsBand {
+  band: string;
+  minutes: number;
+  pace_s: number;
+  cadence?: number | null;
+  stride_m?: number | null;
+  gct_ms?: number | null;
+  vert_osc_cm?: number | null;
+  vert_ratio_pct?: number | null;
+}
+
+export interface TrendSpeedModulation {
+  from_band: string;
+  to_band: string;
+  speed_gain_pct: number;
+  cadence_from: number;
+  cadence_to: number;
+  cadence_share_pct: number;
+  stride_from_m: number;
+  stride_to_m: number;
+  stride_share_pct: number;
+}
+
+export interface TrendDynamicsSummary {
+  ref_pace_s?: number | null;
+  bands?: TrendDynamicsBand[];
+  speed_modulation?: TrendSpeedModulation | null;
+  late_fade?: LateFadeSummary | null;
+}
+
 export interface TrendReportData {
   version: number;
   window: { start: string | null; end: string | null };
@@ -362,6 +443,7 @@ export interface TrendReportData {
   goal?: TrendGoal | null;
   north_star?: TrendNorthStar | null;
   paces?: TrendPaceRow[];
+  dynamics?: TrendDynamicsSummary | null;
 }
 
 export type AuditSessionCategory =
@@ -430,6 +512,16 @@ export interface WorkoutReadiness {
   tone?: "emerald" | "amber" | "rose" | "slate";
 }
 
+export interface WorkoutRunningDynamics {
+  cadence_spm?: number | null;
+  stride_m?: number | null;
+  gct_ms?: number | null;
+  vert_osc_cm?: number | null;
+  vert_ratio_pct?: number | null;
+  gct_balance_pct?: number | null;
+  late_drift?: LateRunDrift | null;
+}
+
 /** Session-overview banner payload (mirrors `features/workout_analysis/helpers/web_report.py`). */
 export interface WorkoutReportData {
   version: number;
@@ -442,6 +534,7 @@ export interface WorkoutReportData {
   location?: string | null;
   structured?: boolean;
   tiles: WorkoutTile[];
+  running_dynamics?: WorkoutRunningDynamics | null;
   elevation?: {
     gain_m?: number | null;
     loss_m?: number | null;

@@ -102,3 +102,73 @@ def test_structured_deduplication_non_race_goal_omission_and_indoor_weather_skip
     assert "Crisp turnover" in compact_notes and "Saucony Endorphin Speed 5" in compact_notes
     assert "2.5 km easy aerobic jogging" not in compact_notes and "2.0 km easy jog" not in compact_notes
 
+
+def test_workout_analysis_running_dynamics_clean_extraction_and_banner(runner, tmp_path):
+    # Enrich the structured race workout on 2026-10-20 with realistic TP running dynamics (mm VertOsc + zero-contaminated dataChannels).
+    from running_coach.tests.fakes import CANOVA
+
+    rd_laps = []
+    for idx, lap in enumerate(CANOVA["laps"]):
+        item = dict(lap)
+        item["AverageStanceTime"] = 248.0 + idx * 4.0
+        item["AverageStepLength"] = 1140.0 - idx * 10.0
+        item["AverageVerticalOscillation"] = 94.0 + idx * 1.5  # mm in lapData
+        item["AverageVerticalRatio"] = 8  # TP integer rounding
+        rd_laps.append(item)
+    rd_series = []
+    for pt in CANOVA["series"]:
+        item = dict(pt)
+        item["StanceTime"] = 250.0
+        item["StepLength"] = 1130.0
+        item["VerticalOscillation"] = 9.5  # cm in series
+        item["VerticalRatio"] = 8
+        rd_series.append(item)
+    rd_file = tmp_path / "rd_telemetry.json"
+    rd_file.write_text(json.dumps({"data": rd_series}), encoding="utf-8")
+
+    analysis = {
+        "lapData": rd_laps,
+        "totals": {
+            "Avg heart rate": {"value": 146, "unit": "bpm"},
+            "Max heart rate": {"value": 162, "unit": "bpm"},
+            "NGP": {"value": 4.95, "unit": "min/km"},
+            "Pa:Hr": {"value": CANOVA["tp_pa_hr"], "unit": "%"},
+            "Duration": {"value": 1245, "unit": "s"},
+        },
+        "startTimestamp": "2026-10-20T09:00:00",
+        "data_file": str(rd_file),
+        "dataChannels": [
+            {"identifier": "StanceTime", "average": 210.0, "min": 0.0, "max": 280.0},
+            {"identifier": "StepLength", "average": 990.0, "min": 0.0, "max": 1200.0},
+            {"identifier": "VerticalOscillation", "average": 8.4, "min": 0.0, "max": 10.5},
+            {"identifier": "Cadence", "average": 170.0, "min": 0.0, "max": 184.0},
+            {"identifier": "HeartRate", "average": 146.0, "min": 110.0, "max": 162.0},
+        ],
+    }
+    runner.analysis_overrides["w_race_5k"] = analysis
+
+    ctx = runner.ctx()
+    out = asyncio.run(analyze_workout(ctx, date_str="2026-10-20"))
+    assert "**Running Dynamics (running-only):**" in out
+    assert "GCT 250 ms" in out
+    assert "Vert Ratio 8.4%" in out  # derived 9.5 / 1.13 = 8.41%
+    # Raw zero-contaminated TP dynamics channels are suppressed from the Channels line.
+    channels_line = next((ln for ln in out.splitlines() if ln.startswith("Channels:")), "")
+    assert "StanceTime" not in channels_line and "StepLength" not in channels_line
+    # Structured execution table uses the Form column when RD is present.
+    assert "| Form (Cad · SL · GCT · VR) |" in out
+
+    report = ctx.state["workout_report_data"]
+    rd = report["running_dynamics"]
+    assert rd is not None
+    assert rd["gct_ms"] == 250.0
+    assert rd["stride_m"] == 1.13
+    assert rd["vert_osc_cm"] == 9.5
+    assert rd["vert_ratio_pct"] == 8.41
+
+    # Persisted training_log record includes dynamics_version + dynamics.
+    saved = runner.training_records.get("w_race_5k")
+    assert saved is not None and saved["dynamics_version"] == 1
+    assert saved["dynamics"]["gct_ms"] == 250.0
+
+

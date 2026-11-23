@@ -5,6 +5,7 @@ plus intent-based tail guards (no arbitrary word-count caps). Action, mutation, 
 multi-tool prompts return `None` and stay on normal LLM routing.
 """
 
+import calendar
 from datetime import date, timedelta
 import re
 from typing import Any, Optional
@@ -35,15 +36,11 @@ _RANGE_RE = re.compile(
     re.IGNORECASE,
 )
 _NEXT_WEEKS_RE = re.compile(
-    r"^(?:(?P<prefix>.*?)\s+)?(?:for\s+|over\s+)?(?:the\s+)?next\s+(?P<n>\d{1,2})\s+weeks?$",
+    r"^(?:(?:(?:for|over)\s+)?(?:the\s+)?|(?P<prefix>.+?)\s+(?:(?:for|over)\s+)?(?:the\s+)?)next\s+(?P<n>\d{1,2})\s+weeks?$",
     re.IGNORECASE,
 )
-_TREND_LEAD_RE = re.compile(
-    r"^(?:please\s+|can\s+you\s+|could\s+you\s+)?(?:"
-    r"(?:analy[sz]e|review|show)\s+(?:my\s+)?(?:training\s+|running\s+)?trends"
-    r"|(?:my\s+)?(?:training\s+|running\s+)?trend\s+analysis"
-    r"|(?:my\s+)?training\s+trends"
-    r")(?:\s+(?:for|over|in)\s+(?:the\s+)?(?:last|past)\s+(?P<w>\d{1,2})\s+weeks?)?$",
+_NEXT_MONTHS_RE = re.compile(
+    r"^(?:(?:(?:for|over)\s+)?(?:the\s+)?|(?P<prefix>.+?)\s+(?:(?:for|over)\s+)?(?:the\s+)?)next\s+(?P<n>\d{1,2})\s+months?$",
     re.IGNORECASE,
 )
 _SCHEDULE_LEAD_RE = re.compile(
@@ -101,7 +98,7 @@ _OTHER_SKILL_DOMAIN_RE = re.compile(
 )
 _TAIL_OTHER_REPORT_RE = re.compile(
     r"\b(?:"
-    r"trends?|check[- ]?in|audit"
+    r"check[- ]?in|audit"
     r"|(?:analy[sz]e|review)\s+(?:my\s+|the\s+|today(?:'s|’s)?\s+|yesterday(?:'s|’s)?\s+)?"
     r"(?:run|ride|bike|cycling|workout|session|activity)"
     r"|yesterday(?:'s|’s)?\s+(?:run|ride|bike|workout|session)"
@@ -115,7 +112,7 @@ _MONTH_NAME_PATTERN = (
 )
 _TAIL_WINDOW_HINT_RE = re.compile(
     rf"\b(?:\d{{4}}-\d{{2}}-\d{{2}}"
-    rf"|(?:last|past|next)\s+\d{{1,2}}\s+weeks?"
+    rf"|(?:last|past|next)\s+\d{{1,2}}\s+(?:weeks?|months?)"
     rf"|{_MONTH_NAME_PATTERN}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?\b"
     rf"|\d{{1,2}}(?:st|nd|rd|th)?(?:\s+of)?\s+{_MONTH_NAME_PATTERN}\b)",
     re.IGNORECASE,
@@ -266,6 +263,30 @@ def _parse_next_weeks(
     return weeks
 
 
+def _add_months(d: date, months: int) -> date:
+    """Adds calendar months to `d`, clamping day-of-month to the target month's length."""
+    total = (d.year * 12 + (d.month - 1)) + months
+    year, month = divmod(total, 12)
+    month += 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+def _parse_next_months(
+    body: str, *, max_months: int, allowed_words: frozenset[str], targets: frozenset[str]
+) -> Optional[int]:
+    """Parser for `[prefix] next N months`."""
+    nm = _NEXT_MONTHS_RE.match(body)
+    if not nm:
+        return None
+    months = int(nm.group("n"))
+    p_tokens = _tokens((nm.group("prefix") or "").strip())
+    if not (1 <= months <= max_months) or any(t not in allowed_words for t in p_tokens):
+        return None
+    if p_tokens and not any(t in targets for t in p_tokens):
+        return None
+    return months
+
+
 def _infer_typed_audit(lead: str, today: date) -> Optional[dict[str, Any]]:
     if lead.lower() == "plan audit":
         return {"skill": "plan-audit", "args": {}}
@@ -292,6 +313,18 @@ def _infer_typed_audit(lead: str, today: date) -> Optional[dict[str, Any]]:
             "args": {"start_date": iso_date(today), "end_date": iso_date(today + timedelta(weeks=weeks))},
         }
 
+    months = _parse_next_months(
+        body,
+        max_months=6,
+        allowed_words=_UNDATED_AUDIT_WORDS | _DATED_AUDIT_TARGETS,
+        targets=_DATED_AUDIT_TARGETS,
+    )
+    if months is not None:
+        return {
+            "skill": "plan-audit",
+            "args": {"start_date": iso_date(today), "end_date": iso_date(_add_months(today, months))},
+        }
+
     tokens = _tokens(body)
     if tokens and all(t in _UNDATED_AUDIT_WORDS for t in tokens) and any(t in _UNDATED_AUDIT_TARGETS for t in tokens):
         return {"skill": "plan-audit", "args": {}}
@@ -312,7 +345,7 @@ def _infer_typed_schedule(lead: str, today: date) -> Optional[dict[str, Any]]:
     else:
         body = m.group("vbody").strip()
 
-    if re.search(r"\b(?:and|also|plus|then|trends?|audit|check[- ]?in)\b", body, re.IGNORECASE):
+    if re.search(r"\b(?:and|also|plus|then|audit|check[- ]?in)\b", body, re.IGNORECASE):
         return None
 
     date_range = _parse_date_range(
@@ -424,15 +457,6 @@ def _infer_typed_lead(lead: str, today: date) -> Optional[dict[str, Any]]:
         return audit
     if (sched := _infer_typed_schedule(lead, today)) is not None:
         return sched
-    tm = _TREND_LEAD_RE.match(lead)
-    if tm:
-        w_str = tm.group("w")
-        if w_str is not None:
-            weeks = int(w_str)
-            if not (6 <= weeks <= 52):
-                return None
-            return {"skill": "trend-analysis", "args": {"weeks": weeks}}
-        return {"skill": "trend-analysis", "args": {}}
     return _infer_typed_workout(lead, today)
 
 

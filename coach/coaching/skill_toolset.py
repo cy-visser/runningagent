@@ -15,7 +15,6 @@ from .quick_actions import is_plan_intake
 SKILL_FEATURES = (
     "nutrition_planner",
     "check_in_report",
-    "trend_analysis",
     "workout_analysis",
     "bike_workout_analysis",
     "plan_audit",

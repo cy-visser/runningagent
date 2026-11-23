@@ -13,6 +13,35 @@ from .goal_progress import implied_time_s
 TREND_REPORT_STATE_KEY = "trend_report_data"
 
 
+def _build_dynamics_payload(dynamics: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not dynamics:
+        return None
+    bands = [
+        {
+            "band": b["band"],
+            "minutes": int(b.get("minutes") or 0),
+            "pace_s": _opt_round(b.get("pace_s"), 1) or 0.0,
+            "cadence": _opt_round(b.get("cadence"), 1),
+            "stride_m": _opt_round(b.get("stride_m"), 3),
+            "gct_ms": _opt_round(b.get("gct_ms"), 1),
+            "vert_osc_cm": _opt_round(b.get("vert_osc_cm"), 2),
+            "vert_ratio_pct": _opt_round(b.get("vert_ratio_pct"), 2),
+        }
+        for b in (dynamics.get("bands") or [])
+    ]
+    ref_pace_s = _opt_round(dynamics.get("ref_pace_s"), 1)
+    sm = dynamics.get("speed_modulation")
+    fade = dynamics.get("late_fade")
+    if ref_pace_s is None and not bands and not fade:
+        return None
+    return {
+        "ref_pace_s": ref_pace_s,
+        "bands": bands,
+        "speed_modulation": sm,
+        "late_fade": fade,
+    }
+
+
 def trend_report_data(
     start: date,
     today: date,
@@ -23,6 +52,7 @@ def trend_report_data(
     key_run_label: Optional[str] = None,
     goal_progress: Optional[dict[str, Any]] = None,
     paces: Optional[list[tuple[str, str]]] = None,
+    dynamics: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Structured long-horizon trend payload (`trend_report_data`) stored in session state."""
     gp = goal_progress or {}
@@ -51,6 +81,13 @@ def trend_report_data(
             # Finish times implied by the week's LT2 pace (threshold-based proxy for the race-time chart).
             "implied_goal_s": _opt_round(implied_time_s(r.get("lt2_pace_s"), goal_label), 0),
             "implied_ns_s": _opt_round(implied_time_s(r.get("lt2_pace_s"), ns_label), 0) if ns_label else None,
+            "rd_gct_ms": _opt_round(r.get("rd_gct_ms"), 1),
+            "rd_vert_ratio_pct": _opt_round(r.get("rd_vert_ratio_pct"), 2),
+            "rd_vert_osc_cm": _opt_round(r.get("rd_vert_osc_cm"), 2),
+            "rd_cadence": _opt_round(r.get("rd_cadence"), 1),
+            "rd_stride_m": _opt_round(r.get("rd_stride_m"), 3),
+            "rd_fade_runs": int(r.get("rd_fade_runs") or 0),
+            "rd_fade_checked": int(r.get("rd_fade_checked") or 0),
         }
         for r in (rows or [])
     ]
@@ -108,4 +145,5 @@ def trend_report_data(
         "goal": gp.get("goal"),
         "north_star": gp.get("north_star"),
         "paces": [{"name": name, "pace": pace} for name, pace in (paces or [])],
+        "dynamics": _build_dynamics_payload(dynamics),
     }

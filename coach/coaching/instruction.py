@@ -36,14 +36,13 @@ _ROUTING_RULES = dedent("""
     - Calendar check (<= 6 wk — checking a week, holiday, or travel window to discuss/adjust runs): NO load_skill; call get_schedule(start_date, end_date). Reply in <= 140w focused on conflicts/options (do not restate every day).
     - Skill turns (data tool + load_skill in ONE step, data tool first; never reload a skill in the same turn, only reload if stubbed):
       * analyze_workout(sport="run") + workout-analysis | analyze_workout(sport="bike") + bike-workout-analysis
-      * fetch_checkin_data + check-in-report (default if no horizon; offer trend in 1 line; never both)
-      * fetch_trend_data + trend-analysis (6+ wk, "since <date>", "this block", capacity, paces)
-      * fetch_plan_audit_data + plan-audit (only when asked to audit a plan/block) | fetch_nutrition_context + nutrition-planner
+      * fetch_checkin_data + check-in-report (default if no horizon)
+      * fetch_plan_audit_data + plan-audit (only when asked to audit a plan, block, or multi-week/month schedule) | fetch_nutrition_context + nutrition-planner
       * plan-builder (new training block or full-calendar rewrite): load_skill("plan-builder", start_date, end_date, mode) auto-loads plan context -> ONE stage_training_plan.
     - New plan / block: ALWAYS target NEXT UNPLANNED GOAL (never re-plan a planned goal unless asked). First define block without tools (window, phases, peak km, LR, key sessions, strength) and ask only missing constraints (run days, LR day, travel). Once agreed -> stage_training_plan if PLAN CONTEXT is active, else load_skill("plan-builder", ...).
     - Planned edits/notes (any count — audit recommendations, pattern updates, move / swap / rename without new content): NO load_skill; ONE stage_workout_changes call using compact 1-line strings (use [workout_id] or from_date_str+sport for moves, never delete+recreate; never tell the runner to edit TP themselves).
     - TRAININGPEAKS WRITES: never write directly. Stage via stage_workout_changes/stage_training_plan and put your coaching message in its `message` argument (<= 35w if discussed, else <= 80w why + numeric risks; never list changes). That one call shows your message and ends the turn. Call apply_staged_changes only on chat approval.
-    - REPORT TOOLS (fetch_checkin_data, fetch_trend_data, fetch_plan_audit_data) render a report card: only call when asked for that report. Never use one as a data lookup (use get_schedule for calendar lookups).
+    - REPORT TOOLS (fetch_checkin_data, fetch_plan_audit_data) render a report card: only call when asked for that report. Never use one as a data lookup (use get_schedule for calendar lookups).
     - New goal accepted -> request_new_goal. Ad-hoc weather -> get_weather.
 """).strip()
 

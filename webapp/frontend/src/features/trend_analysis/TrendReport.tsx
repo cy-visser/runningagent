@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   CircleDashed,
   Compass,
+  Footprints,
   Gauge,
   Layers,
   Target,
@@ -13,6 +14,7 @@ import {
 import { extractLeadingStatus, formatDuration, formatShortDate } from "../../shared/format";
 import type { StatusPillTone } from "../../shared/format";
 import type {
+  TrendDynamicsSummary,
   TrendGoal,
   TrendLevelItem,
   TrendNorthStar,
@@ -24,6 +26,7 @@ import { RichMarkdown, StatusBadge, StatusPill, directionFromArrow } from "../..
 
 const TrendCharts = lazy(() => import("./TrendCharts"));
 const GoalCharts = lazy(() => import("./GoalCharts"));
+const DynamicsCharts = lazy(() => import("./DynamicsCharts"));
 
 const LEVEL_STEP_KM = 10;
 
@@ -152,6 +155,128 @@ function PacesTable({ paces }: { paces: TrendPaceRow[] }) {
   );
 }
 
+function RunningMechanicsCard({ dynamics }: { dynamics: TrendDynamicsSummary }) {
+  const bands = dynamics.bands ?? [];
+  const sm = dynamics.speed_modulation;
+  const fade = dynamics.late_fade;
+  if (bands.length === 0 && (!fade || fade.checked === 0)) return null;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-card space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Footprints className="h-4 w-4 text-orange-500" />
+          <h4 className="font-display text-sm font-bold text-slate-900">
+            Running Mechanics &amp; Late-Run Durability
+          </h4>
+          {bands.length > 0 && (
+            <span className="text-[0.6875rem] text-slate-500">
+              by pace band (last 6 weeks)
+            </span>
+          )}
+        </div>
+        {fade && fade.checked > 0 && (
+          <StatusBadge
+            tone={fade.faded > 0 ? "amber" : "emerald"}
+            icon={fade.faded > 0 ? AlertTriangle : CheckCircle2}
+            size="sm"
+            label={
+              fade.faded > 0
+                ? `${fade.faded}/${fade.checked} runs late-run fade`
+                : `Form held (${fade.checked}/${fade.checked} runs)`
+            }
+          />
+        )}
+      </div>
+
+      {bands.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="text-[0.6875rem] uppercase tracking-wider text-slate-500">
+                <th className="py-1.5 pr-3 font-semibold">Band</th>
+                <th className="py-1.5 pr-3 font-semibold text-right">Min</th>
+                <th className="py-1.5 pr-3 font-semibold text-right">Pace</th>
+                <th className="py-1.5 pr-3 font-semibold text-right">Cadence</th>
+                <th className="py-1.5 pr-3 font-semibold text-right">Stride</th>
+                <th className="py-1.5 pr-3 font-semibold text-right">GCT</th>
+                <th className="py-1.5 pr-3 font-semibold text-right">Vert Osc</th>
+                <th className="py-1.5 font-semibold text-right">Vert Ratio</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 tabular-nums">
+              {bands.map((b) => (
+                <tr key={b.band}>
+                  <td className="py-2 pr-3 font-semibold text-slate-900 whitespace-nowrap">
+                    {b.band}
+                  </td>
+                  <td className="py-2 pr-3 text-right text-slate-500">{b.minutes}</td>
+                  <td className="py-2 pr-3 text-right font-medium text-slate-800 whitespace-nowrap">
+                    {formatDuration(b.pace_s)}/km
+                  </td>
+                  <td className="py-2 pr-3 text-right text-slate-700 whitespace-nowrap">
+                    {b.cadence != null ? `${b.cadence.toFixed(0)} spm` : "—"}
+                  </td>
+                  <td className="py-2 pr-3 text-right text-slate-700 whitespace-nowrap">
+                    {b.stride_m != null ? `${b.stride_m.toFixed(2)} m` : "—"}
+                  </td>
+                  <td className="py-2 pr-3 text-right text-slate-700 whitespace-nowrap">
+                    {b.gct_ms != null ? `${b.gct_ms.toFixed(0)} ms` : "—"}
+                  </td>
+                  <td className="py-2 pr-3 text-right text-slate-700 whitespace-nowrap">
+                    {b.vert_osc_cm != null ? `${b.vert_osc_cm.toFixed(1)} cm` : "—"}
+                  </td>
+                  <td className="py-2 text-right font-semibold text-slate-900 whitespace-nowrap">
+                    {b.vert_ratio_pct != null ? `${b.vert_ratio_pct.toFixed(1)}%` : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {sm && (
+        <div className="rounded-xl border border-slate-100 bg-slate-50/70 px-3.5 py-2 text-xs text-slate-700 tabular-nums">
+          <span className="font-semibold text-slate-900">
+            Speed modulation ({sm.from_band} → {sm.to_band}, +{sm.speed_gain_pct.toFixed(1)}%):
+          </span>{" "}
+          {sm.cadence_share_pct}% cadence ({sm.cadence_from.toFixed(0)}→{sm.cadence_to.toFixed(0)} spm) ·{" "}
+          {sm.stride_share_pct}% stride ({sm.stride_from_m.toFixed(2)}→{sm.stride_to_m.toFixed(2)} m)
+        </div>
+      )}
+
+      {fade && fade.checked > 0 && (
+        <div className="border-t border-slate-100 pt-2.5 text-xs text-slate-600 space-y-1 tabular-nums">
+          <p>
+            <span className="font-semibold text-slate-800">Late-run durability:</span>{" "}
+            {fade.faded} of {fade.checked} runs flagged
+            {fade.median_gct_delta_ms != null
+              ? ` · median GCT ${fade.median_gct_delta_ms > 0 ? "+" : ""}${fade.median_gct_delta_ms.toFixed(0)} ms`
+              : ""}
+            {fade.median_vr_delta_pp != null
+              ? ` · median VR ${fade.median_vr_delta_pp > 0 ? "+" : ""}${fade.median_vr_delta_pp.toFixed(2)} pp`
+              : ""}
+          </p>
+          {fade.flagged_runs.slice(0, 3).map((r, i) => {
+            const parts: string[] = [];
+            if (r.gct_delta_ms != null) parts.push(`GCT ${r.gct_delta_ms > 0 ? "+" : ""}${r.gct_delta_ms.toFixed(0)} ms`);
+            if (r.vr_delta_pp != null) parts.push(`VR ${r.vr_delta_pp > 0 ? "+" : ""}${r.vr_delta_pp.toFixed(2)} pp`);
+            if (r.cadence_delta != null) parts.push(`Cad ${r.cadence_delta > 0 ? "+" : ""}${r.cadence_delta.toFixed(0)} spm`);
+            if (r.stride_delta_pct != null) parts.push(`SL ${r.stride_delta_pct > 0 ? "+" : ""}${r.stride_delta_pct.toFixed(1)}%`);
+            return (
+              <p key={`${r.date}-${i}`}>
+                <span className="font-semibold text-amber-700">{r.date ? formatShortDate(r.date) : "Run"}</span>{" "}
+                · {r.title} ({r.scope}): {parts.join(", ")}
+              </p>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TrendReport({ data, markdown }: TrendReportProps) {
   const { outlook, levels, progress } = data;
   const ladder = ladderLevels(levels);
@@ -261,6 +386,10 @@ export function TrendReport({ data, markdown }: TrendReportProps) {
             northStar={data.north_star}
             provenKm={outlook.proven_km}
           />
+          <DynamicsCharts
+            weeks={data.weeks}
+            refPaceS={data.dynamics?.ref_pace_s}
+          />
         </div>
       </Suspense>
 
@@ -346,6 +475,9 @@ export function TrendReport({ data, markdown }: TrendReportProps) {
 
       {/* Training Paces */}
       {data.paces && data.paces.length > 0 && <PacesTable paces={data.paces} />}
+
+      {/* Running Mechanics & Late-Run Durability */}
+      {data.dynamics && <RunningMechanicsCard dynamics={data.dynamics} />}
 
       {/* Coach Recommendations (the only LLM-written text) */}
       {markdown && (

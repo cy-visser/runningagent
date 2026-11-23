@@ -8,7 +8,7 @@ description: Short-horizon (14d back + 7d ahead) execution, recovery, CTL/LT, an
 ## Analysis Pillars (follow `GOAL REASONING`; include **North Star Progress** only for goal plans)
 
 1. **Intensity & Volume**: Separate easy Z1/Z2 discipline from structured quality; judge `Volume vs prior week` against CTL, held volume, and recovery (state `%` on risks; treat cutbacks/returns normally; never flag `Partial week` rows).
-2. **Physiology & Notes**: Weigh `TSB` and `ATL:CTL` (reasoning only) against HRV/RHR/sleep (`5d vs 28d`), recent hard effort, weather, and **Calendar Notes**.
+2. **Physiology, Mechanics & Notes**: Weigh `TSB` and `ATL:CTL` (reasoning only) against HRV/RHR/sleep (`5d vs 28d`), recent hard effort, weather, **Calendar Notes**, and **Running Dynamics** (pace-matched 4-wk vs prior 4-wk & 14d late-run drift). **Signal-only on mechanics**: mention form ONLY if pace-matched GCT/Vert Ratio shifted meaningfully or late-run fade recurred (e.g., `2+` runs or a key long/threshold run); never state that cadence, stride, or form is "ok/fine/solid".
 3. **Goal Trajectory**:
    - **LT1 / LT2 pace** (`4-wk vs prior 4-wk`): weigh relevant threshold (`extrapolated` = lower confidence).
    - **CTL build vs Taper**: judge `pts/wk` realism against absorption and weeks left; in taper, CTL drops by design—judge freshness vs sharpness, never cram load.

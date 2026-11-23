@@ -14,6 +14,12 @@ from ...shared.health_metrics import HEALTH_BASELINE_DAYS, extract_health_metric
 from ...shared.hr_pace_fit import LT_FIT_WEEKS
 from ...shared.parallel_fetch import gather_labeled
 from ...shared.runner_identity import profile_user_id
+from ...shared.running_dynamics import (
+    FORM_FIT_WEEKS,
+    form_at_speed,
+    late_fade_summary,
+    reference_easy_speed,
+)
 from ...shared.weekly_buckets import build_week_buckets
 from ...shared.workout_status import partition_workouts_by_date
 from .helpers.checkin_summary_text import compile_checkin_summary
@@ -68,8 +74,8 @@ async def fetch_checkin_data(
     }
     user_id = profile_user_id(profile)
     if user_id:
-        # Training log (12w laps + start_position) for goal projection, LT1/LT2 fits and run weather.
-        records_start = min(workouts_start, today_date - timedelta(weeks=2 * LT_FIT_WEEKS))
+        # Training log (12w laps + start_position) for goal projection, LT1/LT2 fits, form dynamics, and run weather.
+        records_start = min(workouts_start, today_date - timedelta(weeks=2 * max(LT_FIT_WEEKS, FORM_FIT_WEEKS)))
         fetches["training records"] = firestore.list_training_records(
             user_id, iso_date(records_start), iso_date(today_date)
         )
@@ -128,17 +134,32 @@ async def fetch_checkin_data(
     await save_projection_to_cache(profile, race_projection, today_date, trigger="check_in")
 
     # LT1 (top of TP HR zone 2) / LT2 (LTHR) paces, same fit as the trend report.
+    records = raw.get("training records") or []
     zones = extract_hr_zones(raw["athlete settings"])
     lt = checkin_lt_paces(
-        raw.get("training records") or [], today_date,
+        records, today_date,
         extract_thresholds(raw["athlete settings"]).get("lthr"),
         zones[1]["max"] if len(zones) >= 2 else None,
+    )
+
+    # Pace-matched running dynamics (4-wk vs prior 4-wk) + 14d late-run drift from existing training_log.
+    ref_speed = reference_easy_speed(records)
+    now_form = form_at_speed(records, today_date, ref_speed)
+    prev_form = (
+        form_at_speed(records, today_date - timedelta(weeks=FORM_FIT_WEEKS), ref_speed)
+        if now_form else None
+    )
+    fade_14d = late_fade_summary(records, since_date=q_start)
+    checkin_dynamics = (
+        {"now": now_form, "prev": prev_form, "late_fade": fade_14d}
+        if (now_form or fade_14d) else None
     )
 
     # The web report renders the metrics, projection drivers and charts from this payload; the
     # coach reasons over the same numbers in the summary below and writes only the judgement.
     tool_context.state[CHECKIN_REPORT_STATE_KEY] = checkin_report_data(
-        q_start, q_end, fitness_data, race_projection, weekly_totals, dated_metrics, lt_paces=lt,
+        q_start, q_end, fitness_data, race_projection, weekly_totals, dated_metrics,
+        lt_paces=lt, dynamics=checkin_dynamics,
     )
 
     summary = compile_checkin_summary(
@@ -154,6 +175,7 @@ async def fetch_checkin_data(
         weekly_totals=weekly_totals,
         recovery_baseline=recovery_baseline,
         lt_paces=lt,
+        dynamics=checkin_dynamics,
     )
     ns_progress = north_star_progress(profile, race_projection, today_date)
     return f"{summary}\n\n{ns_progress}" if ns_progress else summary

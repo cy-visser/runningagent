@@ -3,6 +3,7 @@
 from typing import Any, Optional
 
 from .dates import parse_date
+from .running_dynamics import extract_lap_dynamics
 from .tp_payloads import coerce_mcp_payload
 from .units import as_float, pace_seconds, to_km
 
@@ -36,7 +37,7 @@ def summarize_analysis(raw: Any, workout: dict) -> Optional[dict]:
         ngp_s = pace_seconds(lap.get("NormalizedGradedPace"))
         ref_pace = ngp_s or pace_s
         speed = 1000.0 / ref_pace if ref_pace else (dist_km * 1000.0 / dur if dist_km else None)
-        laps.append({
+        lap_row = {
             "duration_s": round(dur, 1),
             "distance_km": round(dist_km, 3),
             "pace_s": pace_s,
@@ -45,7 +46,9 @@ def summarize_analysis(raw: Any, workout: dict) -> Optional[dict]:
             "hr": as_float(lap.get("AverageHeartRate")),
             "decoupling": as_float(lap.get("PacePulseDecoupling")),
             "start_km": round(cum_km, 3),
-        })
+        }
+        lap_row.update(extract_lap_dynamics(lap))
+        laps.append(lap_row)
         cum_km += dist_km
 
     d = parse_date(workout.get("date") or workout.get("start_time"))

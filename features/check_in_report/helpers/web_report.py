@@ -74,6 +74,27 @@ def _build_lt_payload(lt: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
     }
 
 
+def _build_dynamics_payload(dynamics: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Pace-matched 4-week running form vs prior 4 weeks + recent 14d late-run drift, or None."""
+    if not dynamics:
+        return None
+    now, prev = dynamics.get("now") or {}, dynamics.get("prev") or {}
+    fade = dynamics.get("late_fade")
+    if not now and not fade:
+        return None
+    return {
+        "ref_pace_s": _opt_round(now.get("ref_pace_s"), 1),
+        "gct_ms": _opt_round(now.get("gct_ms"), 1),
+        "gct_prev_ms": _opt_round(prev.get("gct_ms"), 1),
+        "vert_ratio_pct": _opt_round(now.get("vert_ratio_pct"), 2),
+        "vert_ratio_prev_pct": _opt_round(prev.get("vert_ratio_pct"), 2),
+        "vert_osc_cm": _opt_round(now.get("vert_osc_cm"), 2),
+        "cadence_spm": _opt_round(now.get("cadence"), 1),
+        "stride_m": _opt_round(now.get("stride_m"), 3),
+        "late_fade": fade,
+    }
+
+
 def checkin_report_data(
     q_start: date,
     q_end: date,
@@ -82,6 +103,7 @@ def checkin_report_data(
     weekly_totals: Optional[list[dict[str, Any]]],
     dated_metrics: Optional[dict[str, list[tuple[date, float]]]],
     lt_paces: Optional[dict[str, Any]] = None,
+    dynamics: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Structured check-in payload (`checkin_report_data`) stored in session state."""
     fit = fitness_data or {}
@@ -182,4 +204,5 @@ def checkin_report_data(
         "weeks": weeks_payload,
         "recovery": _build_recovery_payload(dated_metrics, q_start, q_end),
         "lt": _build_lt_payload(lt_paces),
+        "dynamics": _build_dynamics_payload(dynamics),
     }

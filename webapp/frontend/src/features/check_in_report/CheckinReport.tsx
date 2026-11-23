@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Flame,
+  Footprints,
   Gauge,
   HeartPulse,
   Info,
@@ -23,6 +24,7 @@ import type {
   CheckinDriver,
   CheckinLtPaces,
   CheckinReportData,
+  CheckinRunningDynamics,
 } from "../../shared/types";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { RichMarkdown, StatusBadge } from "../../shared/RichMarkdown";
@@ -127,6 +129,155 @@ function ThresholdPacesCard({ lt }: { lt: CheckinLtPaces }) {
   );
 }
 
+function DynamicsDelta({
+  now,
+  prev,
+  unit,
+  digits = 0,
+  threshold,
+}: {
+  now?: number | null;
+  prev?: number | null;
+  unit: string;
+  digits?: number;
+  threshold: number;
+}) {
+  if (now == null || prev == null) return null;
+  const delta = now - prev;
+  const stable = Math.abs(delta) < threshold;
+  const tone = stable ? "text-slate-500" : delta < 0 ? "text-emerald-600" : "text-rose-600";
+  const sign = delta > 0 ? "+" : "";
+  return (
+    <span className={`text-xs font-semibold tabular-nums ${tone}`}>
+      {sign}
+      {delta.toFixed(digits)} {unit} vs prior 4 wk
+    </span>
+  );
+}
+
+function RunningDynamicsCard({ dynamics }: { dynamics: CheckinRunningDynamics }) {
+  const hasMetrics =
+    dynamics.gct_ms != null ||
+    dynamics.vert_ratio_pct != null ||
+    dynamics.cadence_spm != null ||
+    dynamics.stride_m != null ||
+    dynamics.vert_osc_cm != null;
+  const fade = dynamics.late_fade;
+  if (!hasMetrics && (!fade || fade.checked === 0)) return null;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Footprints className="h-4 w-4 text-orange-500" />
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Running Form &amp; Dynamics
+          </p>
+          {dynamics.ref_pace_s != null && (
+            <span className="text-xs text-slate-400 tabular-nums">
+              @ {formatDuration(dynamics.ref_pace_s)}/km (4 wk)
+            </span>
+          )}
+        </div>
+        {fade && fade.checked > 0 && (
+          <StatusBadge
+            tone={fade.faded > 0 ? "amber" : "emerald"}
+            icon={fade.faded > 0 ? AlertTriangle : CheckCircle2}
+            label={
+              fade.faded > 0
+                ? `${fade.faded}/${fade.checked} runs late-run fade`
+                : `Form held (${fade.checked}/${fade.checked} runs)`
+            }
+            size="sm"
+          />
+        )}
+      </div>
+
+      {hasMetrics && (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {dynamics.gct_ms != null && (
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                Ground Contact
+              </p>
+              <p className="mt-0.5 font-display text-lg font-bold text-slate-900 tabular-nums">
+                {dynamics.gct_ms.toFixed(0)} <span className="text-xs font-medium text-slate-500">ms</span>
+              </p>
+              <DynamicsDelta now={dynamics.gct_ms} prev={dynamics.gct_prev_ms} unit="ms" digits={0} threshold={3} />
+            </div>
+          )}
+          {dynamics.vert_ratio_pct != null && (
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                Vert Ratio
+              </p>
+              <p className="mt-0.5 font-display text-lg font-bold text-slate-900 tabular-nums">
+                {dynamics.vert_ratio_pct.toFixed(1)}
+                <span className="text-xs font-medium text-slate-500">%</span>
+              </p>
+              <DynamicsDelta
+                now={dynamics.vert_ratio_pct}
+                prev={dynamics.vert_ratio_prev_pct}
+                unit="pp"
+                digits={2}
+                threshold={0.2}
+              />
+            </div>
+          )}
+          {dynamics.cadence_spm != null && (
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                Cadence
+              </p>
+              <p className="mt-0.5 font-display text-lg font-bold text-slate-900 tabular-nums">
+                {dynamics.cadence_spm.toFixed(0)} <span className="text-xs font-medium text-slate-500">spm</span>
+              </p>
+            </div>
+          )}
+          {dynamics.stride_m != null && (
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                Stride Length
+              </p>
+              <p className="mt-0.5 font-display text-lg font-bold text-slate-900 tabular-nums">
+                {dynamics.stride_m.toFixed(2)} <span className="text-xs font-medium text-slate-500">m</span>
+              </p>
+            </div>
+          )}
+          {dynamics.vert_osc_cm != null && (
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                Vert Osc
+              </p>
+              <p className="mt-0.5 font-display text-lg font-bold text-slate-900 tabular-nums">
+                {dynamics.vert_osc_cm.toFixed(1)} <span className="text-xs font-medium text-slate-500">cm</span>
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {fade && fade.flagged_runs.length > 0 && (
+        <div className="mt-3 border-t border-slate-100 pt-2 text-xs text-slate-600 space-y-1">
+          {fade.flagged_runs.map((r, i) => {
+            const parts: string[] = [];
+            if (r.gct_delta_ms != null) parts.push(`GCT ${r.gct_delta_ms > 0 ? "+" : ""}${r.gct_delta_ms.toFixed(0)} ms`);
+            if (r.vr_delta_pp != null) parts.push(`VR ${r.vr_delta_pp > 0 ? "+" : ""}${r.vr_delta_pp.toFixed(2)} pp`);
+            if (r.cadence_delta != null) parts.push(`Cad ${r.cadence_delta > 0 ? "+" : ""}${r.cadence_delta.toFixed(0)} spm`);
+            if (r.stride_delta_pct != null) parts.push(`SL ${r.stride_delta_pct > 0 ? "+" : ""}${r.stride_delta_pct.toFixed(1)}%`);
+            return (
+              <p key={`${r.date}-${i}`} className="tabular-nums">
+                <span className="font-semibold text-amber-700">{r.date ? formatShortDate(r.date) : "Run"}</span>{" "}
+                · {r.title} ({r.scope}): {parts.join(", ")}
+              </p>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Leading status emoji in a driver cell ("🟢 readiness") renders as a small badge. */
 function ImpliedCell({ text }: { text: string }) {
   const status = text ? extractLeadingStatus(text) : null;
@@ -170,7 +321,7 @@ function ProjectionDrivers({ drivers }: { drivers: CheckinDriver[] }) {
 }
 
 export function CheckinReport({ data, markdown }: CheckinReportProps) {
-  const { ctl, projection, recovery, lt } = data;
+  const { ctl, projection, recovery, lt, dynamics } = data;
 
   const rampBadge =
     ctl.ramp_tier === "safe"
@@ -363,6 +514,8 @@ export function CheckinReport({ data, markdown }: CheckinReportProps) {
           </div>
         </div>
       </div>
+
+      {dynamics && <RunningDynamicsCard dynamics={dynamics} />}
 
       {projection?.drivers && projection.drivers.length > 0 && (
         <ProjectionDrivers drivers={projection.drivers} />

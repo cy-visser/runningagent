@@ -11,6 +11,11 @@ from datetime import date
 from typing import Any, Optional
 
 from ....shared.athlete_settings import sport_family
+from ....shared.running_dynamics import (
+    compute_late_run_drift,
+    extract_session_dynamics,
+    has_running_dynamics,
+)
 from ....shared.session_state import WORKOUT_REPORT_STATE_KEY
 from ....shared.units import as_float, pace_seconds, to_km
 from ....shared.web_report_payload import REPORT_DATA_VERSION, iso_or_none, round_or_none
@@ -255,6 +260,32 @@ def _weather(conditions: Optional[dict]) -> Optional[dict]:
     return w if any(v is not None for v in w.values()) else None
 
 
+def _running_dynamics_payload(
+    family: str,
+    data: dict,
+    series: Optional[list[dict]],
+    laps: list[dict],
+    alignment: Any,
+    dynamics: Optional[dict],
+    late_drift: Optional[dict],
+) -> Optional[dict[str, Any]]:
+    if family != "run":
+        return None
+    dyn = dynamics if dynamics is not None else extract_session_dynamics(series, laps, data.get("dataChannels"))
+    if not has_running_dynamics(dyn):
+        return None
+    drift = late_drift if late_drift is not None else compute_late_run_drift(series, laps, alignment)
+    return {
+        "cadence_spm": round_or_none(dyn.get("cadence"), 0),
+        "stride_m": round_or_none(dyn.get("stride_m"), 2),
+        "gct_ms": round_or_none(dyn.get("gct_ms"), 0),
+        "vert_osc_cm": round_or_none(dyn.get("vert_osc_cm"), 1),
+        "vert_ratio_pct": round_or_none(dyn.get("vert_ratio_pct"), 2),
+        "gct_balance_pct": round_or_none(dyn.get("gct_balance"), 1),
+        "late_drift": drift,
+    }
+
+
 def workout_report_data(
     data: dict,
     meta: dict,
@@ -272,6 +303,8 @@ def workout_report_data(
     start_position: Optional[dict],
     structured: bool,
     other_sessions: Optional[list[dict]] = None,
+    running_dynamics: Optional[dict] = None,
+    late_drift: Optional[dict] = None,
 ) -> dict[str, Any]:
     """Structured session-overview payload (`workout_report_data`) stored in session state."""
     laps = data.get("lapData") if isinstance(data.get("lapData"), list) else []
@@ -288,6 +321,9 @@ def workout_report_data(
         "location": _location(profile, start_position),
         "structured": bool(structured),
         "tiles": _tiles(data, meta_metrics, sport, _decoupling(series, laps, sport, alignment)),
+        "running_dynamics": _running_dynamics_payload(
+            family, data, series, laps, alignment, running_dynamics, late_drift,
+        ),
         "elevation": _elevation(data, series),
         "hr_zones": _hr_zones(series, hr_zones),
         "weather": _weather(weather),

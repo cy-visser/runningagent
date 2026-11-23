@@ -5,6 +5,11 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 from ..analysis_summary import is_complete_summary, summarize_analysis
+from ..running_dynamics import (
+    DYNAMICS_SCHEMA_VERSION,
+    compute_late_run_drift,
+    extract_session_dynamics,
+)
 from ..sports import RUN_SPORTS, is_quality_title, is_race_title
 from ..units import as_float, pace_seconds
 from ..workout_structure import (
@@ -176,6 +181,7 @@ def build_training_record(b: WorkoutBundle, now: datetime) -> Optional[dict]:
     })
     if summary is None or not summary["laps"]:
         record["kind"] = classify_kind(record["title"], distance_km, [])
+        record["dynamics_version"] = DYNAMICS_SCHEMA_VERSION
         return record                                   # no lap data (e.g. manual entry): light run record
     if not is_complete_summary(summary):
         return None                                     # laps still syncing
@@ -191,6 +197,8 @@ def build_training_record(b: WorkoutBundle, now: datetime) -> Optional[dict]:
     intervals = work_intervals(alignment, (structured or {}).get("primaryIntensityMetric"), lthr)
     window = pa_hr_window(series_end(b.series, raw_laps), alignment)
     session_dec = windowed_decoupling(b.series, raw_laps, *window, sport)[0] if window else None
+    dynamics = extract_session_dynamics(b.series, raw_laps, analysis.get("dataChannels"))
+    late_drift = compute_late_run_drift(b.series, raw_laps, alignment)
     record.update({
         "kind": classify_kind(record["title"], distance_km, intervals),
         "thresholds": {"lthr": lthr, "threshold_speed": b.thresholds.get("threshold_speed")},
@@ -201,5 +209,8 @@ def build_training_record(b: WorkoutBundle, now: datetime) -> Optional[dict]:
         "ef": round(60000.0 / ngp_s / avg_hr, 3) if ngp_s and avg_hr else None,
         "work_intervals": intervals,
         "laps": summary["laps"],
+        "dynamics_version": DYNAMICS_SCHEMA_VERSION,
+        "dynamics": dynamics,
+        "late_drift": late_drift,
     })
     return record
