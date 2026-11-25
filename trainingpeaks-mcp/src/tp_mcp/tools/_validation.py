@@ -204,12 +204,28 @@ class PeaksInput(BaseModel):
     sport: Literal["Bike", "Run"]
     pr_type: str
     days: int = Field(default=3650, ge=1, le=36500)
+    start_date: date_type | None = None
+    end_date: date_type | None = None
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def coerce_string(cls, v: object) -> object:
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return date_type.fromisoformat(v)
+        return v
 
     @model_validator(mode="after")
-    def check_pr_type(self) -> "PeaksInput":
+    def check_pr_type_and_dates(self) -> "PeaksInput":
         from tp_mcp.tools.peaks import BIKE_PR_TYPES, RUN_PR_TYPES
 
         valid = BIKE_PR_TYPES if self.sport == "Bike" else RUN_PR_TYPES
         if self.pr_type not in valid:
             raise ValueError(f"Invalid pr_type '{self.pr_type}' for {self.sport}. Valid: {', '.join(valid)}")
+        if self.start_date and self.end_date:
+            if self.start_date > self.end_date:
+                raise ValueError("start_date must be before or equal to end_date")
+        elif self.start_date or self.end_date:
+            raise ValueError("Provide both start_date and end_date, or neither")
         return self

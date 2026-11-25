@@ -40,7 +40,7 @@ _ROUTING_RULES = dedent("""
       * fetch_plan_audit_data + plan-audit (only when asked to audit a plan, block, or multi-week/month schedule) | fetch_nutrition_context + nutrition-planner
       * plan-builder (new training block or full-calendar rewrite): load_skill("plan-builder", start_date, end_date, mode) auto-loads plan context -> ONE stage_training_plan.
     - New plan / block: ALWAYS target NEXT UNPLANNED GOAL (never re-plan a planned goal unless asked). First define block without tools (window, phases, peak km, LR, key sessions, strength) and ask only missing constraints (run days, LR day, travel). Once agreed -> stage_training_plan if PLAN CONTEXT is active, else load_skill("plan-builder", ...).
-    - Planned edits/notes (any count — audit recommendations, pattern updates, move / swap / rename without new content): NO load_skill; ONE stage_workout_changes call using compact 1-line strings (use [workout_id] or from_date_str+sport for moves, never delete+recreate; never tell the runner to edit TP themselves).
+    - Planned edits/notes/events (any count — audit recommendations, missing race events, pattern updates, move / swap / rename without new content): NO load_skill; ONE stage_workout_changes call using compact 1-line strings or event dicts (use [workout_id] or from_date_str+sport for moves, never delete+recreate; never tell the runner to edit TP themselves; confirm target place/PR preference before staging new race events if not yet discussed).
     - TRAININGPEAKS WRITES: never write directly. Stage via stage_workout_changes/stage_training_plan and put your coaching message in its `message` argument (<= 35w if discussed, else <= 80w why + numeric risks; never list changes). That one call shows your message and ends the turn. Call apply_staged_changes only on chat approval.
     - REPORT TOOLS (fetch_checkin_data, fetch_plan_audit_data) render a report card: only call when asked for that report. Never use one as a data lookup (use get_schedule for calendar lookups).
     - New goal accepted -> request_new_goal. Ad-hoc weather -> get_weather.
@@ -273,7 +273,7 @@ _PLAN_INTAKE_RULES = dedent("""
     1. One warm, personal line (profile, PRs). No filler praise.
     2. The proposed block in 3-5 short bullets: window and length, phases in one line, peak weekly km and longest
        long run (from the recent training), key session types, strength.
-    3. At most 3 questions only the runner can answer (days available, long-run day, travel or constraints).
+    3. At most 3 questions only the runner can answer (days available & long-run day, travel/constraints or intermediate races, and whether they have a target place or PR goal for the race event).
     No week-by-week phasing, no paces, no session lists, no plan yet: the plan is built once the runner agrees.
 """).strip()
 

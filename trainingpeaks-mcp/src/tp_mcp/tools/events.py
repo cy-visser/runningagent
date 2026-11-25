@@ -20,6 +20,93 @@ DEFAULT_EVENT_RESULTS: list[dict[str, str]] = [
 ]
 
 
+# Known ATP running duration types verified from TrainingPeaks v6 event payloads.
+RACE_TYPE_DURATIONS = (
+    "RunUnderOneHour",
+    "RunOnetoTwoHours",
+    "RunOverTwoHours",
+)
+
+
+def _parse_goal_time_hours(value: str | float | int | None) -> float | None:
+    """Converts 'H:MM:SS', 'MM:SS', or decimal hours into decimal hours for TP `goals.time.value`."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if float(value) > 0 else None
+    text = str(value).strip()
+    if not text:
+        return None
+    if ":" in text:
+        parts = text.split(":")
+        if len(parts) == 3:
+            h, m, s = (int(p) for p in parts)
+        elif len(parts) == 2:
+            h, m, s = 0, int(parts[0]), int(parts[1])
+        else:
+            raise ValueError(f"goal_time must be H:MM:SS or MM:SS, got {value!r}")
+        if m < 0 or m >= 60 or s < 0 or s >= 60 or h < 0:
+            raise ValueError(f"goal_time out of range: {value!r}")
+        total_s = h * 3600 + m * 60 + s
+        if total_s <= 0:
+            raise ValueError("goal_time must be greater than zero.")
+        return total_s / 3600.0
+    hours = float(text)
+    if hours <= 0:
+        raise ValueError("goal_time must be greater than zero.")
+    return hours
+
+
+def _build_goal_entry(value: Any, existing: Any = None, **extra: Any) -> dict[str, Any]:
+    base = dict(existing) if isinstance(existing, dict) else {}
+    entry = {
+        "complete": bool(base.get("complete", False)),
+        "sortOrder": int(base.get("sortOrder", 0)),
+        **extra,
+        "value": value,
+    }
+    for key in ("eventGoalId", "setByPersonId"):
+        if base.get(key) is not None:
+            entry[key] = base[key]
+    return entry
+
+
+def _merge_event_goals(
+    existing_goals: Any,
+    *,
+    goal_distance_km: float | None = None,
+    goal_time: str | float | int | None = None,
+    goal_place: int | None = None,
+    goal_finish: bool | None = None,
+    goal_pr: bool | None = None,
+) -> dict[str, Any]:
+    """Builds or merges TP v6 `goals` object; returns `{}` when no goals are provided on create."""
+    has_any = any(
+        v is not None for v in (goal_distance_km, goal_time, goal_place, goal_finish, goal_pr)
+    )
+    if not has_any:
+        return dict(existing_goals) if isinstance(existing_goals, dict) else {}
+    goals: dict[str, Any] = dict(existing_goals) if isinstance(existing_goals, dict) else {}
+    goals.setdefault("written", [])
+    if goal_distance_km is not None:
+        goals["distance"] = _build_goal_entry(
+            round(float(goal_distance_km) * 1000.0, 1),
+            goals.get("distance"),
+            displayUnits="Kilometers",
+        )
+    if goal_time is not None:
+        hours = _parse_goal_time_hours(goal_time)
+        if hours is not None:
+            goals["time"] = _build_goal_entry(hours, goals.get("time"))
+    if goal_place is not None:
+        goals["place"] = _build_goal_entry(int(goal_place), goals.get("place"))
+    if goal_finish is not None:
+        goals["finish"] = _build_goal_entry(bool(goal_finish), goals.get("finish"))
+    if goal_pr is not None:
+        goals["pr"] = _build_goal_entry(bool(goal_pr), goals.get("pr"))
+    return goals
+
+
 def _default_create_event_payload(
     *,
     athlete_id: int,
@@ -30,10 +117,12 @@ def _default_create_event_payload(
     distance_km: float | None,
     ctl_target: float | None,
     description: str | None,
+    race_type_duration: str | None = None,
+    goals: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build JSON body for POST .../event (v6 singular) per TrainingPeaks web app contract."""
     payload: dict[str, Any] = {
-        "goals": {},
+        "goals": goals if goals is not None else {},
         "atpPriority": atp_priority,
         "legs": [],
         "eventDate": event_date_yyyy_mm_dd,
@@ -43,9 +132,11 @@ def _default_create_event_payload(
         "workouts": [],
         "results": [dict(r) for r in DEFAULT_EVENT_RESULTS],
     }
+    if race_type_duration:
+        payload["raceTypeDuration"] = race_type_duration
     if distance_km is not None:
-        payload["distance"] = float(distance_km)
-        payload["distanceUnits"] = "Kilometers"
+        payload["distance"] = round(float(distance_km) * 1000.0, 1)
+        payload["distanceUnits"] = "Meters"
     else:
         payload["distance"] = None
         payload["distanceUnits"] = None
@@ -80,6 +171,12 @@ class CreateEventInput(BaseModel):
     distance_km: float | None = Field(default=None, ge=0)
     ctl_target: float | None = Field(default=None, ge=0)
     description: str | None = None
+    race_type_duration: str | None = None
+    goal_distance_km: float | None = Field(default=None, ge=0)
+    goal_time: str | float | int | None = None
+    goal_place: int | None = Field(default=None, ge=1)
+    goal_finish: bool | None = None
+    goal_pr: bool | None = None
 
     @field_validator("date")
     @classmethod
@@ -100,6 +197,13 @@ class CreateEventInput(BaseModel):
     @classmethod
     def check_event_type(cls, v: str | None) -> str | None:
         # Don't reject unknown types - the TP API may accept types not in our list
+        return v
+
+    @field_validator("goal_time")
+    @classmethod
+    def check_goal_time(cls, v: str | float | int | None) -> str | float | int | None:
+        if v is not None:
+            _parse_goal_time_hours(v)
         return v
 
 
@@ -214,17 +318,29 @@ async def tp_create_event(
     distance_km: float | None = None,
     ctl_target: float | None = None,
     description: str | None = None,
+    race_type_duration: str | None = None,
+    goal_distance_km: float | None = None,
+    goal_time: str | float | int | None = None,
+    goal_place: int | None = None,
+    goal_finish: bool | None = None,
+    goal_pr: bool | None = None,
 ) -> dict[str, Any]:
     """Create a race/event.
 
     Args:
         name: Event name.
         date: Event date (YYYY-MM-DD).
-        event_type: Event type (e.g. 'RunningRoad', 'CyclingRoad', 'MultisportTriathlon'); defaults to 'OtherOther'.
+        event_type: Event type (e.g. 'RunningRoad', 'RunningOther', 'CyclingRoad'); defaults to 'OtherOther'.
         priority: Priority level ('A', 'B', or 'C'); defaults to 'C' if omitted.
-        distance_km: Event distance in km (sent as distance + distanceUnits=Kilometers).
+        distance_km: Event distance in km (sent as meters + distanceUnits='Meters').
         ctl_target: Target CTL for the event.
         description: Optional description.
+        race_type_duration: ATP event duration type (e.g. 'RunUnderOneHour', 'RunOnetoTwoHours', 'RunOverTwoHours').
+        goal_distance_km: Goal distance in km (defaults to distance_km when other goals are set).
+        goal_time: Target finish time ('H:MM:SS', 'MM:SS', or decimal hours).
+        goal_place: Optional integer target finish placement.
+        goal_finish: Optional boolean finish goal (defaults to True when other goals are set).
+        goal_pr: Optional boolean PR goal.
 
     Returns:
         Dict with created event details or error.
@@ -238,6 +354,12 @@ async def tp_create_event(
             distance_km=distance_km,
             ctl_target=ctl_target,
             description=description,
+            race_type_duration=race_type_duration,
+            goal_distance_km=goal_distance_km,
+            goal_time=goal_time,
+            goal_place=goal_place,
+            goal_finish=goal_finish,
+            goal_pr=goal_pr,
         )
     except (ValidationError, ValueError) as e:
         msg = format_validation_error(e) if isinstance(e, ValidationError) else str(e)
@@ -259,6 +381,18 @@ async def tp_create_event(
         # POST /event (singular) — not /events; matches app.trainingpeaks.com HAR (v6).
         event_type = params.event_type or "OtherOther"
         atp_priority = params.priority or "C"
+        has_goal_input = any(
+            v is not None
+            for v in (params.goal_distance_km, params.goal_time, params.goal_place, params.goal_finish, params.goal_pr)
+        )
+        goals = _merge_event_goals(
+            {},
+            goal_distance_km=params.goal_distance_km if params.goal_distance_km is not None else (params.distance_km if has_goal_input else None),
+            goal_time=params.goal_time,
+            goal_place=params.goal_place,
+            goal_finish=params.goal_finish if params.goal_finish is not None else (True if has_goal_input else None),
+            goal_pr=params.goal_pr,
+        )
         payload = _default_create_event_payload(
             athlete_id=int(athlete_id),
             name=params.name,
@@ -268,6 +402,8 @@ async def tp_create_event(
             distance_km=params.distance_km,
             ctl_target=params.ctl_target,
             description=params.description,
+            race_type_duration=params.race_type_duration,
+            goals=goals,
         )
 
         endpoint = f"/fitness/v6/athletes/{athlete_id}/event"
@@ -302,6 +438,12 @@ async def tp_update_event(
     ctl_target: float | None = None,
     description: str | None = None,
     workout_ids: list[int] | None = None,
+    race_type_duration: str | None = None,
+    goal_distance_km: float | None = None,
+    goal_time: str | float | int | None = None,
+    goal_place: int | None = None,
+    goal_finish: bool | None = None,
+    goal_pr: bool | None = None,
 ) -> dict[str, Any]:
     """Update an event (GET then PUT merge).
 
@@ -382,13 +524,31 @@ async def tp_update_event(
             existing["eventType"] = event_type
         if priority is not None:
             existing["atpPriority"] = priority
+        if race_type_duration is not None:
+            existing["raceTypeDuration"] = race_type_duration
         if distance_km is not None:
-            existing["distance"] = float(distance_km)
-            existing["distanceUnits"] = "Kilometers"
+            existing["distance"] = round(float(distance_km) * 1000.0, 1)
+            existing["distanceUnits"] = "Meters"
         if ctl_target is not None:
             existing["ctlTarget"] = ctl_target
         if description is not None:
             existing["description"] = description
+        if any(v is not None for v in (goal_distance_km, goal_time, goal_place, goal_finish, goal_pr)):
+            try:
+                existing["goals"] = _merge_event_goals(
+                    existing.get("goals"),
+                    goal_distance_km=goal_distance_km,
+                    goal_time=goal_time,
+                    goal_place=goal_place,
+                    goal_finish=goal_finish,
+                    goal_pr=goal_pr,
+                )
+            except ValueError as e:
+                return {
+                    "isError": True,
+                    "error_code": "VALIDATION_ERROR",
+                    "message": str(e),
+                }
         if workout_ids is not None:
             # TP attaches workouts to an event via the `workouts` id array (HAR-
             # verified: PUT /event with workouts=[…], legs stays [] and is derived

@@ -108,7 +108,61 @@ def _parse_rhs_for_date(date_str: str, rhs: str, *, base_create: bool = False, b
             item["description"] = desc.strip()
         return [item]
 
-    # Delete item: "delete strength" | "delete note Title" | "delete id=w_1"
+    # Race event creation/update: "event A RunningRoad 21.1k Amsterdam HM | goal=1:35:00 place=10 pr=true"
+    # Note: session-code "EVENT 16k @M Tilburg 10mi" carries "@<pace>" and no A/B/C priority -> stays a workout code.
+    ev_m = re.match(r"^(?:tp_event|calendar_event|event)\s+(?P<body>.+)$", raw, re.IGNORECASE)
+    if ev_m:
+        body = ev_m.group("body").strip()
+        head, _, tail = body.partition("|")
+        head_tokens = head.split()
+        is_calendar_event = (
+            raw.lower().startswith(("tp_event ", "calendar_event "))
+            or bool(tail.strip())
+            or (bool(head_tokens) and head_tokens[0].upper() in ("A", "B", "C") and "@" not in head)
+        )
+        if is_calendar_event:
+            ev_item: dict[str, Any] = {"kind": "event", "date_str": date_str[:10]}
+            if base_create:
+                ev_item["create"] = True
+            idx = 0
+            if idx < len(head_tokens) and head_tokens[idx].upper() in ("A", "B", "C"):
+                ev_item["priority"] = head_tokens[idx].upper()
+                idx += 1
+            if idx < len(head_tokens) and head_tokens[idx].lower().startswith("running"):
+                ev_item["event_type"] = head_tokens[idx]
+                idx += 1
+            if idx < len(head_tokens) and re.fullmatch(r"\d+(?:\.\d+)?(?:k|km|mi)", head_tokens[idx], re.IGNORECASE):
+                tok = head_tokens[idx].lower()
+                val = float(re.sub(r"[^0-9.]", "", tok))
+                ev_item["distance_km"] = round(val * 1.609344, 2) if tok.endswith("mi") else val
+                idx += 1
+            name = " ".join(head_tokens[idx:]).strip()
+            if name:
+                ev_item["name"] = name
+                ev_item["title"] = name
+            for part in (p.strip() for p in tail.split() if "=" in p):
+                k, _, v = part.partition("=")
+                kl = k.strip().lower()
+                vs = v.strip()
+                if kl in ("goal", "goal_time", "time"):
+                    ev_item["goal_time"] = vs
+                elif kl in ("place", "goal_place"):
+                    ev_item["goal_place"] = vs
+                elif kl in ("pr", "goal_pr"):
+                    ev_item["goal_pr"] = vs
+                elif kl in ("type", "event_type"):
+                    ev_item["event_type"] = vs
+                elif kl in ("atp", "atp_event_type", "race_type_duration"):
+                    ev_item["race_type_duration"] = vs
+                elif kl in ("dist", "distance", "distance_km"):
+                    ev_item["distance_km"] = float(re.sub(r"[^0-9.]", "", vs))
+                elif kl in ("priority", "prio"):
+                    ev_item["priority"] = vs.upper()
+                elif kl == "id":
+                    ev_item["event_id"] = vs.strip("[]")
+            return [ev_item]
+
+    # Delete item: "delete strength" | "delete note Title" | "delete event Title" | "delete id=w_1"
     del_m = re.match(r"^delete(?:\s+(?P<body>.+))?$", raw, re.IGNORECASE)
     if del_m:
         body = (del_m.group("body") or "").strip()
@@ -116,6 +170,9 @@ def _parse_rhs_for_date(date_str: str, rhs: str, *, base_create: bool = False, b
             return [{"date_str": date_str[:10], "sport": "Run", "delete": True}]
         if body.lower().startswith("note "):
             return [{"kind": "note", "date_str": date_str[:10], "title": body[5:].strip(), "delete": True}]
+        if body.lower().startswith("event"):
+            ev_title = body[5:].strip()
+            return [{"kind": "event", "date_str": date_str[:10], "title": ev_title, "name": ev_title, "delete": True}]
         if body.lower().startswith("id="):
             return [{"workout_id": body[3:].strip(" []"), "delete": True}]
         sport = _KNOWN_SPORTS.get(body.lower())

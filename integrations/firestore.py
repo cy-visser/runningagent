@@ -156,6 +156,17 @@ async def update_user_profile(user_id: str, updates: dict[str, Any]) -> None:
 
 VOLUME_HISTORY_DOC_ID = "volume_history"
 RACE_PROJECTION_DOC_ID = "race_projection"
+YEAR_REVIEW_DOC_PREFIX = "year_review"
+YEAR_REVIEW_RAW_DOC_PREFIX = "year_review_raw"
+YEAR_REVIEW_INDEX_DOC_ID = "year_review_index"
+
+
+def year_review_doc_id(year: int) -> str:
+    return f"{YEAR_REVIEW_DOC_PREFIX}_{int(year)}"
+
+
+def year_review_raw_doc_id(year: int) -> str:
+    return f"{YEAR_REVIEW_RAW_DOC_PREFIX}_{int(year)}"
 
 
 async def get_cached_volume_history(user_id: str) -> Optional[dict[str, Any]]:
@@ -180,6 +191,54 @@ async def save_race_projection(user_id: str, payload: dict[str, Any]) -> None:
 async def delete_race_projection(user_id: str) -> None:
     """Deletes the cached race projection at 'users/{user_id}/cache/race_projection'."""
     await delete_document(f"users/{user_id}/cache", RACE_PROJECTION_DOC_ID)
+
+
+async def get_cached_year_review(user_id: str, year: int) -> Optional[dict[str, Any]]:
+    """Reads the cached calendar-year review from 'users/{user_id}/cache/year_review_{year}'."""
+    return await read_document(f"users/{user_id}/cache", year_review_doc_id(year))
+
+
+async def save_year_review(user_id: str, year: int, payload: dict[str, Any]) -> None:
+    """Writes the cached calendar-year review to 'users/{user_id}/cache/year_review_{year}'."""
+    if not await user_profile_exists(user_id):
+        return
+    await write_document(f"users/{user_id}/cache", year_review_doc_id(year), payload)
+
+
+async def get_cached_year_review_raw(user_id: str, year: int) -> Optional[dict[str, Any]]:
+    """Reads the compact raw snapshot from 'users/{user_id}/cache/year_review_raw_{year}'."""
+    return await read_document(f"users/{user_id}/cache", year_review_raw_doc_id(year))
+
+
+async def save_year_review_raw(user_id: str, year: int, payload: dict[str, Any]) -> None:
+    """Writes the compact raw snapshot to 'users/{user_id}/cache/year_review_raw_{year}'."""
+    if not await user_profile_exists(user_id):
+        return
+    await write_document(f"users/{user_id}/cache", year_review_raw_doc_id(year), payload)
+
+
+async def get_year_review_index(user_id: str) -> Optional[dict[str, Any]]:
+    """Reads the multi-year index from 'users/{user_id}/cache/year_review_index'."""
+    return await read_document(f"users/{user_id}/cache", YEAR_REVIEW_INDEX_DOC_ID)
+
+
+async def upsert_year_review_index(user_id: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """Merges one calendar-year summary entry into 'users/{user_id}/cache/year_review_index' (latest year first)."""
+    existing = await get_year_review_index(user_id) or {}
+    by_year: dict[int, dict[str, Any]] = {}
+    for item in existing.get("years") or []:
+        if isinstance(item, dict) and item.get("year") is not None:
+            try:
+                by_year[int(item["year"])] = dict(item)
+            except (TypeError, ValueError):
+                continue
+    yr = int(entry["year"])
+    by_year[yr] = {**entry, "year": yr}
+    ordered = [by_year[y] for y in sorted(by_year.keys(), reverse=True)]
+    doc = {"version": 1, "years": ordered}
+    if await user_profile_exists(user_id):
+        await write_document(f"users/{user_id}/cache", YEAR_REVIEW_INDEX_DOC_ID, doc)
+    return doc
 
 
 async def save_training_record(user_id: str, workout_id: str, record: dict[str, Any]) -> None:
@@ -218,6 +277,14 @@ __all__ = [
     "save_volume_history",
     "save_race_projection",
     "delete_race_projection",
+    "get_cached_year_review",
+    "save_year_review",
+    "get_cached_year_review_raw",
+    "save_year_review_raw",
+    "get_year_review_index",
+    "upsert_year_review_index",
+    "year_review_doc_id",
+    "year_review_raw_doc_id",
     "save_training_record",
     "list_training_records",
 ]

@@ -25,6 +25,8 @@ from .trainingpeaks import (
 
 CREDENTIAL_DOC_ID = "trainingpeaks"
 RACE_PROJECTION_DOC_ID = "race_projection"
+YEAR_REVIEW_DOC_PREFIX = "year_review"
+YEAR_REVIEW_INDEX_DOC_ID = "year_review_index"
 # Geocoded coordinates cached for weather lookups; never sent to the browser.
 INTERNAL_PROFILE_FIELDS = ("latitude", "longitude")
 
@@ -88,6 +90,22 @@ class ProfileStore:
         if not runner_id:
             return
         await self._db().document(f"users/{runner_id}/cache/{RACE_PROJECTION_DOC_ID}").delete()
+
+    async def get_year_review_cache(self, runner_id: Optional[str], year: int) -> Optional[dict[str, Any]]:
+        if not runner_id:
+            return None
+        snap = await self._db().document(f"users/{runner_id}/cache/{YEAR_REVIEW_DOC_PREFIX}_{int(year)}").get()
+        if not snap.exists:
+            return None
+        return snap.to_dict() or None
+
+    async def get_year_review_index(self, runner_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not runner_id:
+            return None
+        snap = await self._db().document(f"users/{runner_id}/cache/{YEAR_REVIEW_INDEX_DOC_ID}").get()
+        if not snap.exists:
+            return None
+        return snap.to_dict() or None
 
     async def connect_trainingpeaks(
         self,

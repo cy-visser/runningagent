@@ -49,6 +49,7 @@ INTERNAL_TOOLS = frozenset({
     "fetch_plan_context",
     "apply_training_plan",
     "refresh_race_projection",
+    "refresh_year_review",
     "fetch_trend_data",
 })
 LOAD_SKILL = "load_skill"

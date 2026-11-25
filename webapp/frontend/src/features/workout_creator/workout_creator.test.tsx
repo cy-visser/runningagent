@@ -201,4 +201,39 @@ describe("workout creator feature", () => {
     expect(screen.getByRole("button", { name: /Update TrainingPeaks/ })).toBeDisabled();
     expect(onApply).not.toHaveBeenCalled();
   });
+
+  it("renders staged TrainingPeaks calendar events (create, update, delete)", () => {
+    const withEvents: StagedChanges = {
+      staged_id: "ev-staged-1",
+      changes: [
+        {
+          kind: "event",
+          action: "create",
+          date: "2026-10-31",
+          title: "Amsterdam Half Marathon",
+          name: "Amsterdam Half Marathon",
+          priority: "A",
+          event_type: "RunningRoad",
+          distance_km: 21.1,
+          description_summary: "A · 21.1 km · RunningRoad · Goal 1:35:00 · Place #10 · PR",
+        },
+        {
+          kind: "event",
+          action: "delete",
+          date: "2026-11-26",
+          title: "Old Test Event",
+          name: "Old Test Event",
+          priority: "C",
+          event_id: "ev-99",
+          description_summary: "C · 5 km",
+        },
+      ],
+    };
+    render(<StagedChangesCard staged={withEvents} status="pending" onApply={vi.fn()} />);
+    expect(screen.getByText("TrainingPeaks Calendar Events")).toBeInTheDocument();
+    expect(screen.getByText("Amsterdam Half Marathon")).toBeInTheDocument();
+    expect(screen.getByText(/Place #10 · PR/)).toBeInTheDocument();
+    expect(screen.getByText("Old Test Event")).toHaveClass("line-through");
+    expect(screen.getByLabelText("Delete event")).toBeInTheDocument();
+  });
 });

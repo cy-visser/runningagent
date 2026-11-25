@@ -113,9 +113,45 @@ class TestCreateEvent:
             {"resultType": "Gender"},
             {"resultType": "Overall"},
         ]
-        assert payload["distance"] == 226.0
-        assert payload["distanceUnits"] == "Kilometers"
+        assert payload["distance"] == 226000.0
+        assert payload["distanceUnits"] == "Meters"
         assert payload["ctlTarget"] == 120.0
+
+    @pytest.mark.asyncio
+    async def test_create_running_event_with_atp_type_and_goals(self):
+        response = APIResponse(success=True, data={"eventId": 503})
+        with patch("tp_mcp.tools.events.TPClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.ensure_athlete_id = AsyncMock(return_value=123)
+            mock_instance.post = AsyncMock(return_value=response)
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            result = await tp_create_event(
+                name="Amsterdam Half Marathon",
+                date="2026-10-31",
+                event_type="RunningRoad",
+                priority="A",
+                distance_km=21.1,
+                race_type_duration="RunOnetoTwoHours",
+                goal_time="1:35:00",
+                goal_place=10,
+                goal_pr=True,
+            )
+
+        assert result["success"] is True
+        assert result["event_id"] == 503
+        payload = mock_instance.post.call_args[1]["json"]
+        assert payload["eventType"] == "RunningRoad"
+        assert payload["atpPriority"] == "A"
+        assert payload["raceTypeDuration"] == "RunOnetoTwoHours"
+        assert payload["distance"] == 21100.0
+        assert payload["distanceUnits"] == "Meters"
+        assert payload["goals"]["distance"]["value"] == 21100.0
+        assert payload["goals"]["distance"]["displayUnits"] == "Kilometers"
+        assert abs(payload["goals"]["time"]["value"] - (95 / 60)) < 1e-6
+        assert payload["goals"]["place"]["value"] == 10
+        assert payload["goals"]["finish"]["value"] is True
+        assert payload["goals"]["pr"]["value"] is True
 
     @pytest.mark.asyncio
     async def test_default_event_type_is_other_other(self):

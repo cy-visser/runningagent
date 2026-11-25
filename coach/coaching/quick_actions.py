@@ -43,6 +43,7 @@ from ...features.trend_analysis.fetch_trend_data_tool import (
 )
 from ...features.workout_analysis.analyze_workout_tool import analyze_workout_tool
 from ...features.workout_creator.apply_staged_changes_tool import apply_staged_changes_tool
+from ...features.year_review.refresh_year_review_tool import refresh_year_review_tool
 from .typed_dispatch import (
     BIKE_WORKOUT_SKILL,
     RUN_WORKOUT_SKILL,
@@ -67,6 +68,7 @@ TREND_SYNTHESIS_STATE_KEY = "temp:trend_synthesis_invocation"
 PLAN_INTAKE = "plan-builder:intake"
 PROJECT_RACE = "check-in-report:project"
 TREND_ANALYSIS = "trend-analysis"
+YEAR_REVIEW = "year-review"
 TREND_PROTOCOL_START = "<trend_analysis_protocol>"
 TREND_PROTOCOL_END = "</trend_analysis_protocol>"
 
@@ -75,6 +77,7 @@ QUICK_ACTIONS = {
     "check-in-report": (fetch_checkin_data_tool, frozenset({"start_date", "end_date"})),
     PROJECT_RACE: (refresh_race_projection_tool, frozenset({"refresh_analysis_cache"})),
     TREND_ANALYSIS: (fetch_trend_data_tool, frozenset({"weeks"})),
+    YEAR_REVIEW: (refresh_year_review_tool, frozenset({"year", "force_full"})),
     "plan-audit": (fetch_plan_audit_data_tool, frozenset({"start_date", "end_date"})),
     RUN_WORKOUT_SKILL: (analyze_workout_tool, frozenset({"date_str", "sport"})),
     # "Update TrainingPeaks" button: applies the staged changes in code (zero LLM calls).
@@ -85,18 +88,18 @@ QUICK_ACTIONS = {
     "plan-builder:apply": (apply_training_plan_tool, frozenset({"staged_id", "week"})),
 }
 # Internal dispatch table adds bike-workout-analysis and schedule-lookup for typed chat pre-dispatch
-# (UI-button-only `trend-analysis` is excluded so typed chat can never dispatch it).
+# (UI-only `trend-analysis` and `year-review` are excluded so typed chat can never dispatch them).
 _TYPED_DISPATCH_ACTIONS = {
-    **{k: v for k, v in QUICK_ACTIONS.items() if k != TREND_ANALYSIS},
+    **{k: v for k, v in QUICK_ACTIONS.items() if k not in (TREND_ANALYSIS, YEAR_REVIEW)},
     BIKE_WORKOUT_SKILL: (analyze_workout_tool, frozenset({"date_str", "sport"})),
     SCHEDULE_LOOKUP: (get_schedule_tool, frozenset({"start_date", "end_date"})),
 }
 # Actions that only execute code or need no SKILL.md instructions loaded.
 SKILL_FREE_ACTIONS = frozenset({
-    TREND_ANALYSIS, "workout-creator", "plan-builder:apply", PLAN_INTAKE, PROJECT_RACE, SCHEDULE_LOOKUP,
+    TREND_ANALYSIS, YEAR_REVIEW, "workout-creator", "plan-builder:apply", PLAN_INTAKE, PROJECT_RACE, SCHEDULE_LOOKUP,
 })
 # Pure-code actions that end inside the tool via `skip_summarization=True` (no LLM call follows).
-_ZERO_LLM_ACTIONS = frozenset({"workout-creator", "plan-builder:apply", PROJECT_RACE})
+_ZERO_LLM_ACTIONS = frozenset({"workout-creator", "plan-builder:apply", PROJECT_RACE, YEAR_REVIEW})
 
 LOAD_SKILL = "load_skill"
 # Gemini 3/4 validates thought signatures on the current turn's function calls; calls synthesized in code
@@ -318,6 +321,7 @@ __all__ = [
     "TREND_PROTOCOL_END",
     "TREND_PROTOCOL_START",
     "TREND_SYNTHESIS_STATE_KEY",
+    "YEAR_REVIEW",
     "dispatch_quick_action",
     "drop_disabled_tool_calls",
     "extract_quick_action",

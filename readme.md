@@ -24,7 +24,7 @@ In production, the **Vertex AI Agent Runtime** engine is served through the **Cl
 python3 -m venv venv
 source venv/bin/activate
 
-pip install ./tp_mcp-2.0.0-py3-none-any.whl
+pip install ./tp_mcp-2.3.0-py3-none-any.whl
 pip install $(grep -v 'tp_mcp.*\.whl' requirements.txt)
 ```
 

@@ -413,8 +413,10 @@ def test_a_24_week_plan_is_staged_compactly_with_one_line_per_week(runner):
     totals = staged["totals"]
     assert (totals["weeks"], totals["sessions"]) == (24, 24 * 8)            # 8 sessions a week
     assert ctx.actions.skip_summarization is True
+    assert totals["events"] == 1
+    assert staged["events"][0]["name"] == "Schoorl 10K" and staged["events"][0]["priority"] == "A"
     assert ctx.reply_text() == (
-        f"{message}\n\n- **24-week plan staged:** {totals['sessions']} sessions ({totals['create']} new · "
+        f"{message}\n\n- **24-week plan staged:** {totals['sessions']} sessions · 1 race event ({totals['create']} new · "
         f"{totals['update']} updated · {totals['delete']} removed). Review the weeks below and press "
         "**Apply to TrainingPeaks**.")
     w1 = staged["weeks"][0]

@@ -462,13 +462,15 @@ TOOLS = [
     ),
     Tool(
         name="tp_get_peaks",
-        description="Get top performances by type. For comparing PRs over time.",
+        description="Get top performances by type. Supports days or explicit start_date/end_date calendar ranges.",
         inputSchema={
             "type": "object",
             "properties": {
                 "sport": {"type": "string", "enum": ["Bike", "Run"]},
                 "pr_type": {"type": "string", "description": "Bike: power1min/5min/20min. Run: speed5K/10K/Half"},
                 "days": {"type": "integer", "default": 3650},
+                "start_date": {"type": "string", "description": "Optional range start (YYYY-MM-DD); requires end_date"},
+                "end_date": {"type": "string", "description": "Optional range end (YYYY-MM-DD); requires start_date"},
             },
             "required": ["sport", "pr_type"],
         },
@@ -711,7 +713,7 @@ TOOLS = [
     ),
     Tool(
         name="tp_create_event",
-        description="Create a race/event with priority (A/B/C) and CTL target.",
+        description="Create a race/event with priority (A/B/C), ATP event type, distance, and goals.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -722,6 +724,15 @@ TOOLS = [
                 "distance_km": {"type": "number"},
                 "ctl_target": {"type": "number"},
                 "description": {"type": "string"},
+                "race_type_duration": {
+                    "type": "string",
+                    "description": "ATP running event type: RunUnderOneHour (0-1h), RunOnetoTwoHours (1-2h), RunOverTwoHours (2h+).",
+                },
+                "goal_distance_km": {"type": "number"},
+                "goal_time": {"type": "string", "description": "Target finish time (H:MM:SS or MM:SS)."},
+                "goal_place": {"type": "integer", "description": "Target finish place (integer)."},
+                "goal_finish": {"type": "boolean"},
+                "goal_pr": {"type": "boolean", "description": "Whether targeting a PR."},
             },
             "required": ["name", "date"],
         },
@@ -740,6 +751,12 @@ TOOLS = [
                 "distance_km": {"type": "number"},
                 "ctl_target": {"type": "number"},
                 "description": {"type": "string"},
+                "race_type_duration": {"type": "string"},
+                "goal_distance_km": {"type": "number"},
+                "goal_time": {"type": "string"},
+                "goal_place": {"type": "integer"},
+                "goal_finish": {"type": "boolean"},
+                "goal_pr": {"type": "boolean"},
                 "workout_ids": {
                     "type": "array",
                     "items": {"type": "integer"},
@@ -1154,7 +1171,13 @@ async def _h_get_prs(args): return await tp_get_workout_prs(workout_id=args["wor
 
 @_handler("tp_get_peaks")
 async def _h_get_peaks(args):
-    return await tp_get_peaks(sport=args["sport"], pr_type=args["pr_type"], days=args.get("days", 3650))
+    return await tp_get_peaks(
+        sport=args["sport"],
+        pr_type=args["pr_type"],
+        days=args.get("days", 3650),
+        start_date=args.get("start_date"),
+        end_date=args.get("end_date"),
+    )
 
 @_handler("tp_analyze_workout")
 async def _h_analyze(args): return await tp_analyze_workout(workout_id=args["workout_id"])
@@ -1263,6 +1286,12 @@ async def _h_create_event(args):
         name=args["name"], date=args["date"], event_type=args.get("event_type"),
         priority=args.get("priority"), distance_km=args.get("distance_km"),
         ctl_target=args.get("ctl_target"), description=args.get("description"),
+        race_type_duration=args.get("race_type_duration"),
+        goal_distance_km=args.get("goal_distance_km"),
+        goal_time=args.get("goal_time"),
+        goal_place=args.get("goal_place"),
+        goal_finish=args.get("goal_finish"),
+        goal_pr=args.get("goal_pr"),
     )
 
 @_handler("tp_update_event")
@@ -1272,6 +1301,12 @@ async def _h_update_event(args):
         event_type=args.get("event_type"), priority=args.get("priority"),
         distance_km=args.get("distance_km"), ctl_target=args.get("ctl_target"),
         description=args.get("description"), workout_ids=args.get("workout_ids"),
+        race_type_duration=args.get("race_type_duration"),
+        goal_distance_km=args.get("goal_distance_km"),
+        goal_time=args.get("goal_time"),
+        goal_place=args.get("goal_place"),
+        goal_finish=args.get("goal_finish"),
+        goal_pr=args.get("goal_pr"),
     )
 
 @_handler("tp_delete_event")

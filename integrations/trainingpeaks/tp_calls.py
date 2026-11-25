@@ -34,7 +34,7 @@ async def warm_runner_tp(runner_id: Optional[str]) -> None:
         logger.debug("Ignoring background tp-mcp warm-up error for %s: %s", runner_id, exc)
 
 
-async def run_tp_tool(tool_context: ToolContext, tool_name: str, **node_input: Any) -> Any:
+async def run_tp_tool(tool_context: ToolContext, tool_name: str, /, **node_input: Any) -> Any:
     """Resolves a TrainingPeaks MCP tool by name for the active runner and invokes it."""
     tool = await get_tp_tool(tool_name, await resolve_tp_cookie(tool_context.state))
     return await tool_context.run_node(tool, node_input=node_input or None)
@@ -74,6 +74,10 @@ async def fetch_workouts(tool_context: ToolContext, start: Any, end: Any) -> lis
 
 async def fetch_notes(tool_context: ToolContext, start: Any, end: Any) -> list[dict]:
     return await fetch_list(tool_context, "tp_list_notes", "notes", start, end)
+
+
+async def fetch_events(tool_context: ToolContext, start: Any, end: Any) -> list[dict]:
+    return await fetch_list(tool_context, "tp_get_events", "events", start, end)
 
 
 def date_chunks(start: Any, end: Any) -> list[tuple[str, str]]:

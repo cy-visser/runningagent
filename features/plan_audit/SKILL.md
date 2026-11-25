@@ -11,6 +11,7 @@ description: Audits scheduled weekly km, TSS, hard-day spacing, long runs, notes
 - **Intensity & Spacing**: judge quality load and recovery spacing across hard runs, quality LRs, and S&C for this runner's CTL, durability, phase, and goals (no generic ratio/hour cutoff); cite specific dates/sessions on conflicts.
 - **Long Runs**: judge distance and internal quality from `longest runs` history, weekly `LR` share, phase, and weeks to race (no fixed cap).
 - **Travel, Notes & Taper**: align load with travel/climate/stress notes; judge taper depth from recent load, race distance, and post-race North-Star continuity.
+- **Race Events**: check `Race Events in Window` — verify both a TrainingPeaks Event (`A` priority for the training block's target goal; `B`/`C` — never `A` — for intermediate races) and a paired race workout exist on race days. Flag missing or mis-prioritized events with `⚠️` in `### Assessment` and recommend creating/updating them via `stage_workout_changes` in `### Recommendations`.
 
 ## Output (`<= 200 words` total, no intro/closing prose, never quote full titles or repeat weekly totals/notes)
 

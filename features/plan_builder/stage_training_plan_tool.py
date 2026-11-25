@@ -15,9 +15,9 @@ from ...shared.parallel_fetch import gather_labeled
 from ...shared.training_times import default_session_times
 from ...shared.ui_channel import reply
 from ...shared.session_codes.pace_zones import resolve_zones
-from .helpers.plan_context_text import PLAN_CONTEXT_STATE_KEY, TEMP_PLAN_WORKOUTS_KEY
-from .helpers.plan_diff import diff_week
-from .helpers.plan_expand import expand_plan, merge_weeks, normalize_plan, plan_window
+from .helpers.plan_context_text import PLAN_CONTEXT_STATE_KEY, TEMP_PLAN_EVENTS_KEY, TEMP_PLAN_WORKOUTS_KEY
+from .helpers.plan_diff import diff_events, diff_week
+from .helpers.plan_expand import expand_plan, merge_weeks, normalize_plan, plan_window, resolve_plan_events
 from .helpers.plan_summary_text import (
     CALENDAR_UNAVAILABLE_TEXT,
     ERRORS_MESSAGE,
@@ -152,13 +152,25 @@ async def stage_training_plan(
         and str(cached_w.get("end") or "") >= end_s
         else None
     )
+    cached_e = state.get(TEMP_PLAN_EVENTS_KEY)
+    reuse_events = (
+        cached_e["events"]
+        if isinstance(cached_e, dict)
+        and isinstance(cached_e.get("events"), list)
+        and str(cached_e.get("start") or "") <= start_s
+        and str(cached_e.get("end") or "") >= end_s
+        else None
+    )
     fetches: dict[str, Any] = {}
     if reuse_workouts is None:
         fetches["workouts"] = tp_calls.fetch_workouts(tool_context, start_s, end_s)
+    if reuse_events is None:
+        fetches["events"] = tp_calls.fetch_events(tool_context, start_s, end_s)
     if not base and cached_zones is None:
         fetches["settings"] = tp_calls.run_tp_tool(tool_context, "tp_get_athlete_settings")
     raw = await gather_labeled(fetches) if fetches else {}
     workouts = reuse_workouts if reuse_workouts is not None else raw.get("workouts")
+    existing_events = reuse_events if reuse_events is not None else (raw.get("events") or [])
     if workouts is None:
         # Never diff against a calendar we could not read: that would create duplicates.
         reply(tool_context, CALENDAR_UNAVAILABLE_TEXT)
@@ -171,12 +183,18 @@ async def stage_training_plan(
     )
 
     weeks, errors = expand_plan(spec, zones, today)
+    resolved_events, event_errors = resolve_plan_events(spec, profile, today)
+    errors.extend(event_errors)
     if errors:
         return _rejected(tool_context, errors)
+    spec["events"] = resolved_events
 
     payload_weeks = [week_payload(w, diff_week(w, workouts, spec["mode"])) for w in weeks]
+    payload_events = diff_events(resolved_events, existing_events)
     staged_id = str(uuid.uuid4())
-    staged = staged_plan_payload(staged_id, spec, zones, payload_weeks, _title(spec, profile, len(weeks)))
+    staged = staged_plan_payload(
+        staged_id, spec, zones, payload_weeks, _title(spec, profile, len(weeks)), events=payload_events
+    )
     state[STAGED_PLAN_STATE_KEY] = staged
 
     wrote_text = _wrote_text_this_turn(tool_context)
@@ -189,6 +207,7 @@ async def stage_training_plan(
         "staged_id": staged_id,
         "total_weeks": totals["weeks"],
         "sessions": totals["sessions"],
+        "events": len(payload_events),
         "counts": {k: totals[k] for k in ("create", "update", "delete", "keep")},
         "weeks": [week_line(w) for w in payload_weeks],
         "message": "Staged. The runner sees the plan card with Apply to TrainingPeaks; the turn has ended.",

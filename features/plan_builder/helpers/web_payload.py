@@ -32,16 +32,24 @@ def week_payload(week: dict, changes: list[dict]) -> dict:
     }
 
 
-def staged_plan_payload(staged_id: str, spec: dict, zones: dict, weeks: list[dict], title: str) -> dict:
+def staged_plan_payload(
+    staged_id: str,
+    spec: dict,
+    zones: dict,
+    weeks: list[dict],
+    title: str,
+    events: list[dict] | None = None,
+) -> dict:
     start, _ = plan_window(spec)
     end = effective_plan_end(spec)
-    totals = {"weeks": len(weeks), "sessions": sum(w["sessions"] for w in weeks)}
+    event_rows = list(events or [])
+    totals = {"weeks": len(weeks), "sessions": sum(w["sessions"] for w in weeks), "events": len(event_rows)}
     for action in ("create", "update", "delete", "keep"):
         totals[action] = sum(w["counts"][action] for w in weeks)
     return {
         "version": PLAN_VERSION, "staged_id": staged_id, "title": title, "mode": spec["mode"],
         "start_date": spec["start_date"] or start.isoformat(), "end_date": end.isoformat(),
-        "totals": totals, "weeks": weeks, "spec": spec, "zones": zones,
+        "totals": totals, "weeks": weeks, "events": event_rows, "spec": spec, "zones": zones,
     }
 
 

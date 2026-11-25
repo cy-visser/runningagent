@@ -11,6 +11,15 @@ from typing import Any, Optional
 
 from ....shared.athlete_settings import sport_family, sport_thresholds
 from ....shared.dates import get_today_date, iso_date, parse_date
+from ....shared.goal_plan import current_goal, goal_list, race_day
+from ....shared.race_events import (
+    event_date_iso,
+    event_snapshot,
+    format_event_summary,
+    is_running_event,
+    match_event_for_date,
+    normalize_event_spec,
+)
 from ....shared.session_codes.pace_zones import resolve_zones
 from ....shared.session_codes.session_codes import (
     CodeError,
@@ -34,6 +43,7 @@ from ....shared.workout_upsert import (
     ACTION_CREATE,
     ACTION_DELETE,
     ACTION_UPDATE,
+    KIND_EVENT,
     KIND_NOTE,
     KIND_WORKOUT,
 )
@@ -254,24 +264,61 @@ def _delete_workout(
             "title": target.get("title") or "Planned workout", "replaces": snapshot}, None
 
 
+def _delete_event(
+    raw: dict, day: Optional[str], title: str, events: list[dict]
+) -> tuple[Optional[dict], Optional[dict]]:
+    """(staged event delete, problem): event by id or single matching running event on `day`."""
+    ev_id = str(raw.get("event_id") or "").strip()
+    if ev_id:
+        match = next((e for e in events if str(e.get("id") or "") == ev_id), None)
+        if not match:
+            return None, {"reason": "event_not_found", "event_id": ev_id, "date_str": day, "title": title}
+        return {
+            "kind": KIND_EVENT, "action": ACTION_DELETE, "event_id": ev_id,
+            "date": event_date_iso(match) or day or "", "name": match.get("name") or title or "Event",
+            "title": match.get("name") or title or "Event",
+            "replaces": event_snapshot(match),
+            "description_summary": format_event_summary(match),
+        }, None
+    on_day = [e for e in events if is_running_event(e) and event_date_iso(e) == day]
+    matches = _title_matches([{"title": e.get("name"), "_ev": e} for e in on_day], title)
+    if not day or not matches:
+        return None, {"reason": "event_not_found", "date_str": day, "title": title}
+    if len(matches) > 1:
+        return None, {"reason": "ambiguous_event", "date_str": day, "title": title,
+                      "candidates": [{"event_id": str(m["_ev"].get("id") or ""), "name": m["title"]} for m in matches]}
+    ev = matches[0]["_ev"]
+    return {
+        "kind": KIND_EVENT, "action": ACTION_DELETE, "event_id": str(ev.get("id") or ""),
+        "date": day, "name": ev.get("name") or "Event", "title": ev.get("name") or "Event",
+        "replaces": event_snapshot(ev),
+        "description_summary": format_event_summary(ev),
+    }, None
+
+
+def _block_goal_for_event_date(profile: Optional[dict], day_iso: str) -> Optional[dict]:
+    d = parse_date(day_iso)
+    if not d or not profile:
+        return None
+    for block in goal_list(profile):
+        if race_day(block) == d:
+            return block
+    cur = current_goal(profile, d)
+    r = race_day(cur)
+    return cur if r and r >= d else None
+
+
 def resolve_changes(
     raw_changes: list[dict],
     workouts: list[dict],
     details_by_id: Optional[dict[str, dict]] = None,
     notes: Optional[list[dict]] = None,
+    events: Optional[list[dict]] = None,
+    profile: Optional[dict] = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Resolves raw coach changes against the planned calendar.
-
-    Upsert rules per workout change: an explicit `workout_id` updates that workout (found in the
-    fetched range or in `details_by_id`, the `tp_get_workout` payloads of the explicit ids, so a
-    move to another date still knows the session; an id found in neither is not staged);
-    `create=True` always creates; otherwise the single planned workout of the same sport on that
-    date is updated, none -> create, several -> ambiguous (returned with candidates, not staged).
-    Updates inherit the title and planned totals the coach did not change. Notes are always
-    created. `delete=True` removes one planned workout (by id, or the single match on the date) or
-    one calendar note (`notes`: the notes on the staged dates). Returns (staged changes, problems).
-    """
+    """Resolves raw coach changes against the planned calendar (workouts, notes, and race events)."""
     details_by_id = details_by_id or {}
+    events_list = events or []
     by_id = {str(w.get("id")): w for w in workouts if w.get("id") is not None}
     staged: list[dict] = []
     problems: list[dict] = []
@@ -279,16 +326,21 @@ def resolve_changes(
         if not isinstance(raw, dict):
             problems.append({"reason": "invalid", "change": raw})
             continue
-        raw_date = str(raw.get("date_str") or raw.get("date") or "")
+        raw_date = str(raw.get("date_str") or raw.get("date") or raw.get("eventDate") or "")
         day = parse_date(raw_date)
-        title = str(raw.get("title") or "").strip()
-        kind = KIND_NOTE if str(raw.get("kind") or "").strip().lower() == KIND_NOTE else KIND_WORKOUT
+        title = str(raw.get("title") or raw.get("name") or "").strip()
+        raw_kind = str(raw.get("kind") or "").strip().lower()
+        kind = KIND_NOTE if raw_kind == KIND_NOTE else (KIND_EVENT if raw_kind == KIND_EVENT else KIND_WORKOUT)
         raw_code = normalize_code(raw.get("code"))
         is_delete = bool(raw.get("delete")) or raw_code.upper() == "REST"
         if is_delete:
             day_str = iso_date(day) if day else None
-            change, problem = (_delete_note(day_str, title, notes or []) if kind == KIND_NOTE
-                               else _delete_workout(raw, day_str, title, workouts, by_id, details_by_id))
+            if kind == KIND_NOTE:
+                change, problem = _delete_note(day_str, title, notes or [])
+            elif kind == KIND_EVENT:
+                change, problem = _delete_event(raw, day_str, title, events_list)
+            else:
+                change, problem = _delete_workout(raw, day_str, title, workouts, by_id, details_by_id)
             staged.extend([change] if change else [])
             problems.extend([problem] if problem else [])
             continue
@@ -304,6 +356,36 @@ def resolve_changes(
         if kind == KIND_NOTE:
             change["title"] = title or "Note"
             staged.append(change)
+            continue
+
+        if kind == KIND_EVENT:
+            day_iso = iso_date(day)
+            block_goal = _block_goal_for_event_date(profile, day_iso)
+            norm_ev, err = normalize_event_spec(raw, block_goal=block_goal)
+            if err or not norm_ev:
+                problems.append({"reason": "invalid_event", "date_str": day_iso, "title": title, "why": err})
+                continue
+            ev_id = str(norm_ev.get("event_id") or "").strip()
+            existing_ev = None
+            if ev_id:
+                existing_ev = next((e for e in events_list if str(e.get("id") or "") == ev_id), None)
+                if existing_ev is None:
+                    problems.append({"reason": "event_not_found", "event_id": ev_id, "date_str": day_iso, "title": norm_ev["name"]})
+                    continue
+            elif not raw.get("create"):
+                existing_ev = match_event_for_date(events_list, day_iso, norm_ev["name"])
+            ev_change: dict[str, Any] = {
+                **norm_ev,
+                "kind": KIND_EVENT,
+                "action": ACTION_UPDATE if existing_ev else ACTION_CREATE,
+                "title": norm_ev["name"],
+                "event_id": str(existing_ev.get("id") or "") if existing_ev else None,
+                "description_summary": format_event_summary(norm_ev),
+            }
+            if existing_ev:
+                ev_change["replaces_title"] = existing_ev.get("name")
+                ev_change["replaces"] = event_snapshot(existing_ev)
+            staged.append(ev_change)
             continue
 
         inferred_sport = code_sport(raw_code) if raw_code else None
@@ -523,7 +605,7 @@ def finalize_builders(
     zones_by_date: dict[Optional[date], dict] = {}
     today_d = today or get_today_date()
     for change in staged:
-        if change.get("action") == ACTION_DELETE:
+        if change.get("action") == ACTION_DELETE or change.get("kind") in (KIND_NOTE, KIND_EVENT):
             ready.append(change)
             continue
         marker = change.pop("builder", None)
@@ -564,6 +646,8 @@ def finalize_builders(
                 change["description_summary"] = description_summary(built["description"])
             if built.get("strides_added"):
                 change["strides_added"] = built["strides_added"]
+            if str(built.get("kind") or "").upper() == "RACE":
+                change["tags"] = "race"
             if built.get("structured_workout"):
                 for f in _NUMERIC_FIELDS:
                     change[f] = None
@@ -669,6 +753,12 @@ def compact_staged_line(change: dict) -> str:
         verb = "deleted" if change.get("action") == ACTION_DELETE else "created"
         nid = f' [{change["note_id"]}]' if change.get("note_id") else ""
         return f'{verb} {str(change.get("date") or "")[:10]} note "{change.get("title") or "Note"}"{nid}'
+    if change.get("kind") == KIND_EVENT:
+        verb = change_label(change).lower()
+        eid = f' [{change["event_id"]}]' if change.get("event_id") else ""
+        summary = change.get("description_summary") or format_event_summary(change)
+        tail = f" ({summary})" if summary else ""
+        return f'{verb} {str(change.get("date") or "")[:10]} event "{change.get("title") or change.get("name") or "Event"}"{tail}{eid}'
     label = change_label(change).lower()
     before_date = (change.get("replaces") or {}).get("date")
     when = f"{before_date}->{change['date']}" if label == "moved" and before_date else str(change.get("date") or "")
@@ -707,10 +797,11 @@ MAX_CONFIRMATION_TABLE_ROWS = 15
 
 
 def confirmation_text(results: list[dict]) -> str:
-    """Markdown confirmation of an applied staged set: summary line, applied table, failures."""
+    """Markdown confirmation of an applied staged set: summary line, applied table, events, notes, failures."""
     applied = [r for r in results if r.get("ok")]
     failed = [r for r in results if not r.get("ok")]
-    workouts = [r for r in applied if r.get("kind") != KIND_NOTE]
+    workouts = [r for r in applied if r.get("kind") not in (KIND_NOTE, KIND_EVENT)]
+    events = [r for r in applied if r.get("kind") == KIND_EVENT]
     notes = [r for r in applied if r.get("kind") == KIND_NOTE]
     deleted = sum(1 for r in workouts if r.get("action") == ACTION_DELETE)
 
@@ -719,6 +810,7 @@ def confirmation_text(results: list[dict]) -> str:
     else:
         counts = [c for c in (
             workouts and _plural(len(workouts), "workout") + (f" ({deleted} deleted)" if deleted else ""),
+            events and _plural(len(events), "race event"),
             notes and _plural(len(notes), "note"),
         ) if c]
         lines = [f"✅ **TrainingPeaks updated:** {' and '.join(counts)}."]
@@ -731,14 +823,20 @@ def confirmation_text(results: list[dict]) -> str:
         extra = len(workouts) - MAX_CONFIRMATION_TABLE_ROWS
         if extra > 0:
             lines.append(f"\n*…and {extra} more workouts updated in TrainingPeaks.*")
+    for r in events:
+        action = r.get("action")
+        verb = "🗑️ Race event removed" if action == ACTION_DELETE else ("🏆 Race event updated" if action == ACTION_UPDATE else "🏆 Race event created")
+        summary = r.get("description_summary") or format_event_summary(r)
+        tail = f" ({summary})" if summary else ""
+        lines += ["", f"{verb}: {_display_date(r['date'])} · **{_cell(r.get('title') or r.get('name'))}**{tail}"]
     for r in notes:
         verb = "🗑️ Note removed" if r.get("action") == ACTION_DELETE else "📝 Note added"
         lines += ["", f"{verb}: {_display_date(r['date'])} · {_cell(r.get('title'))}"]
     if failed:
         lines += ["", "⚠️ **Not saved (still staged — press Update TrainingPeaks to retry):**"]
         lines += [
-            f"- {_display_date(r['date'])} {_cell(r.get('sport') or 'Note')} \"{_cell(r.get('title'))}\": "
-            f"{_cell(r.get('error') or 'unknown error')}"
+            f"- {_display_date(r['date'])} {_cell(r.get('sport') or ('Event' if r.get('kind') == KIND_EVENT else 'Note'))} "
+            f"\"{_cell(r.get('title') or r.get('name'))}\": {_cell(r.get('error') or 'unknown error')}"
             for r in failed[:MAX_CONFIRMATION_TABLE_ROWS]
         ]
         if len(failed) > MAX_CONFIRMATION_TABLE_ROWS:

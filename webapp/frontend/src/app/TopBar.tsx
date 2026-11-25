@@ -1,4 +1,4 @@
-import { Activity, RotateCcw } from "lucide-react";
+import { Activity, RotateCcw, Trophy } from "lucide-react";
 import type { MeResponse } from "../shared/types";
 import { UserMenu } from "./UserMenu";
 
@@ -7,6 +7,7 @@ interface TopBarProps {
   newSessionDisabled?: boolean;
   onHome: () => void;
   onNewSession: () => void;
+  onOpenYearReview?: () => void;
   onViewProfile: () => void;
   onEditProfile: () => void;
   onOpenTrainingPeaks: () => void;
@@ -17,6 +18,7 @@ export function TopBar({
   newSessionDisabled = false,
   onHome,
   onNewSession,
+  onOpenYearReview,
   onViewProfile,
   onEditProfile,
   onOpenTrainingPeaks,
@@ -42,6 +44,26 @@ export function TopBar({
         </div>
 
         <div className="flex items-center gap-2.5">
+          {me.profile_state === "ready" && onOpenYearReview && (
+            <div className="group relative">
+              <button
+                type="button"
+                onClick={onOpenYearReview}
+                aria-label="Annual Review"
+                title="Annual Review"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-2xs transition hover:border-orange-300 hover:bg-orange-50/70 hover:text-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/50 cursor-pointer"
+              >
+                <Trophy className="h-4 w-4" />
+              </button>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none invisible opacity-0 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 transition-opacity duration-100 absolute left-1/2 top-full mt-2 -translate-x-1/2 z-50 rounded-lg bg-slate-900 px-2.5 py-1 text-xs font-semibold text-slate-50 shadow-lg whitespace-nowrap"
+              >
+                Annual Review
+              </span>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={onNewSession}

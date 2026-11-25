@@ -7,6 +7,7 @@ import type {
   ProfileUpdatePayload,
   RacePredictorResponse,
   SessionResponse,
+  YearReviewResponse,
 } from "../shared/types";
 import {
   DEMO_AUDIT_DATA,
@@ -24,6 +25,7 @@ import {
   DEMO_TREND_MARKDOWN,
   DEMO_WORKOUT_DATA,
   DEMO_WORKOUT_MARKDOWN,
+  DEMO_YEAR_REVIEW_RESPONSE,
 } from "./fixtures";
 
 function currentDemoPreset(): string {
@@ -35,6 +37,7 @@ function currentDemoPreset(): string {
 let demoMeState: MeResponse | null = null;
 let demoProfileState: ProfileResponse = structuredClone(DEMO_PROFILE_RESPONSE);
 let demoPredictorState: RacePredictorResponse = structuredClone(DEMO_RACE_PREDICTOR_RESPONSE);
+let demoYearReviewState: YearReviewResponse = structuredClone(DEMO_YEAR_REVIEW_RESPONSE);
 
 function ensureDemoState(): MeResponse {
   if (!demoMeState) {
@@ -170,6 +173,84 @@ export async function demoRefreshRacePredictor(): Promise<RacePredictorResponse>
   }
   demoPredictorState = next;
   return structuredClone(next);
+}
+
+export async function demoFetchYearReview(year?: number): Promise<YearReviewResponse> {
+  const target = year ?? 2026;
+  const base = structuredClone(demoYearReviewState);
+  if (target === 2026 || !base.data) {
+    return base;
+  }
+  const summary = base.available_years?.find((y) => y.year === target);
+  const km = summary?.total_run_km ?? 1800;
+  const scale = km / 2486;
+  base.year = target;
+  base.cached = true;
+  base.data.year = target;
+  base.data.is_complete = true;
+  base.data.as_of_date = `${target}-12-31`;
+  base.data.last_computed_date = `${target}-12-31`;
+  base.data.window = { start: `${target}-01-01`, end: `${target}-12-31`, year_end: `${target}-12-31`, weeks: 52 };
+  base.data.kpis = {
+    ...base.data.kpis,
+    total_run_km: km,
+    avg_weekly_run_km: Math.round((km / 52) * 10) / 10,
+    total_runs: Math.round(base.data.kpis.total_runs * scale),
+    total_workouts: summary?.total_workouts ?? Math.round(base.data.kpis.total_workouts * scale),
+    total_hours: Math.round(base.data.kpis.total_hours * scale * 10) / 10,
+    active_weeks: 48,
+    total_weeks: 52,
+    active_weeks_pct: 92,
+  };
+  base.data.monthly = base.data.monthly.map((m, idx) => ({
+    ...m,
+    month: `${target}-${String(idx + 1).padStart(2, "0")}`,
+    km: m.future ? Math.round(165 * scale) : Math.round(m.km * scale),
+    ctl: m.ctl != null ? Math.round(m.ctl * 0.9) : 52,
+    partial: false,
+    future: false,
+    races: [],
+  }));
+  base.data.races = [
+    {
+      date: `${target}-10-19`,
+      workout_id: `w_demo_${target}`,
+      name: `Amsterdam Autumn Marathon ${target}`,
+      badge: "A Race",
+      priority: "A",
+      short_label: "Marathon",
+      distance_label: "Marathon",
+      distance_km: 42.2,
+      duration_s: 11280,
+      pace_s: 267.3,
+      avg_hr: 162,
+      pct_lthr: 94,
+      pa_hr: 3.1,
+      ctl: 58.0,
+      is_pr: target === 2025,
+      goal_text: null,
+      goal_gap_s: null,
+      note: null,
+    },
+  ];
+  return base;
+}
+
+export async function demoRefreshYearReview(
+  year?: number,
+  mode: "incremental" | "full" = "incremental",
+): Promise<YearReviewResponse> {
+  await new Promise((r) => setTimeout(r, 250));
+  const next = await demoFetchYearReview(year);
+  next.cached = false;
+  if (next.data) {
+    next.data.updated_at = new Date().toISOString();
+    next.data.sync_mode = mode;
+  }
+  if ((year ?? 2026) === 2026) {
+    demoYearReviewState = structuredClone(next);
+  }
+  return next;
 }
 
 export async function demoConnectTrainingPeaks(

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # Staged change kinds and actions (shared by the workout creator and the plan builder).
 KIND_WORKOUT = "workout"
 KIND_NOTE = "note"
+KIND_EVENT = "event"
 ACTION_CREATE = "create"
 ACTION_UPDATE = "update"
 ACTION_DELETE = "delete"
@@ -45,7 +46,7 @@ async def _run(tool_context: ToolContext, tool: str, verb: str, what: str, node_
     data = coerce_mcp_payload(result)
     if data.get("isError"):
         return {"ok": False, "error": str(data.get("message") or "Unknown error")}
-    return {"ok": True, "id": data.get("id") or data.get("workout_id")}
+    return {"ok": True, "id": data.get("id") or data.get("workout_id") or data.get("event_id")}
 
 
 async def write_workout(tool_context: ToolContext, change: dict) -> dict[str, Any]:
@@ -73,6 +74,8 @@ async def write_workout(tool_context: ToolContext, change: dict) -> dict[str, An
         node_input["tss_planned"] = float(change["tss_planned"])
     if change.get("description"):
         node_input["description"] = change["description"]
+    if change.get("tags"):
+        node_input["tags"] = str(change["tags"])
     if change.get("structured_workout"):
         node_input["structured_workout"] = change["structured_workout"]
     result = await _run(tool_context, spec["tool"], spec["verb"], "workout", node_input)
@@ -89,10 +92,45 @@ async def write_note(tool_context: ToolContext, change: dict) -> dict[str, Any]:
     return await _run(tool_context, "tp_create_note", "create", "note", node_input)
 
 
+async def write_event(tool_context: ToolContext, change: dict) -> dict[str, Any]:
+    """Creates or updates one TrainingPeaks Calendar Event (update when `event_id` is set)."""
+    is_update = bool(change.get("event_id"))
+    tool = "tp_update_event" if is_update else "tp_create_event"
+    verb = "update" if is_update else "create"
+    name = change.get("name") or change.get("title") or "Race Event"
+    node_input: dict[str, Any] = {
+        "name": str(name),
+        "date": str(change["date"])[:10],
+    }
+    if is_update:
+        node_input["event_id"] = str(change["event_id"])
+    for key in (
+        "event_type",
+        "priority",
+        "distance_km",
+        "description",
+        "race_type_duration",
+        "goal_distance_km",
+        "goal_time",
+        "goal_place",
+        "goal_finish",
+        "goal_pr",
+    ):
+        if change.get(key) is not None:
+            node_input[key] = change[key]
+    result = await _run(tool_context, tool, verb, "event", node_input)
+    if result["ok"] and is_update:
+        result["id"] = str(change["event_id"])
+    return result
+
+
 async def delete_item(tool_context: ToolContext, change: dict) -> dict[str, Any]:
-    """Deletes one staged workout or calendar note."""
-    if change.get("kind") == KIND_NOTE:
+    """Deletes one staged workout, calendar note, or calendar event."""
+    kind = change.get("kind")
+    if kind == KIND_NOTE:
         tool, what, item_id = "tp_delete_note", "note", {"note_id": change["note_id"]}
+    elif kind == KIND_EVENT:
+        tool, what, item_id = "tp_delete_event", "event", {"event_id": change["event_id"]}
     else:
         tool, what, item_id = "tp_delete_workout", "workout", {"workout_id": change["workout_id"]}
     result = await _run(tool_context, tool, "delete", what, item_id)
@@ -103,8 +141,12 @@ async def write_change(tool_context: ToolContext, change: dict) -> dict[str, Any
     """Writes one resolved staged change; returns the change (without its native builder) merged with its outcome."""
     if change.get("action") == ACTION_DELETE:
         writer = delete_item
+    elif change.get("kind") == KIND_NOTE:
+        writer = write_note
+    elif change.get("kind") == KIND_EVENT:
+        writer = write_event
     else:
-        writer = write_note if change.get("kind") == KIND_NOTE else write_workout
+        writer = write_workout
     outcome = await writer(tool_context, change)
     return {**{k: v for k, v in change.items() if k != "structured_workout"}, **outcome}
 

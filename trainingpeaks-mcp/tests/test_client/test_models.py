@@ -60,6 +60,7 @@ class TestWorkoutSummary:
             "tssPlanned": 80,
             "tssActual": 75,
             "completed": True,
+            "userTags": "race,marathon",
         }
         workout = WorkoutSummary.model_validate(data)
 
@@ -70,6 +71,7 @@ class TestWorkoutSummary:
         assert workout.is_completed is True
         assert workout.workout_status == "completed"
         assert workout.sport == "Bike"  # resolved from workoutTypeValueId
+        assert workout.tags == "race,marathon"
 
     def test_parse_planned_workout(self):
         """Test parsing planned workout summary."""

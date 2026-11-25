@@ -1,4 +1,4 @@
-import { CalendarPlus, Check, Loader2, RefreshCw, StickyNote, Trash2 } from "lucide-react";
+import { CalendarPlus, Check, Loader2, RefreshCw, StickyNote, Trash2, Trophy } from "lucide-react";
 import type { StagedChange, StagedChanges, StagedWorkoutSnapshot } from "../../shared/types";
 
 export type StagedStatus = "pending" | "applying" | "applied" | "replaced";
@@ -156,9 +156,10 @@ function ApplyButton({ status, busy, onClick }: { status: StagedStatus; busy?: b
   );
 }
 
-/** Staged workout / note changes with the button that applies them to TrainingPeaks in code. */
+/** Staged workout / event / note changes with the button that applies them to TrainingPeaks in code. */
 export function StagedChangesCard({ staged, status, busy, onApply }: StagedChangesCardProps) {
-  const workouts = staged.changes.filter((c) => c.kind !== "note");
+  const workouts = staged.changes.filter((c) => c.kind !== "note" && c.kind !== "event");
+  const events = staged.changes.filter((c) => c.kind === "event");
   const notes = staged.changes.filter((c) => c.kind === "note");
   const count = staged.changes.length;
 
@@ -210,6 +211,48 @@ export function StagedChangesCard({ staged, status, busy, onApply }: StagedChang
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {events.length > 0 && (
+        <div
+          data-testid="staged-events"
+          className="rounded-xl border border-amber-200/80 bg-amber-50/40 px-3.5 py-2.5 space-y-1.5"
+        >
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900/80">
+            TrainingPeaks Calendar Events
+          </p>
+          <ul className="space-y-1.5">
+            {events.map((ev, i) => (
+              <li
+                key={`${ev.date}-${ev.title}-${i}`}
+                className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-700"
+              >
+                <span className="inline-flex flex-wrap items-center gap-2">
+                  <ActionBadge change={ev} />
+                  {ev.action === "delete" ? (
+                    <Trash2 className="h-4 w-4 text-rose-600" aria-label="Delete event" />
+                  ) : (
+                    <Trophy className="h-4 w-4 text-orange-500" />
+                  )}
+                  <span className="whitespace-nowrap">{dayLabel(ev.date)}</span>
+                  {ev.priority && (
+                    <span className="rounded-full bg-sunset px-1.5 py-px text-[11px] font-bold text-white">
+                      {ev.priority}
+                    </span>
+                  )}
+                  <span
+                    className={`font-medium text-slate-900 ${ev.action === "delete" ? "line-through" : ""}`}
+                  >
+                    {ev.title || ev.name}
+                  </span>
+                  {ev.description_summary && (
+                    <span className="text-xs text-slate-500">· {ev.description_summary}</span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

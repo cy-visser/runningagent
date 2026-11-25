@@ -15,10 +15,11 @@ from typing import Any, Optional
 import re
 
 from ....shared.dates import iso_date, parse_date, parse_iso_timestamp
+from ....shared.race_events import format_event_summary, is_same_event, match_event_for_date
 from ....shared.sports import BIKE_SPORTS, NON_TRAINING_SPORTS, RUN_SPORTS, STRENGTH_SPORTS, is_quality_title
 from ....shared.units import as_float
 from ....shared.workout_status import is_workout_completed
-from ....shared.workout_upsert import ACTION_CREATE, ACTION_DELETE, ACTION_UPDATE, KIND_WORKOUT
+from ....shared.workout_upsert import ACTION_CREATE, ACTION_DELETE, ACTION_UPDATE, KIND_EVENT, KIND_WORKOUT
 
 ACTION_KEEP = "keep"
 DAY_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -186,8 +187,58 @@ def write_change(change: dict) -> Optional[dict]:
         return {"kind": KIND_WORKOUT, "action": ACTION_DELETE, "workout_id": change["workout_id"],
                 "date": change["date"], "sport": change["sport"], "title": change["title"]}
     s = change["session"]
-    return {"kind": KIND_WORKOUT, "action": change["action"], "date": s["write_date"], "sport": s["sport"],
-            "title": s["title"], "workout_id": change["workout_id"] if change["action"] == ACTION_UPDATE else None,
-            "distance_km": s.get("distance_km"), "duration_minutes": s.get("duration_minutes"),
-            "tss_planned": s.get("tss_planned"), "description": s.get("description"),
-            "structured_workout": s.get("structured_workout")}
+    out = {"kind": KIND_WORKOUT, "action": change["action"], "date": s["write_date"], "sport": s["sport"],
+           "title": s["title"], "workout_id": change["workout_id"] if change["action"] == ACTION_UPDATE else None,
+           "distance_km": s.get("distance_km"), "duration_minutes": s.get("duration_minutes"),
+           "tss_planned": s.get("tss_planned"), "description": s.get("description"),
+           "structured_workout": s.get("structured_workout")}
+    if str(s.get("kind") or "").upper() == "RACE":
+        out["tags"] = "race"
+    return out
+
+
+def diff_events(planned_events: list[dict], existing_events: list[dict]) -> list[dict]:
+    """Diffs planned TP Calendar Events against existing TP events (`create` | `update` | `keep`)."""
+    rows: list[dict] = []
+    for ev in planned_events or []:
+        existing = match_event_for_date(existing_events or [], ev["date"], ev.get("name") or "")
+        if existing is None:
+            action = ACTION_CREATE
+            event_id = None
+        elif is_same_event(ev, existing):
+            action = ACTION_KEEP
+            event_id = str(existing.get("id") or "") or None
+        else:
+            action = ACTION_UPDATE
+            event_id = str(existing.get("id") or "") or None
+        rows.append({
+            **ev,
+            "kind": KIND_EVENT,
+            "action": action,
+            "event_id": event_id,
+            "summary": format_event_summary(ev),
+        })
+    return rows
+
+
+def write_event_change(ev_row: dict) -> Optional[dict]:
+    """The shared.workout_upsert change of a diffed TP Calendar Event (None for keep)."""
+    if ev_row.get("action") == ACTION_KEEP:
+        return None
+    return {
+        "kind": KIND_EVENT,
+        "action": ev_row["action"],
+        "date": ev_row["date"],
+        "name": ev_row["name"],
+        "title": ev_row["name"],
+        "event_id": ev_row.get("event_id") if ev_row["action"] == ACTION_UPDATE else None,
+        "event_type": ev_row.get("event_type"),
+        "race_type_duration": ev_row.get("race_type_duration"),
+        "distance_km": ev_row.get("distance_km"),
+        "priority": ev_row.get("priority"),
+        "goal_time": ev_row.get("goal_time"),
+        "goal_place": ev_row.get("goal_place"),
+        "goal_pr": ev_row.get("goal_pr"),
+        "goal_finish": ev_row.get("goal_finish"),
+        "description": ev_row.get("description"),
+    }

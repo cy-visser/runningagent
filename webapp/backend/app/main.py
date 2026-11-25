@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import date
 import logging
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
@@ -34,6 +35,7 @@ from .trainingpeaks import (
 logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_S = 15.0
+YEAR_REVIEW_VERSION = 5
 
 CSP_POLICY = (
     "default-src 'self'; "
@@ -297,6 +299,163 @@ def create_app(
         user: AuthenticatedUser = Depends(current_user),
     ) -> dict[str, Any]:
         return await _resolve_race_predictor(request, user, force_refresh=True)
+
+    def _is_year_review_up_to_date(doc: Any, *, target_year: int, today: date) -> bool:
+        if (
+            not isinstance(doc, dict)
+            or doc.get("version") != YEAR_REVIEW_VERSION
+            or doc.get("year") != target_year
+        ):
+            return False
+        if doc.get("is_complete") is True and target_year < today.year:
+            return True
+        last_computed = str(doc.get("last_computed_date") or doc.get("as_of_date") or "")[:10]
+        return last_computed == today.isoformat()
+
+    async def _build_available_years(
+        store: ProfileStore,
+        runner_id: str,
+        current_year: int,
+    ) -> list[dict[str, Any]]:
+        index_doc = await store.get_year_review_index(runner_id) or {}
+        by_year: dict[int, dict[str, Any]] = {}
+        for item in index_doc.get("years") or []:
+            if isinstance(item, dict) and item.get("year") is not None:
+                try:
+                    yr = int(item["year"])
+                    if bool(item.get("is_complete")) and item.get("total_workouts") == 0:
+                        continue
+                    by_year[yr] = {
+                        "year": yr,
+                        "total_run_km": item.get("total_run_km"),
+                        "total_workouts": item.get("total_workouts"),
+                        "races_count": item.get("races_count"),
+                        "is_complete": bool(item.get("is_complete")),
+                        "as_of_date": item.get("as_of_date"),
+                    }
+                except (TypeError, ValueError):
+                    continue
+        if current_year not in by_year:
+            by_year[current_year] = {
+                "year": current_year,
+                "total_run_km": None,
+                "total_workouts": None,
+                "races_count": None,
+                "is_complete": False,
+                "as_of_date": None,
+            }
+        return [by_year[y] for y in sorted(by_year.keys(), reverse=True)]
+
+    async def _resolve_year_review(
+        request: Request,
+        user: AuthenticatedUser,
+        *,
+        year: Optional[int] = None,
+        refresh_mode: Optional[str] = None,
+    ) -> dict[str, Any]:
+        today = date.today()
+        target_year = int(year) if year is not None else today.year
+        if target_year < 2000 or target_year > today.year:
+            raise HTTPException(status_code=400, detail=f"Year must be between 2000 and {today.year}.")
+        if refresh_mode is not None and refresh_mode not in ("incremental", "full"):
+            raise HTTPException(status_code=400, detail="Refresh mode must be 'incremental' or 'full'.")
+
+        store = _store(request)
+        found = await store.find_by_email(user.email)
+        runner_id = found[0] if found else None
+        tp = await store.get_tp_status(runner_id)
+
+        if not found or not runner_id:
+            return {
+                "status": "no_profile",
+                "year": target_year,
+                "available_years": [],
+                "tp_connected": tp["connected"],
+                "cached": False,
+                "data": None,
+            }
+
+        force_refresh = refresh_mode is not None
+        if not force_refresh:
+            cached = await store.get_year_review_cache(runner_id, target_year)
+            if _is_year_review_up_to_date(cached, target_year=target_year, today=today):
+                total = ((cached or {}).get("kpis") or {}).get("total_workouts") or 0
+                available = await _build_available_years(store, runner_id, today.year)
+                return {
+                    "status": "ready" if total > 0 else "empty",
+                    "year": target_year,
+                    "available_years": available,
+                    "tp_connected": tp["connected"],
+                    "cached": True,
+                    "data": cached,
+                }
+
+        if not tp["connected"]:
+            available = await _build_available_years(store, runner_id, today.year)
+            return {
+                "status": "tp_not_connected",
+                "year": target_year,
+                "available_years": available,
+                "tp_connected": False,
+                "cached": False,
+                "data": None,
+            }
+
+        force_full = refresh_mode == "full"
+        try:
+            await _agent(request).run_ephemeral_quick_action(
+                adk_user_id=user.adk_user_id,
+                auth_email=user.email,
+                quick_action={
+                    "skill": "year-review",
+                    "args": {"year": target_year, "force_full": force_full},
+                },
+                message=f"Refresh {target_year} annual review",
+            )
+        except Exception as exc:
+            logger.exception("Failed to compute %d annual review via Agent Runtime", target_year)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not compile your {target_year} annual review right now: {exc}",
+            ) from None
+
+        fresh = await store.get_year_review_cache(runner_id, target_year)
+        available = await _build_available_years(store, runner_id, today.year)
+        if isinstance(fresh, dict) and fresh.get("version") == YEAR_REVIEW_VERSION:
+            total = (fresh.get("kpis") or {}).get("total_workouts") or 0
+            return {
+                "status": "ready" if total > 0 else "empty",
+                "year": target_year,
+                "available_years": available,
+                "tp_connected": True,
+                "cached": False,
+                "data": fresh,
+            }
+        return {
+            "status": "empty",
+            "year": target_year,
+            "available_years": available,
+            "tp_connected": True,
+            "cached": False,
+            "data": None,
+        }
+
+    @app.get("/api/year-review")
+    async def get_year_review(
+        request: Request,
+        year: Optional[int] = None,
+        user: AuthenticatedUser = Depends(current_user),
+    ) -> dict[str, Any]:
+        return await _resolve_year_review(request, user, year=year, refresh_mode=None)
+
+    @app.post("/api/year-review/refresh")
+    async def refresh_year_review(
+        request: Request,
+        year: Optional[int] = None,
+        mode: str = "incremental",
+        user: AuthenticatedUser = Depends(current_user),
+    ) -> dict[str, Any]:
+        return await _resolve_year_review(request, user, year=year, refresh_mode=mode)
 
     @app.post("/api/session/new")
     async def create_new_session(

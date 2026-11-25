@@ -13,7 +13,7 @@ from ...shared.parallel_fetch import gather_labeled
 from ...shared.runner_identity import profile_user_id
 from ...shared.tp_payloads import coerce_mcp_payload
 from ...shared.weekly_buckets import build_week_buckets
-from .helpers.audit_summary_text import format_plan_audit_summary
+from .helpers.audit_summary_text import format_events_audit_section, format_plan_audit_summary
 from .helpers.long_run_annotations import (
     annotate_long_runs,
     annotate_week_over_week,
@@ -42,6 +42,7 @@ async def fetch_plan_audit_data(
 
     raw = await gather_labeled({
         "workouts": tp_calls.fetch_workouts(tool_context, iso_date(prior_start), end_str),
+        "events": tp_calls.fetch_events(tool_context, start_str, end_str),
         "volume cache": read_cached_volume_history(user_id),
         "calendar notes": tp_calls.fetch_notes(tool_context, start_str, end_str),
         "fitness PMC": tp_calls.run_tp_tool(
@@ -80,7 +81,8 @@ async def fetch_plan_audit_data(
     daily = coerce_mcp_payload(raw["fitness PMC"]).get("daily_data") or [] if raw["fitness PMC"] else []
     ctl = next((d.get("ctl") for d in reversed(daily) if d.get("ctl") is not None), None)
     goal_context = format_goal_context(ctl, history_entries)
-    summary = format_plan_audit_summary(week_list, goal_context=goal_context)
+    events_section = format_events_audit_section(raw["events"], all_workouts, profile, q_start, q_end)
+    summary = format_plan_audit_summary(week_list, goal_context=goal_context, events_section=events_section)
     if raw["calendar notes"] is None:
         summary += ("\n\n⚠️ Calendar notes unavailable (TrainingPeaks error): travel, illness or other "
                     "calendar notes for this window are not shown above.")

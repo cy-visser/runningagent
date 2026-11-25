@@ -23,7 +23,12 @@ from ...shared.runner_identity import profile_user_id
 from ...shared.session_state import PLAN_CONTEXT_STATE_KEY
 from ...shared.ui_channel import reply
 from ...shared.workout_upsert import WRITE_CONCURRENCY, write_changes_throttled
-from .helpers.plan_diff import diff_week, write_change as plan_write_change
+from .helpers.plan_diff import (
+    diff_events,
+    diff_week,
+    write_change as plan_write_change,
+    write_event_change,
+)
 from .helpers.plan_expand import cutoff_date, effective_plan_end, end_cutoff_date, expand_week, plan_window, week_monday
 from .helpers.plan_summary_text import (
     NOTHING_STAGED_TEXT,
@@ -106,8 +111,18 @@ async def apply_training_plan(tool_context: ToolContext, staged_id: str, week: i
     expanded = expand_week(
         spec_week, monday, staged["zones"], cutoff_date(spec, get_today_date()), spec.get("times"), end_cutoff_date(spec)
     )
+    wk_start_s, wk_end_s = iso_date(monday), iso_date(monday + timedelta(days=6))
+    week_events = [
+        ev for ev in (spec.get("events") or [])
+        if isinstance(ev, dict) and wk_start_s <= str(ev.get("date") or "")[:10] <= wk_end_s
+    ]
     try:
-        workouts = await tp_calls.fetch_workouts(tool_context, iso_date(monday), iso_date(monday + timedelta(days=6)))
+        workouts = await tp_calls.fetch_workouts(tool_context, wk_start_s, wk_end_s)
+        existing_events = (
+            await tp_calls.fetch_events(tool_context, wk_start_s, wk_end_s)
+            if week_events
+            else []
+        )
     except Exception as e:  # never diff against a calendar we could not read (it would create duplicates)
         applied = applied_after_week(applied, staged, week, {}, 1)
         state[APPLIED_PLAN_STATE_KEY] = applied
@@ -115,6 +130,10 @@ async def apply_training_plan(tool_context: ToolContext, staged_id: str, week: i
         return json.dumps({"success": False, "week": week, "reason": "calendar_unavailable", APPLIED_PLAN_STATE_KEY: applied})
 
     changes = [c for c in (plan_write_change(d) for d in diff_week(expanded, workouts, spec["mode"])) if c]
+    if week_events:
+        changes.extend(
+            c for c in (write_event_change(d) for d in diff_events(week_events, existing_events)) if c
+        )
     results = await write_changes_throttled(tool_context, changes, concurrency=WRITE_CONCURRENCY, sleep=_sleep)
     ok: dict[str, int] = {}
     for r in results:

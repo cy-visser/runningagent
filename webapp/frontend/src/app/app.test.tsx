@@ -15,18 +15,27 @@ import {
   DEMO_ME_READY,
   DEMO_PLAN,
   DEMO_RACE_PREDICTOR_RESPONSE,
+  DEMO_YEAR_REVIEW_RESPONSE,
 } from "../demo/fixtures";
 import * as api from "../shared/api";
 import { ApiError, fetchMe, onSessionExpired, parseSseFrame } from "../shared/api";
 import type { AppliedTrainingPlan, QuickAction, StagedTrainingPlan } from "../shared/types";
 
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
 describe("app shell & conversation lifecycle", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
   });
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     onSessionExpired(null);
   });
@@ -228,6 +237,18 @@ describe("app shell & conversation lifecycle", () => {
     expect(await screen.findByText("1:26:08")).toBeInTheDocument();
     expect(screen.getByText("And my easy pace?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close race predictor" }));
+
+    // Clicking the subtle Annual Review icon in the top bar opens the modal without clearing the chat feed,
+    // and no extra dashboard card was added to the Quick actions grid.
+    const fetchYearReviewSpy = vi
+      .spyOn(api, "fetchYearReview")
+      .mockResolvedValue(DEMO_YEAR_REVIEW_RESPONSE);
+    fireEvent.click(screen.getByRole("button", { name: "Annual Review" }));
+    expect(await screen.findByRole("dialog", { name: "Annual Review" })).toBeInTheDocument();
+    expect(fetchYearReviewSpy).toHaveBeenCalledTimes(1);
+    expect((await screen.findAllByText("2,486 km")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("And my easy pace?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close annual review" }));
 
     // The top-left title goes home: scrolls to the top and focuses the coaching hub heading,
     // keeping the conversation.

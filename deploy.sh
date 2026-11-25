@@ -76,6 +76,24 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+# Preflight: ensure the pre-built tp_mcp wheel matches trainingpeaks-mcp/src and requirements.txt.
+TP_MCP_VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' trainingpeaks-mcp/pyproject.toml | head -n 1)
+TP_MCP_WHEEL="tp_mcp-${TP_MCP_VERSION}-py3-none-any.whl"
+if [ -z "$TP_MCP_VERSION" ] || [ ! -f "$TP_MCP_WHEEL" ]; then
+    echo "Error: Missing ${TP_MCP_WHEEL} for trainingpeaks-mcp ${TP_MCP_VERSION}." >&2
+    echo "Rebuild it with: (cd trainingpeaks-mcp && uv build --wheel --out-dir ..)" >&2
+    exit 1
+fi
+if ! grep -q "${TP_MCP_WHEEL}" requirements.txt; then
+    echo "Error: requirements.txt does not reference ${TP_MCP_WHEEL}." >&2
+    exit 1
+fi
+if [ -n "$(find trainingpeaks-mcp/src -type f -name '*.py' -newer "$TP_MCP_WHEEL" -print -quit)" ]; then
+    echo "Error: ${TP_MCP_WHEEL} is older than files in trainingpeaks-mcp/src/." >&2
+    echo "Rebuild it with: (cd trainingpeaks-mcp && uv build --wheel --out-dir ..)" >&2
+    exit 1
+fi
+
 PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format="value(projectNumber)" --quiet)
 if [ -z "$PROJECT_NUMBER" ]; then
     echo "Error: Could not resolve project number for project '${PROJECT_ID}'." >&2

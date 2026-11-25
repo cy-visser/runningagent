@@ -15,6 +15,7 @@ import type {
   StagedTrainingPlan,
   TokenUsage,
   ToolChip,
+  YearReviewResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -135,6 +136,39 @@ export async function refreshRacePredictor(): Promise<RacePredictorResponse> {
     headers: buildHeaders(),
   });
   return handleResponse<RacePredictorResponse>(res);
+}
+
+export async function fetchYearReview(year?: number): Promise<YearReviewResponse> {
+  if (isDemoMode()) {
+    const mod = await import("../demo/mockApi");
+    return mod.demoFetchYearReview(year);
+  }
+  const qs = year != null ? `?year=${encodeURIComponent(String(year))}` : "";
+  const res = await fetch(`/api/year-review${qs}`, {
+    method: "GET",
+    credentials: "same-origin",
+    headers: buildHeaders(),
+  });
+  return handleResponse<YearReviewResponse>(res);
+}
+
+export async function refreshYearReview(
+  year?: number,
+  mode: "incremental" | "full" = "incremental",
+): Promise<YearReviewResponse> {
+  if (isDemoMode()) {
+    const mod = await import("../demo/mockApi");
+    return mod.demoRefreshYearReview(year, mode);
+  }
+  const params = new URLSearchParams();
+  if (year != null) params.set("year", String(year));
+  params.set("mode", mode);
+  const res = await fetch(`/api/year-review/refresh?${params.toString()}`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: buildHeaders(),
+  });
+  return handleResponse<YearReviewResponse>(res);
 }
 
 export async function connectTrainingPeaks(

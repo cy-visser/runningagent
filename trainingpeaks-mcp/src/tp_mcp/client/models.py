@@ -100,6 +100,7 @@ class WorkoutSummary(BaseModel):
     completed: bool | None = Field(default=None)
     description: str | None = None
     start_time: str | None = Field(default=None, alias="startTime")
+    tags: str | None = Field(default=None, alias="userTags")
 
     @property
     def date(self) -> date_type:
@@ -175,6 +176,7 @@ class WorkoutDetail(BaseModel):
     elevation_gain: float | None = Field(default=None, alias="elevationGain")
     completed: bool | None = Field(default=None)
     structure: dict[str, Any] | None = None
+    tags: str | None = Field(default=None, alias="userTags")
 
     @property
     def date(self) -> date_type:

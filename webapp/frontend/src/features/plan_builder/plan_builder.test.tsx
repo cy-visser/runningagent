@@ -236,6 +236,41 @@ Added Tilburg 10 Miles (W7) and Dam tot Damloop (W8) and moved @HM/@M work into 
   it("formats the week headline with bike minutes when planned", () => {
     expect(weekHeadline({ ...week(1), run_km: 42, bike_minutes: 45 })).toBe("W1 · 30 Nov · Base · 42 km · Bike 45 min · TSS 290");
   });
+
+  it("renders staged TrainingPeaks Calendar Events alongside the weekly agenda", () => {
+    const withEvents: StagedTrainingPlan = {
+      ...plan(2),
+      totals: { weeks: 2, sessions: 10, create: 4, update: 2, delete: 0, keep: 4, events: 2 },
+      events: [
+        {
+          action: "create",
+          date: "2026-12-06",
+          name: "Tune-up 10K",
+          priority: "B",
+          event_type: "RunningRoad",
+          distance_km: 10,
+          race_type_duration: "RunUnderOneHour",
+          summary: "B · 10 km · RunningRoad · Goal 43:00",
+        },
+        {
+          action: "update",
+          date: "2026-12-13",
+          name: "Amsterdam Half Marathon",
+          priority: "A",
+          event_type: "RunningRoad",
+          distance_km: 21.1,
+          race_type_duration: "RunOnetoTwoHours",
+          summary: "A · 21.1 km · RunningRoad · Goal 1:35:00 · Place #25 · PR",
+        },
+      ],
+    };
+    render(<PlanStagedCard plan={withEvents} status="pending" onApply={vi.fn()} />);
+    expect(screen.getByText(/TrainingPeaks Calendar Events/)).toBeInTheDocument();
+    expect(screen.getByText("Tune-up 10K")).toBeInTheDocument();
+    expect(screen.getByText("Amsterdam Half Marathon")).toBeInTheDocument();
+    expect(screen.getByText(/Place #25 · PR/)).toBeInTheDocument();
+    expect(screen.getByText(/2 race events/)).toBeInTheDocument();
+  });
 });
 
 describe("plan builder: strength exercises and training times", () => {

@@ -4,6 +4,7 @@ import { ConnectTrainingPeaksDialog } from "../features/profile/ConnectTrainingP
 import { BUILD_PLAN_ACTION, BUILD_PLAN_PROMPT, Dashboard } from "./Dashboard";
 import { ProfilePanel } from "../features/profile/ProfilePanel";
 import { RacePredictorPanel } from "../features/race_predictor/RacePredictorPanel";
+import { YearReviewModal } from "../features/year_review/YearReviewModal";
 import { TopBar } from "./TopBar";
 import type { PlanApplying } from "./ChatFeed";
 import {
@@ -39,6 +40,7 @@ export function App() {
     "view",
   );
   const [racePredictorOpen, setRacePredictorOpen] = useState(false);
+  const [yearReviewOpen, setYearReviewOpen] = useState(false);
   const [tpDialogOpen, setTpDialogOpen] = useState(false);
   const [appliedStagedIds, setAppliedStagedIds] = useState<ReadonlySet<string>>(new Set());
   const [applyingStagedId, setApplyingStagedId] = useState<string | null>(null);
@@ -84,6 +86,8 @@ export function App() {
           setProfileDrawerOpen(true);
         } else if (demoView === "predictor") {
           setRacePredictorOpen(true);
+        } else if (demoView === "year-review") {
+          setYearReviewOpen(true);
         }
       }
     } catch (err) {
@@ -335,6 +339,7 @@ export function App() {
     // "Home" = the Daily Coaching Hub at the top of the page; the conversation is kept.
     setProfileDrawerOpen(false);
     setRacePredictorOpen(false);
+    setYearReviewOpen(false);
     setTpDialogOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
     document.getElementById("coaching-hub")?.focus({ preventScroll: true });
@@ -412,13 +417,20 @@ export function App() {
         newSessionDisabled={busy}
         onHome={handleHome}
         onNewSession={handleNewSession}
+        onOpenYearReview={() => {
+          setProfileDrawerOpen(false);
+          setRacePredictorOpen(false);
+          setYearReviewOpen(true);
+        }}
         onViewProfile={() => {
           setRacePredictorOpen(false);
+          setYearReviewOpen(false);
           setProfileDrawerMode("view");
           setProfileDrawerOpen(true);
         }}
         onEditProfile={() => {
           setRacePredictorOpen(false);
+          setYearReviewOpen(false);
           setProfileDrawerMode("edit");
           setProfileDrawerOpen(true);
         }}
@@ -441,14 +453,33 @@ export function App() {
         onApplyPlan={(stagedId) => void handleApplyPlan(stagedId)}
         onViewProfile={() => {
           setRacePredictorOpen(false);
+          setYearReviewOpen(false);
           setProfileDrawerMode("view");
           setProfileDrawerOpen(true);
         }}
         onOpenRacePredictor={() => {
           setProfileDrawerOpen(false);
+          setYearReviewOpen(false);
           setRacePredictorOpen(true);
         }}
         onOpenTrainingPeaks={() => setTpDialogOpen(true)}
+      />
+
+      <YearReviewModal
+        open={yearReviewOpen}
+        canDiscuss={me.tp.connected && !busy}
+        onClose={() => setYearReviewOpen(false)}
+        onOpenTrainingPeaks={() => {
+          setYearReviewOpen(false);
+          setTpDialogOpen(true);
+        }}
+        onDiscussWithCoach={(prompt) => {
+          setYearReviewOpen(false);
+          if (me.tp.connected && !busy) {
+            setDraft("");
+            void handleSendPrompt(prompt, true);
+          }
+        }}
       />
 
       <RacePredictorPanel

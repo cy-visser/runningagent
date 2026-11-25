@@ -93,7 +93,7 @@ def _single_goal(profile: dict) -> dict:
         "kind": KIND_SINGLE,
         "index": None,
         "training_goal": profile.get("training_goal"),
-        "race_name": None,
+        "race_name": profile.get("race_name"),
         "goal_set_date": profile.get("goal_set_date"),
         "timeline": profile.get("timeline"),
         "taper_weeks": profile.get("taper_weeks"),

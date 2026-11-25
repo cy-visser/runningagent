@@ -577,15 +577,23 @@ export type QuickAction =
   | { skill: "plan-builder:intake" }
   | { skill: "plan-builder:apply"; staged_id: string; week: number };
 
-/** One proposed workout / note change staged by the coach (mirrors `helpers/staged_changes.py`). */
+/** One proposed workout / note / race-event change staged by the coach (mirrors `helpers/staged_changes.py`). */
 export interface StagedChange {
-  kind: "workout" | "note";
+  kind: "workout" | "note" | "event";
   action: "create" | "update" | "delete";
   date: string;
   title: string;
+  name?: string;
   sport?: string;
   replaces_title?: string | null;
   workout_id?: string | null;
+  event_id?: string | null;
+  event_type?: string | null;
+  race_type_duration?: string | null;
+  priority?: "A" | "B" | "C" | string | null;
+  goal_time?: string | null;
+  goal_place?: number | null;
+  goal_pr?: boolean | null;
   distance_km?: number | null;
   duration_minutes?: number | null;
   tss_planned?: number | null;
@@ -667,6 +675,22 @@ export interface PlanWeek {
   rows: PlanSessionRow[];
 }
 
+/** Staged TrainingPeaks Calendar Event attached to a training plan. */
+export interface PlanEventRow {
+  date: string;
+  name: string;
+  action: PlanRowAction;
+  event_id?: string | null;
+  event_type?: string | null;
+  race_type_duration?: string | null;
+  distance_km?: number | null;
+  priority?: "A" | "B" | "C" | string | null;
+  goal_time?: string | null;
+  goal_place?: number | null;
+  goal_pr?: boolean | null;
+  summary?: string | null;
+}
+
 /** Staged training plan shown with the "Apply to TrainingPeaks" button (state `staged_training_plan`). */
 export interface StagedTrainingPlan {
   version: number;
@@ -675,8 +699,9 @@ export interface StagedTrainingPlan {
   mode?: "new" | "overhaul" | string;
   start_date: string;
   end_date: string;
-  totals: PlanWeekCounts & { weeks: number; sessions: number };
+  totals: PlanWeekCounts & { weeks: number; sessions: number; events?: number };
   weeks: PlanWeek[];
+  events?: PlanEventRow[];
 }
 
 /** Progress of the week-by-week apply (state `applied_training_plan`, updated after every week). */
@@ -828,4 +853,200 @@ export interface RacePredictorResponse {
   cached: boolean;
   active_goal?: RacePredictorActiveGoal | null;
   data?: RaceProjectionCacheDoc | null;
+}
+
+export interface YearReviewRacePin {
+  date: string;
+  name: string;
+  short_label: string;
+  duration_s?: number | null;
+  is_pr: boolean;
+  badge: string;
+}
+
+export interface YearReviewRace {
+  date: string;
+  workout_id?: string | null;
+  name: string;
+  badge: string;
+  priority?: string | null;
+  short_label: string;
+  distance_label?: string | null;
+  distance_km?: number | null;
+  duration_s?: number | null;
+  pace_s?: number | null;
+  avg_hr?: number | null;
+  pct_lthr?: number | null;
+  pa_hr?: number | null;
+  ctl?: number | null;
+  is_pr: boolean;
+  goal_text?: string | null;
+  goal_gap_s?: number | null;
+  note?: string | null;
+}
+
+export interface YearReviewKpis {
+  total_run_km: number;
+  avg_weekly_run_km: number;
+  total_runs: number;
+  total_workouts: number;
+  total_hours: number;
+  run_hours: number;
+  bike_hours: number;
+  strength_hours: number;
+  ctl_start?: number | null;
+  ctl_end?: number | null;
+  ctl_delta?: number | null;
+  ctl_delta_pct?: number | null;
+  ctl_peak?: number | null;
+  ctl_peak_date?: string | null;
+  total_tss: number;
+  active_weeks: number;
+  total_weeks: number;
+  active_weeks_pct: number;
+  longest_streak_weeks: number;
+  peak_week_km?: number | null;
+  peak_week_date?: string | null;
+}
+
+export interface YearReviewMonthPoint {
+  month: string;
+  label: string;
+  km: number;
+  runs: number;
+  hours: number;
+  tss: number;
+  ctl?: number | null;
+  ctl_peak_date?: string | null;
+  partial: boolean;
+  future?: boolean;
+  races: YearReviewRacePin[];
+}
+
+export interface YearReviewWeekPoint {
+  week: string;
+  km: number;
+  runs: number;
+  sessions: number;
+  tss: number;
+  long_km: number;
+  ctl?: number | null;
+  ctl_peak_date?: string | null;
+  partial: boolean;
+  races: YearReviewRacePin[];
+}
+
+export interface YearReviewFitnessShiftItem {
+  key: string;
+  label: string;
+  start: string;
+  latest: string;
+  delta: string;
+  arrow: string;
+  verdict: "improving" | "stable" | "declining";
+}
+
+export interface YearReviewPeak {
+  pr_type: string;
+  distance: string;
+  time_s: number;
+  time: string;
+  pace_s: number;
+  pace: string;
+  date?: string | null;
+  workout_id?: string | null;
+  workout_title?: string | null;
+  all_time_pr: boolean;
+  profile_pr_time?: string | null;
+  profile_pr_date?: string | null;
+}
+
+export interface YearReviewMilestones {
+  longest_run?: { km: number; date: string; title: string } | null;
+  peak_week?: { km: number; date: string } | null;
+  peak_month?: { km: number; label: string; month: string } | null;
+}
+
+export interface YearReviewSportMixItem {
+  key: "running" | "cycling" | "strength" | "other" | string;
+  label: string;
+  hours: number;
+  sessions: number;
+  pct: number;
+}
+
+export interface YearReviewMix {
+  sports: YearReviewSportMixItem[];
+  run_breakdown: {
+    easy_pct: number;
+    quality_pct: number;
+    long_race_pct: number;
+    easy_runs: number;
+    quality_runs: number;
+    long_race_runs: number;
+  };
+}
+
+export interface YearReviewHeatmapDay {
+  date: string;
+  km: number;
+  /** -1 = out-of-year padding, -2 = future day remaining in current year, 0..4 = volume bucket */
+  level: number;
+  is_race: boolean;
+  race_name?: string | null;
+}
+
+export interface YearReviewHeatmap {
+  weeks: Array<{ week: string; days: YearReviewHeatmapDay[] }>;
+  run_days: number;
+  longest_streak_weeks: number;
+}
+
+export interface YearReviewSummaryItem {
+  year: number;
+  total_run_km?: number | null;
+  total_workouts?: number | null;
+  races_count?: number | null;
+  is_complete: boolean;
+  as_of_date?: string | null;
+}
+
+export interface YearReviewData {
+  version: number;
+  year: number;
+  is_complete: boolean;
+  updated_at: string;
+  as_of_date: string;
+  last_computed_date?: string | null;
+  sync_mode?: "full" | "incremental" | "cached" | string;
+  runner_name: string;
+  window: { start: string | null; end: string | null; year_end?: string | null; weeks: number };
+  coverage: {
+    total_workouts: number;
+    total_runs: number;
+    analyzed_runs: number;
+    training_log_start?: string | null;
+    training_log_end?: string | null;
+  };
+  kpis: YearReviewKpis;
+  monthly: YearReviewMonthPoint[];
+  weekly: YearReviewWeekPoint[];
+  races: YearReviewRace[];
+  fitness_shift: YearReviewFitnessShiftItem[];
+  peaks: YearReviewPeak[];
+  milestones: YearReviewMilestones;
+  mix: YearReviewMix;
+  heatmap: YearReviewHeatmap;
+}
+
+export type YearReviewStatus = "ready" | "empty" | "no_profile" | "tp_not_connected";
+export type YearReviewRefreshMode = "incremental" | "full";
+
+export interface YearReviewResponse {
+  status: YearReviewStatus;
+  year?: number;
+  available_years?: YearReviewSummaryItem[];
+  tp_connected: boolean;
+  cached: boolean;
+  data?: YearReviewData | null;
 }

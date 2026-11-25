@@ -22,6 +22,8 @@ from .helpers.compact_changes import expand_change_entries
 from .helpers.staged_changes import (
     BUILDER_CHECK,
     BUILDER_COACH,
+    KIND_EVENT,
+    KIND_NOTE,
     KIND_WORKOUT,
     STAGED_CHANGES_STATE_KEY,
     change_label,
@@ -117,8 +119,10 @@ def _slot_key(item: dict) -> tuple:
         return ("wid", wid)
     day = str(item.get("date") or item.get("date_str") or "")[:10]
     kind = str(item.get("kind") or KIND_WORKOUT).strip().lower()
-    if kind == "note":
+    if kind == KIND_NOTE:
         return ("note", day, str(item.get("title") or "").strip().lower())
+    if kind == KIND_EVENT:
+        return ("event", day, str(item.get("name") or item.get("title") or "").strip().lower())
     inferred = code_sport(item.get("code")) if item.get("code") else None
     sport = str(item.get("sport") or inferred or "run").strip().lower()
     from_day = str(item.get("from_date_str") or "")[:10]
@@ -165,6 +169,25 @@ async def _planned_notes(tool_context: ToolContext, days: list[date], cache: dic
         return []
 
 
+async def _planned_events(tool_context: ToolContext, days: list[date], cache: dict) -> list[dict]:
+    if not days:
+        return []
+    start_s, end_s = iso_date(min(days)), iso_date(max(days))
+    if (
+        isinstance(cache.get("events"), list)
+        and str(cache.get("e_start") or "") <= start_s
+        and str(cache.get("e_end") or "") >= end_s
+    ):
+        return cache["events"]
+    try:
+        events = await tp_calls.fetch_events(tool_context, min(days), max(days))
+        cache.update({"events": events, "e_start": start_s, "e_end": end_s})
+        return events
+    except Exception as e:
+        logger.warning("Calendar events unavailable for staging: %s", e)
+        return []
+
+
 async def _athlete_settings(tool_context: ToolContext, wanted: bool, cache: dict) -> Any:
     if not wanted:
         return None
@@ -208,13 +231,14 @@ def _preview_staged_lines(staged: list[dict]) -> list[str]:
 async def stage_workout_changes(
     tool_context: ToolContext, changes: list[Union[str, dict[str, Any]]], message: str = ""
 ) -> str:
-    """Stages workout/note changes of any count (1 to 150+). `message`: coaching rationale (<= 35w if already discussed, else <= 80w + ⚠️/🔴 numeric risks; omit on plain move/rename). When staging agreed recommendations, map directly to compact strings without re-auditing.
+    """Stages workout / note / race-event changes of any count (1 to 150+). `message`: coaching rationale (<= 35w if already discussed, else <= 80w + ⚠️/🔴 numeric risks; omit on plain move/rename). When staging agreed recommendations, map directly to compact strings without re-auditing.
     Prefer compact 1-line strings in `changes`:
     - Workout: `"2027-01-05: P 4x1.2k @4:08-4:10 r2'"` | multi-date `"2026-12-30,2026-12-31: E 8 -strides"` (`+create` adds 2nd same-sport; `-strides` drops strides; `;` adds same-day double).
     - Full week (for multi-week batches): `"2026-11-30 | Tue: I 6x400 @4:18 r90\\"; S 45' heavy-lower | Wed/Thu: E 6 | Sun: L 14"`.
     - Move / Delete / Note: `"2026-12-25 -> 2026-12-26: run"` | `"2027-01-29: delete strength"` (`delete id=<wid>`) | `"2026-12-19: note Holiday | Travel"`.
+    - Race Event (TP Calendar Event): `"2026-10-31: event A RunningRoad 21.1k Amsterdam HM | goal=1:35:00 place=10 pr=true"` (or dict `{"kind": "event", "date_str": "YYYY-MM-DD", "name": "...", "event_type": "RunningRoad", "distance_km": 21.1, "race_type_duration": "RunOnetoTwoHours", "priority": "A"|"B"|"C", "goal_time": "1:35:00", "goal_place": 10, "goal_pr": true}`; intermediate races must be B or C, never A).
     - Codes: lengths 8|1.5k|10mi|400m|50'|90"|1h30, reps 6x1k, rec r2'|r90"|r200, slot am|mid|pm. Run: E 8 (+strides), R 6, L 22 (+6@M|+4x4k@HM r1k [+2@E]), RACE/EVENT [16k @HM] [Name] (no auto WU/CD); quality (15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M) or @M:SS[-M:SS], H 8x60" r90", REST. Other: B 60' Z2 (Z1-Z3) | B 4x8' @SS r4' (@SS|@T|@VO2), S 40' heavy-lower (full|core-hips|plyo|mobility), X 40' swim (walk|crosstrain).
-    - Dict items also supported for `[workout_id]` renames or custom `structure` ladders/WU/CD (schema returned on retry)."""
+    - Dict items also supported for `[workout_id]` renames, events, or custom `structure` ladders/WU/CD (schema returned on retry)."""
     invocation = getattr(tool_context, "invocation_id", None)
     saved_cache = tool_context.state.get(_TP_CACHE_STATE_KEY)
     tp_cache: dict[str, Any] = (
@@ -228,9 +252,11 @@ async def stage_workout_changes(
     draft = saved_draft if isinstance(saved_draft, dict) and saved_draft.get("invocation") == invocation else None
 
     raw = expand_change_entries(changes)
-    workout_raw = [c for c in raw if str(c.get("kind") or KIND_WORKOUT).lower() != "note"]
-    note_deletes = [c for c in raw if c not in workout_raw and c.get("delete")]
+    workout_raw = [c for c in raw if str(c.get("kind") or KIND_WORKOUT).lower() not in (KIND_NOTE, KIND_EVENT)]
+    event_raw = [c for c in raw if str(c.get("kind") or "").lower() == KIND_EVENT]
+    note_deletes = [c for c in raw if str(c.get("kind") or "").lower() == KIND_NOTE and c.get("delete")]
     days = staged_dates(workout_raw)
+    event_days = staged_dates(event_raw)
     wants_settings = any(
         not c.get("delete")
         and normalize_code(c.get("code")).upper() != "REST"
@@ -247,14 +273,16 @@ async def stage_workout_changes(
         for c in workout_raw
         if str(c.get("workout_id") or "").strip() and not c.get("code")
     ]
-    workouts, settings_raw, details, notes = await asyncio.gather(
+    workouts, settings_raw, details, notes, existing_events = await asyncio.gather(
         _planned_workouts(tool_context, days, tp_cache),
         _athlete_settings(tool_context, wants_settings, tp_cache),
         _current_workouts(tool_context, explicit_ids, tp_cache),
         _planned_notes(tool_context, staged_dates(note_deletes), tp_cache),
+        _planned_events(tool_context, event_days, tp_cache),
     )
 
-    staged, problems = resolve_changes(raw, workouts, details, notes)
+    profile = tool_context.state.get("user_profile") or {}
+    staged, problems = resolve_changes(raw, workouts, details, notes, events=existing_events, profile=profile)
     # `BUILDER_CODE` builds deterministic workouts/strides directly from the code (zero per-workout tp_get_workout
     # calls, scaling cleanly to 150+ workouts); only custom `structure`, totals checks, or moves fetch details.
     to_check = [str(c["workout_id"]) for c in staged
@@ -265,7 +293,6 @@ async def stage_workout_changes(
                      or (change_label(c) == "Moved" and needs_builder(c.get("sport"))))]
     if to_check:
         details = {**details, **await _current_workouts(tool_context, to_check, tp_cache)}
-    profile = tool_context.state.get("user_profile") or {}
     staged, needs_structure, totals_notes = finalize_builders(
         staged, settings_raw, details, profile=profile, today=get_today_date()
     )
@@ -283,7 +310,7 @@ async def stage_workout_changes(
         all_days = [d for d in (parse_date(c.get("date")) for c in staged) if d]
         days = sorted({*days, *all_days})
 
-    not_found = [p for p in problems if p.get("reason") in ("workout_not_found", "note_not_found")]
+    not_found = [p for p in problems if p.get("reason") in ("workout_not_found", "note_not_found", "event_not_found")]
     refused = [p for p in problems if p.get("reason") == "cannot_delete_completed"]
     ambiguous = [p for p in problems if p not in not_found and p not in refused]
 
@@ -339,8 +366,9 @@ async def stage_workout_changes(
         result["message"] = " ".join(messages)
     if not staged and not problems and not needs_structure:
         result["message"] = "No changes given; nothing staged."
-    if days:
-        result["window"] = f"{iso_date(min(days))}..{iso_date(max(days))}"
+    all_window_days = sorted({*days, *event_days})
+    if all_window_days:
+        result["window"] = f"{iso_date(min(all_window_days))}..{iso_date(max(all_window_days))}"
     return json.dumps(result)
 
 

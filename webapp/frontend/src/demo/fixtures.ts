@@ -11,6 +11,8 @@ import type {
   TrendReportData,
   TrendWeekPoint,
   WorkoutReportData,
+  YearReviewHeatmapDay,
+  YearReviewResponse,
 } from "../shared/types";
 
 export const DEMO_ME_READY: MeResponse = {
@@ -891,3 +893,294 @@ export const DEMO_PLAN_MARKDOWN = `### Block Strategy
    - Maintain single-leg calf raises to protect Achilles resilience before 6x1 km work.
 
 - **${DEMO_PLAN_WEEKS}-week plan staged:** ${DEMO_PLAN.totals.sessions} sessions (${DEMO_PLAN.totals.create} new · ${DEMO_PLAN.totals.update} updated · ${DEMO_PLAN.totals.delete} removed). Review the weeks below and press **Apply to TrainingPeaks**.`;
+
+function buildDemoYearHeatmap(): Array<{ week: string; days: YearReviewHeatmapDay[] }> {
+  const raceMap: Record<string, string> = {
+    "2026-01-18": "Winter 10-Mile Benchmark",
+    "2026-03-22": "CPC Loop Den Haag Half Marathon",
+    "2026-06-14": "Amsterdam Summer Track 5K",
+    "2026-10-18": "Zevenheuvelenloop Warm-Up 10K",
+  };
+  const start = new Date(Date.UTC(2025, 11, 1)); // Monday Dec 1, 2025
+  const cutoff = "2026-11-25";
+  const weeks: Array<{ week: string; days: YearReviewHeatmapDay[] }> = [];
+  for (let w = 0; w < 52; w += 1) {
+    const mon = new Date(start.getTime() + w * 7 * 86400_000);
+    const weekIso = mon.toISOString().slice(0, 10);
+    const days: YearReviewHeatmapDay[] = [];
+    for (let d = 0; d < 7; d += 1) {
+      const cur = new Date(mon.getTime() + d * 86400_000);
+      const iso = cur.toISOString().slice(0, 10);
+      if (iso > cutoff) {
+        days.push({ date: iso, km: 0, level: -1, is_race: false, race_name: null });
+        continue;
+      }
+      const raceName = raceMap[iso] ?? null;
+      const seed = (w * 37 + d * 17 + 13) % 100;
+      let km = 0;
+      if (raceName) {
+        km = iso === "2026-03-22" ? 21.1 : iso === "2026-06-14" ? 5.0 : iso === "2026-10-18" ? 10.0 : 16.1;
+      } else if (d === 6) {
+        km = w >= 38 && w <= 44 ? 26.5 : seed > 20 ? 18.0 : 12.0;
+      } else if (d === 2) {
+        km = seed > 15 ? 13.5 : 10.0;
+      } else if (d === 1 || d === 4) {
+        km = seed > 25 ? 10.2 : seed > 10 ? 6.5 : 0;
+      } else if (d === 3) {
+        km = seed > 35 ? 9.5 : 5.5;
+      } else if (d === 5) {
+        km = seed > 60 ? 5.0 : 0;
+      }
+      const level = km <= 0 ? 0 : km < 7 ? 1 : km < 13 ? 2 : km < 20 ? 3 : 4;
+      days.push({ date: iso, km, level, is_race: Boolean(raceName), race_name: raceName });
+    }
+    weeks.push({ week: weekIso, days });
+  }
+  return weeks;
+}
+
+const DEMO_YEAR_HEATMAP_WEEKS = buildDemoYearHeatmap();
+
+export const DEMO_AVAILABLE_YEARS = [
+  { year: 2026, total_run_km: 2486.0, total_workouts: 298, races_count: 4, is_complete: false, as_of_date: "2026-11-25" },
+  { year: 2025, total_run_km: 2140.0, total_workouts: 264, races_count: 2, is_complete: true, as_of_date: "2025-12-31" },
+  { year: 2024, total_run_km: 1892.0, total_workouts: 238, races_count: 2, is_complete: true, as_of_date: "2024-12-31" },
+  { year: 2023, total_run_km: 1540.0, total_workouts: 196, races_count: 1, is_complete: true, as_of_date: "2023-12-31" },
+];
+
+export const DEMO_YEAR_REVIEW_RESPONSE: YearReviewResponse = {
+  status: "ready",
+  year: 2026,
+  available_years: DEMO_AVAILABLE_YEARS,
+  tp_connected: true,
+  cached: true,
+  data: {
+    version: 5,
+    year: 2026,
+    is_complete: false,
+    updated_at: "2026-11-25T09:00:00Z",
+    as_of_date: "2026-11-25",
+    last_computed_date: "2026-11-25",
+    sync_mode: "incremental",
+    runner_name: "Cyrille Visser",
+    window: { start: "2026-01-01", end: "2026-11-25", year_end: "2026-12-31", weeks: 47 },
+    coverage: {
+      total_workouts: 298,
+      total_runs: 218,
+      analyzed_runs: 186,
+      training_log_start: "2025-12-04",
+      training_log_end: "2026-11-24",
+    },
+    kpis: {
+      total_run_km: 2486.0,
+      avg_weekly_run_km: 48.2,
+      total_runs: 218,
+      total_workouts: 298,
+      total_hours: 268.3,
+      run_hours: 214.0,
+      bike_hours: 32.1,
+      strength_hours: 22.2,
+      ctl_start: 42.0,
+      ctl_end: 61.0,
+      ctl_delta: 19.0,
+      ctl_delta_pct: 45,
+      ctl_peak: 68.0,
+      ctl_peak_date: "2026-09-27",
+      total_tss: 17420,
+      active_weeks: 49,
+      total_weeks: 52,
+      active_weeks_pct: 94,
+      longest_streak_weeks: 18,
+      peak_week_km: 78.2,
+      peak_week_date: "2026-09-14",
+    },
+    monthly: [
+      {
+        month: "2026-01", label: "Jan", km: 198, runs: 18, hours: 21.0, tss: 1340, ctl: 49, partial: false, future: false,
+        races: [{ date: "2026-01-18", name: "Winter 10-Mile Benchmark", short_label: "10M", duration_s: 3914, is_pr: false, badge: "C Race" }],
+      },
+      { month: "2026-02", label: "Feb", km: 246, runs: 20, hours: 25.4, tss: 1620, ctl: 56, partial: false, future: false, races: [] },
+      {
+        month: "2026-03", label: "Mar", km: 232, runs: 19, hours: 24.0, tss: 1560, ctl: 58, partial: false, future: false,
+        races: [{ date: "2026-03-22", name: "CPC Loop Den Haag Half Marathon", short_label: "HM", duration_s: 5268, is_pr: true, badge: "A Race" }],
+      },
+      { month: "2026-04", label: "Apr", km: 185, runs: 17, hours: 19.6, tss: 1290, ctl: 50, partial: false, future: false, races: [] },
+      { month: "2026-05", label: "May", km: 204, runs: 18, hours: 21.8, tss: 1410, ctl: 55, partial: false, future: false, races: [] },
+      {
+        month: "2026-06", label: "Jun", km: 228, runs: 20, hours: 24.1, tss: 1580, ctl: 60, partial: false, future: false,
+        races: [{ date: "2026-06-14", name: "Amsterdam Summer Track 5K", short_label: "5K", duration_s: 1121, is_pr: true, badge: "B Race" }],
+      },
+      { month: "2026-07", label: "Jul", km: 212, runs: 18, hours: 22.8, tss: 1460, ctl: 58, partial: false, future: false, races: [] },
+      { month: "2026-08", label: "Aug", km: 241, runs: 20, hours: 25.9, tss: 1690, ctl: 64, partial: false, future: false, races: [] },
+      { month: "2026-09", label: "Sep", km: 268, runs: 21, hours: 28.4, tss: 1890, ctl: 68, partial: false, future: false, races: [] },
+      {
+        month: "2026-10", label: "Oct", km: 218, runs: 18, hours: 23.0, tss: 1510, ctl: 68.2, ctl_peak_date: "2026-10-11", partial: false, future: false,
+        races: [{ date: "2026-10-18", name: "Zevenheuvelenloop Warm-Up 10K", short_label: "10K", duration_s: 2352, is_pr: true, badge: "Sub-Goal" }],
+      },
+      { month: "2026-11", label: "Nov", km: 182, runs: 13, hours: 14.1, tss: 890, ctl: 61, partial: true, future: false, races: [] },
+      { month: "2026-12", label: "Dec", km: 0, runs: 0, hours: 0, tss: 0, ctl: null, partial: false, future: true, races: [] },
+    ],
+    weekly: DEMO_YEAR_HEATMAP_WEEKS.map((wk, idx) => {
+      const km = Math.round(wk.days.reduce((s, d) => s + d.km, 0) * 10) / 10;
+      const runs = wk.days.filter((d) => d.km > 0).length;
+      const longKm = Math.max(0, ...wk.days.map((d) => d.km));
+      const raceDay = wk.days.find((d) => d.is_race);
+      return {
+        week: wk.week,
+        km,
+        runs,
+        sessions: runs + (idx % 2 === 0 ? 2 : 1),
+        tss: Math.round(km * 6.8),
+        long_km: longKm,
+        ctl: Math.round((42 + Math.sin(idx / 7) * 5 + (idx / 51) * 20) * 10) / 10,
+        partial: idx === 51,
+        races: raceDay
+          ? [
+              {
+                date: raceDay.date,
+                name: raceDay.race_name || "Race",
+                short_label:
+                  raceDay.date === "2026-03-22"
+                    ? "HM"
+                    : raceDay.date === "2026-06-14"
+                      ? "5K"
+                      : raceDay.date === "2026-10-18"
+                        ? "10K"
+                        : "10M",
+                duration_s:
+                  raceDay.date === "2026-03-22"
+                    ? 5268
+                    : raceDay.date === "2026-06-14"
+                      ? 1121
+                      : raceDay.date === "2026-10-18"
+                        ? 2352
+                        : 3914,
+                is_pr: raceDay.date !== "2026-01-18",
+                badge: raceDay.date === "2026-10-18" ? "Sub-Goal" : raceDay.date === "2026-03-22" ? "A Race" : "B Race",
+              },
+            ]
+          : [],
+      };
+    }),
+    races: [
+      {
+        date: "2026-10-18",
+        workout_id: "w_race_10k",
+        name: "Zevenheuvelenloop Warm-Up 10K",
+        badge: "Sub-Goal",
+        priority: null,
+        short_label: "10K",
+        distance_label: "10K",
+        distance_km: 10.0,
+        duration_s: 2352,
+        pace_s: 235.2,
+        avg_hr: 174,
+        pct_lthr: 98,
+        pa_hr: 2.1,
+        ctl: 63.0,
+        is_pr: true,
+        goal_text: "Sub-39:30 10K",
+        goal_gap_s: -18,
+        note: "Strong negative split",
+      },
+      {
+        date: "2026-06-14",
+        workout_id: "w_race_5k",
+        name: "Amsterdam Summer Track 5K",
+        badge: "B Race",
+        priority: "B",
+        short_label: "5K",
+        distance_label: "5K",
+        distance_km: 5.0,
+        duration_s: 1121,
+        pace_s: 224.2,
+        avg_hr: 178,
+        pct_lthr: 100,
+        pa_hr: null,
+        ctl: 60.0,
+        is_pr: true,
+        goal_text: null,
+        goal_gap_s: null,
+        note: "Strong negative split",
+      },
+      {
+        date: "2026-03-22",
+        workout_id: "w_race_hm",
+        name: "CPC Loop Den Haag Half Marathon",
+        badge: "A Race",
+        priority: "A",
+        short_label: "HM",
+        distance_label: "Half Marathon",
+        distance_km: 21.1,
+        duration_s: 5268,
+        pace_s: 249.7,
+        avg_hr: 169,
+        pct_lthr: 95,
+        pa_hr: 2.9,
+        ctl: 58.0,
+        is_pr: true,
+        goal_text: null,
+        goal_gap_s: null,
+        note: "Peak spring race",
+      },
+      {
+        date: "2026-01-18",
+        workout_id: "w_race_10m",
+        name: "Winter 10-Mile Benchmark",
+        badge: "C Race",
+        priority: "C",
+        short_label: "10M",
+        distance_label: "10 Mile",
+        distance_km: 16.1,
+        duration_s: 3914,
+        pace_s: 243.1,
+        avg_hr: 166,
+        pct_lthr: 93,
+        pa_hr: 3.4,
+        ctl: 49.0,
+        is_pr: false,
+        goal_text: null,
+        goal_gap_s: null,
+        note: "Base-phase opener",
+      },
+    ],
+    fitness_shift: [
+      { key: "lt2_pace_s", label: "Pace @ LT2 (Threshold)", start: "4:14/km", latest: "3:59/km", delta: "-15 s/km", arrow: "↓", verdict: "improving" },
+      { key: "lt1_pace_s", label: "Pace @ LT1 (Aerobic Z2)", start: "4:56/km", latest: "4:41/km", delta: "-15 s/km", arrow: "↓", verdict: "improving" },
+      { key: "rhr", label: "Resting Heart Rate", start: "52 bpm", latest: "48 bpm", delta: "-4 bpm", arrow: "↓", verdict: "improving" },
+      { key: "hrv", label: "HRV (Morning Avg)", start: "56 ms", latest: "64 ms", delta: "+14%", arrow: "↑", verdict: "improving" },
+      { key: "weekly_km", label: "Avg Weekly Volume", start: "39 km/wk", latest: "54 km/wk", delta: "+38%", arrow: "↑", verdict: "improving" },
+    ],
+    peaks: [
+      { pr_type: "speed1K", distance: "1 km", time_s: 206, time: "3:26", pace_s: 206.0, pace: "3:26/km", date: "2026-06-14", workout_id: "w_race_5k", workout_title: "Amsterdam Summer Track 5K", all_time_pr: false, profile_pr_time: null, profile_pr_date: null },
+      { pr_type: "speed5K", distance: "5 km", time_s: 1121, time: "18:41", pace_s: 224.2, pace: "3:44/km", date: "2026-06-14", workout_id: "w_race_5k", workout_title: "Amsterdam Summer Track 5K", all_time_pr: true, profile_pr_time: "18:41", profile_pr_date: "2026-06-14" },
+      { pr_type: "speed10K", distance: "10 km", time_s: 2352, time: "39:12", pace_s: 235.2, pace: "3:55/km", date: "2026-10-18", workout_id: "w_race_10k", workout_title: "Zevenheuvelenloop Warm-Up 10K", all_time_pr: true, profile_pr_time: "39:12", profile_pr_date: "2026-10-18" },
+      { pr_type: "speedHalfMarathon", distance: "Half Marathon", time_s: 5268, time: "1:27:48", pace_s: 249.7, pace: "4:10/km", date: "2026-03-22", workout_id: "w_race_hm", workout_title: "CPC Loop Den Haag Half Marathon", all_time_pr: false, profile_pr_time: "1:26:50", profile_pr_date: "2024-03-10" },
+    ],
+    milestones: {
+      longest_run: { km: 32.4, date: "2026-09-20", title: "Long Run 32 km" },
+      peak_week: { km: 78.2, date: "2026-09-14" },
+      peak_month: { km: 268.0, label: "Sep", month: "2026-09" },
+    },
+    mix: {
+      sports: [
+        { key: "running", label: "Running", hours: 214.0, sessions: 218, pct: 80 },
+        { key: "cycling", label: "Cycling / Cross", hours: 32.1, sessions: 34, pct: 12 },
+        { key: "strength", label: "Strength & Mobility", hours: 22.2, sessions: 46, pct: 8 },
+      ],
+      run_breakdown: {
+        easy_pct: 77,
+        quality_pct: 14,
+        long_race_pct: 9,
+        easy_runs: 168,
+        quality_runs: 30,
+        long_race_runs: 20,
+      },
+    },
+    heatmap: {
+      weeks: DEMO_YEAR_HEATMAP_WEEKS,
+      run_days: 218,
+      longest_streak_weeks: 18,
+    },
+  },
+};

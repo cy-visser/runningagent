@@ -13,7 +13,8 @@ from datetime import date, timedelta
 from typing import Any, Optional
 
 from ....shared.dates import iso_date, monday_of, parse_date
-from ....shared.goal_plan import snap_new_block_start
+from ....shared.goal_plan import current_goal, goal_list, race_day, snap_new_block_start
+from ....shared.race_events import derive_block_event, normalize_event_spec
 from ....shared.session_codes.session_codes import CodeError, build_session, normalize
 
 DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -170,16 +171,79 @@ def normalize_plan(plan: Any, defaults: Optional[dict] = None) -> tuple[dict, li
         "title": str(plan.get("title") or defaults.get("title") or "").strip(),
         "weeks": [weeks[n] for n in sorted(weeks)],
     }
+    if "events" in plan and plan.get("events") is not None:
+        if isinstance(plan["events"], list):
+            spec["events"] = list(plan["events"])
+        else:
+            errors.append(_error(None, None, "events", "events must be a list of race event objects"))
     if end and start and end >= start:
         spec["end_date"] = iso_date(end)
     return spec, errors
 
 
 def merge_weeks(base: dict, edit: dict) -> dict:
-    """The base spec with the edit's weeks replacing (or adding) those week numbers; start / mode kept."""
+    """The base spec with the edit's weeks replacing (or adding) those week numbers; start / mode / events kept."""
     weeks = {w["week"]: w for w in base.get("weeks") or []}
     weeks.update({w["week"]: w for w in edit.get("weeks") or []})
-    return {**base, "title": edit.get("title") or base.get("title"), "weeks": [weeks[n] for n in sorted(weeks)]}
+    merged = {**base, "title": edit.get("title") or base.get("title"), "weeks": [weeks[n] for n in sorted(weeks)]}
+    if "events" in edit:
+        merged["events"] = edit["events"]
+    return merged
+
+
+def _block_goal_for_plan(profile: Optional[dict], start: date, end: date) -> Optional[dict]:
+    """The active goal block whose race falls in `[start, end]`, if any."""
+    in_window = [
+        b for b in goal_list(profile)
+        if (r := race_day(b)) is not None and start <= r <= end
+    ]
+    if in_window:
+        return in_window[-1]
+    goal = current_goal(profile, end)
+    r = race_day(goal)
+    return goal if (r is not None and start <= r <= end) else None
+
+
+def resolve_plan_events(
+    spec: dict,
+    profile: Optional[dict],
+    today: date,
+) -> tuple[list[dict[str, Any]], list[dict]]:
+    """Normalizes and validates `spec['events']` and auto-derives the A-priority goal event when omitted.
+
+    Enforces: block target race -> A priority; intermediate races inside the block -> B or C (never A).
+    """
+    start, _ = plan_window(spec)
+    end = effective_plan_end(spec)
+    cutoff = cutoff_date(spec, today)
+    block_goal = _block_goal_for_plan(profile, cutoff, end)
+    block_race = race_day(block_goal) if block_goal else None
+    block_iso = iso_date(block_race) if block_race else None
+
+    resolved: list[dict[str, Any]] = []
+    errors: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for raw in spec.get("events") or []:
+        ev, err = normalize_event_spec(raw, block_goal=block_goal)
+        if err or not ev:
+            errors.append(_error(None, None, "event", err or "invalid event"))
+            continue
+        ev_d = parse_date(ev["date"])
+        if ev_d and (ev_d < cutoff or ev_d > end):
+            continue
+        key = (ev["date"], ev["name"].casefold())
+        if key not in seen_keys:
+            seen_keys.add(key)
+            resolved.append(ev)
+
+    # Guarantee the training block's target race always has an A-priority TP Event.
+    if block_goal and block_iso and not any(ev["date"] == block_iso for ev in resolved):
+        default_ev = derive_block_event(block_goal)
+        if default_ev:
+            resolved.append(default_ev)
+
+    resolved.sort(key=lambda ev: (ev["date"], ev["priority"], ev["name"]))
+    return resolved, errors
 
 
 def week_monday(spec: dict, number: int) -> date:

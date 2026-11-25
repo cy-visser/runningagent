@@ -491,11 +491,52 @@ export function PlanStagedCard({ plan, status, applied, applyingWeek, busy, onAp
           <h3 className="font-display text-base font-bold text-slate-900">Proposed training plan</h3>
           <p className="text-sm text-slate-600">
             {plan.title} · {sessions} sessions
+            {(plan.events?.length ?? 0) > 0 &&
+              ` · ${plan.events!.length} ${plan.events!.length === 1 ? "race event" : "race events"}`}
             {countParts.length > 0 && ` (${countParts.join(" · ")})`}
           </p>
         </div>
         <ApplyButton status={status} busy={busy} onClick={() => onApply(plan.staged_id)} />
       </div>
+
+      {(plan.events?.length ?? 0) > 0 && (
+        <div
+          data-testid="plan-events"
+          className="rounded-xl border border-amber-200/80 bg-amber-50/40 px-3.5 py-2.5 space-y-1.5"
+        >
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900/80">
+            TrainingPeaks Calendar Events
+          </p>
+          <ul className="space-y-1">
+            {plan.events!.map((ev, i) => {
+              const badge = BADGE[ev.action] ?? BADGE.create;
+              return (
+                <li
+                  key={`${ev.date}-${ev.name}-${i}`}
+                  className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700"
+                >
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <Trophy className="h-3.5 w-3.5 text-orange-500 shrink-0" />
+                    {ev.priority && (
+                      <span className="rounded-full bg-sunset px-1.5 py-px text-[10px] font-bold text-white">
+                        {ev.priority}
+                      </span>
+                    )}
+                    <span className="font-medium text-slate-600 tabular-nums">{dayMonth(ev.date)}</span>
+                    <span className="font-semibold text-slate-900">{ev.name}</span>
+                    {ev.summary && <span className="text-slate-500">· {ev.summary}</span>}
+                  </span>
+                  <span
+                    className={`rounded-full border px-1.5 py-px text-[10px] font-semibold leading-tight ${badge.className}`}
+                  >
+                    {badge.label}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       {status === "applying" && (
         <div className="space-y-1" role="status">

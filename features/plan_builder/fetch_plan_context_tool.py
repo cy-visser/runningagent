@@ -14,6 +14,7 @@ from ...shared.tp_payloads import coerce_mcp_payload
 from ...shared.session_codes.pace_zones import resolve_zones
 from .helpers.plan_context_text import (
     PLAN_CONTEXT_STATE_KEY,
+    TEMP_PLAN_EVENTS_KEY,
     TEMP_PLAN_WORKOUTS_KEY,
     latest_fitness,
     plan_context_text,
@@ -65,6 +66,7 @@ async def fetch_plan_context(
         "settings": tp_calls.run_tp_tool(tool_context, "tp_get_athlete_settings"),
         "volume cache": read_cached_volume_history(user_id),
         "workouts": tp_calls.fetch_workouts(tool_context, w_start, w_end),
+        "events": tp_calls.fetch_events(tool_context, w_start, w_end),
         "notes": tp_calls.fetch_notes(tool_context, w_start, w_end),
         "fitness": tp_calls.run_tp_tool(
             tool_context,
@@ -96,8 +98,14 @@ async def fetch_plan_context(
             "end": w_end,
             "workouts": raw["workouts"],
         }
+    if raw["events"] is not None:
+        tool_context.state[TEMP_PLAN_EVENTS_KEY] = {
+            "start": w_start,
+            "end": w_end,
+            "events": raw["events"],
+        }
     return plan_context_text(profile, start, end, mode, zones, history_entries, raw["workouts"],
-                             raw["notes"], fitness)
+                             raw["notes"], fitness, events=raw["events"])
 
 
 fetch_plan_context_tool = FunctionTool(fetch_plan_context)

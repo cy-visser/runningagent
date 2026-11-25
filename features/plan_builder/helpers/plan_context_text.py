@@ -13,6 +13,7 @@ from ....shared.long_run_facts import (
     format_volume_history_facts,
     format_weekly_km_history,
 )
+from ....shared.race_events import event_date_iso, format_event_summary, is_running_event
 from ....shared.session_state import PLAN_CONTEXT_STATE_KEY
 from ....shared.training_times import training_times_text
 from ....shared.workout_status import is_workout_completed
@@ -20,6 +21,7 @@ from ....shared.session_codes.pace_zones import zone_table_text
 from .plan_diff import MANAGED_SPORTS, sport_name
 
 TEMP_PLAN_WORKOUTS_KEY = "temp:plan_workouts"
+TEMP_PLAN_EVENTS_KEY = "temp:plan_events"
 FREQUENCY_WEEKS = 8
 NOTE_CHARS = 60
 _SPORT_SHORT = {"Run": "Run", "Bike": "Bike", "Strength": "Str"}
@@ -130,10 +132,30 @@ def _calendar_lines(
     return lines
 
 
+def _events_section(events: Optional[list[dict]], start: date, end: date) -> str:
+    if events is None:
+        return "EVENTS IN WINDOW: unavailable (TrainingPeaks error); staging reads them again."
+    s_iso, e_iso = iso_date(start), iso_date(end)
+    running = [
+        ev for ev in events
+        if is_running_event(ev) and (d := event_date_iso(ev)) and s_iso <= d <= e_iso
+    ]
+    if not running:
+        return "EVENTS IN WINDOW: none (include race events in plan['events'] for the goal race and any intermediate races)."
+    running.sort(key=lambda ev: event_date_iso(ev) or "")
+    lines = ["EVENTS IN WINDOW:"]
+    for ev in running:
+        summary = format_event_summary(ev)
+        ev_id = f" [event_id={ev['id']}]" if ev.get("id") is not None else ""
+        lines.append(f"- {event_date_iso(ev)} {ev.get('name') or 'Event'}" + (f" ({summary})" if summary else "") + ev_id)
+    return "\n".join(lines)
+
+
 def plan_context_text(
     profile: dict, start: date, end: date, mode: str, zones: dict,
     history_entries: Optional[list[dict]], workouts: Optional[list[dict]], notes: Optional[list[dict]],
     fitness: Optional[dict],
+    events: Optional[list[dict]] = None,
 ) -> str:
     w1_mon = monday_of(start)
     n_weeks = (monday_of(end) - w1_mon).days // 7 + 1
@@ -147,13 +169,15 @@ def plan_context_text(
         w1_desc = f"W1 = week of {iso_date(w1_mon)}"
     head = (f"PLAN CONTEXT ({mode}): {iso_date(start)} → {iso_date(end)} · {n_weeks} weeks "
             f"({w1_desc}). Stage with stage_training_plan(plan={{\"start_date\": "
-            f"\"{iso_date(start)}\", \"mode\": \"{mode}\", \"weeks\": [\"W1 | base | ...\"]}}, message=...).")
+            f"\"{iso_date(start)}\", \"mode\": \"{mode}\", \"weeks\": [\"W1 | base | ...\"], "
+            f"\"events\": [...]}}, message=...).")
     sections = [head, "\n".join(_goal_lines(profile, start, end)),
                 "ZONES (each code resolves to these; the app builds every session):\n" + zone_table_text(zones)]
     if history_entries is None:
         sections.append("RECENT TRAINING: unavailable (TrainingPeaks error).")
     else:
         sections.append("RECENT TRAINING (completed):\n" + "\n".join(_recent_lines(history_entries, fitness)))
+    sections.append(_events_section(events, start, end))
     if workouts is None:
         sections.append("CALENDAR IN WINDOW: unavailable (TrainingPeaks error); staging reads it again.")
     else:

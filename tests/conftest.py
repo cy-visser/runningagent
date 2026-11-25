@@ -104,12 +104,48 @@ def runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> FakeRunnerEnv:
     async def fake_delete_race_projection(user_id: str) -> None:
         env.race_projection_cache.pop(user_id, None)
 
+    async def fake_get_year_review(user_id: str, year: int) -> dict | None:
+        doc = env.year_review_cache.get((user_id, int(year)))
+        return json.loads(json.dumps(doc)) if doc else None
+
+    async def fake_save_year_review(user_id: str, year: int, payload: dict) -> None:
+        env.year_review_cache[(user_id, int(year))] = json.loads(json.dumps(payload))
+
+    async def fake_get_year_review_raw(user_id: str, year: int) -> dict | None:
+        doc = env.year_review_raw_cache.get((user_id, int(year)))
+        return json.loads(json.dumps(doc)) if doc else None
+
+    async def fake_save_year_review_raw(user_id: str, year: int, payload: dict) -> None:
+        env.year_review_raw_cache[(user_id, int(year))] = json.loads(json.dumps(payload))
+
+    async def fake_get_year_review_index(user_id: str) -> dict | None:
+        doc = env.year_review_index.get(user_id)
+        return json.loads(json.dumps(doc)) if doc else None
+
+    async def fake_upsert_year_review_index(user_id: str, entry: dict) -> None:
+        existing = env.year_review_index.get(user_id) or {"years": []}
+        by_year = {
+            int(item["year"]): dict(item)
+            for item in existing.get("years") or []
+            if isinstance(item, dict) and item.get("year") is not None
+        }
+        yr = int(entry["year"])
+        by_year[yr] = json.loads(json.dumps(entry))
+        ordered = [by_year[y] for y in sorted(by_year.keys(), reverse=True)]
+        env.year_review_index[user_id] = {"years": ordered, "updated_at": entry.get("updated_at")}
+
     monkeypatch.setattr(dates, "_now", lambda: env.now)
 
     monkeypatch.setattr(firestore, "get_cached_volume_history", fake_get_volume_history)
     monkeypatch.setattr(firestore, "save_volume_history", fake_save_volume_history)
     monkeypatch.setattr(firestore, "save_race_projection", fake_save_race_projection)
     monkeypatch.setattr(firestore, "delete_race_projection", fake_delete_race_projection)
+    monkeypatch.setattr(firestore, "get_cached_year_review", fake_get_year_review)
+    monkeypatch.setattr(firestore, "save_year_review", fake_save_year_review)
+    monkeypatch.setattr(firestore, "get_cached_year_review_raw", fake_get_year_review_raw)
+    monkeypatch.setattr(firestore, "save_year_review_raw", fake_save_year_review_raw)
+    monkeypatch.setattr(firestore, "get_year_review_index", fake_get_year_review_index)
+    monkeypatch.setattr(firestore, "upsert_year_review_index", fake_upsert_year_review_index)
     monkeypatch.setattr(firestore, "list_training_records", fake_list_records)
     monkeypatch.setattr(firestore, "save_training_record", fake_save_record)
     monkeypatch.setattr(firestore, "get_user_profile", fake_get_profile)

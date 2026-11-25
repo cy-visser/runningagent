@@ -22,6 +22,7 @@ from ...features.weather_lookup.get_weather_tool import get_weather_tool
 from ...features.workout_analysis.analyze_workout_tool import analyze_workout_tool
 from ...features.workout_creator.apply_staged_changes_tool import apply_staged_changes_tool
 from ...features.workout_creator.stage_workout_changes_tool import stage_workout_changes_tool
+from ...features.year_review.refresh_year_review_tool import refresh_year_review_tool
 from ..model_config import build_coach_model
 from ..onboarding.request_new_goal_tool import request_new_goal_tool
 from ..report_memory import keep_latest_reports_and_skills
@@ -43,6 +44,7 @@ coaching_agent_tools = [
     analyze_workout_tool,
     fetch_checkin_data_tool,
     refresh_race_projection_tool,
+    refresh_year_review_tool,
     fetch_trend_data_tool,
     fetch_plan_audit_data_tool,
     get_schedule_tool,

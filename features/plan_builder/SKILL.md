@@ -17,6 +17,10 @@ Builds a **new training block** or **full-block overhaul** (`stage_workout_chang
 2. **Workout & Slot Mechanics**:
    - Build long-run quality (fast finishes, race-pace or threshold blocks, progressive finishes, optional easy cool-down) directly into `L` with `+` segments rather than splitting those blocks onto another day's `P` session or replacing `L` with a shorter `P` workout.
    - Schedule tune-up races and organized events on their exact date with `RACE <dist> @<pace> [Name]` (raced all-out, e.g. `RACE 16k @HM Dam tot Damloop`) or `EVENT <dist> @<pace> [Name]` (controlled training effort, e.g. `EVENT 16k @M Tilburg 10mi` or `@E`)—never wrap standalone events inside `L` to pad km unless asked, and never code standalone races/events as `P`/`M`/`T` (those auto-add 15' WU + strides + 10' CD).
+   - **Race Calendar Events (`plan["events"]`)**: Every block's target race AND every intermediate `RACE`/`EVENT` in the block needs BOTH the workout code AND a TrainingPeaks Calendar Event in `plan["events"]`:
+     - `{"date": "YYYY-MM-DD", "name": "...", "event_type": "RunningRoad"|"RunningTrail"|"RunningTrack"|"RunningCrossCountry"|"RunningOther", "distance_km": <float>, "race_type_duration": "RunUnderOneHour"|"RunOnetoTwoHours"|"RunOverTwoHours", "priority": "A"|"B"|"C", "goal_time": "H:MM:SS"|"MM:SS"|null, "goal_place": <int>|null, "goal_pr": true|false|null}`.
+     - Block target race = **`A`** priority; intermediate races within the block = **never `A`** (reason **`B`** for a key tune-up race vs **`C`** for a controlled/training event).
+     - Derive `distance_km`, `race_type_duration` (`0–1h` → `RunUnderOneHour`, `1–2h` → `RunOnetoTwoHours`, `2+h` → `RunOverTwoHours`), and `goal_time` from the training block's goal (e.g. `sub 21 5k` → `5.0`, `RunUnderOneHour`, `21:00`); set `goal_place` (integer) and `goal_pr` (boolean) strictly from your conversation with the runner (omit/`null` if not discussed).
    - Follow **Training times** in `PLAN CONTEXT` automatically (do not add `am`/`mid`/`pm` unless asked to reorder).
    - Bike (`B`) adds low-impact TSS without counting toward running km.
 

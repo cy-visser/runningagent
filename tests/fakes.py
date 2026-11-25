@@ -157,6 +157,11 @@ class FakeRunnerEnv:
         self.training_records: dict[str, dict] = {}
         self.volume_history_cache: dict[str, dict] = {}
         self.race_projection_cache: dict[str, dict] = {}
+        self.year_review_cache: dict[tuple[str, int], dict] = {}
+        self.year_review_raw_cache: dict[tuple[str, int], dict] = {}
+        self.year_review_index: dict[str, dict] = {}
+        self.events: list[dict] = []
+        self.peaks: dict[tuple, list[dict]] = {}
         self.analysis_overrides: dict[str, dict] = {}
         self.profile_updates: list[tuple[str, dict]] = []
         self.tp_calls: list[tuple[str, dict]] = []
@@ -242,17 +247,45 @@ class FakeRunnerEnv:
         ]
         return workouts, daily_pmc, metrics, notes
 
-    async def run_tp_tool(self, tool_context: Any, name: str, **kw: Any) -> Any:
+    async def run_tp_tool(self, tool_context: Any, tool_name: str, /, **kw: Any) -> Any:
+        name = tool_name
         self.tp_calls.append((name, kw))
         if name in self.failing_tools:
             return envelope({"isError": True, "error_code": "API_ERROR", "message": "503 Service Unavailable"})
-        if name in ("tp_get_workouts", "tp_list_notes", "tp_get_metrics") and _range_days(kw) > 90:
+        if name in ("tp_get_workouts", "tp_list_notes", "tp_get_metrics", "tp_get_events") and _range_days(kw) > 90:
             # Same rule as the real MCP DateRangeInput validator.
             return envelope({"isError": True, "error_code": "VALIDATION_ERROR",
                              "message": "Date range too large. Maximum 90 days."})
         if name == "tp_get_workouts":
             s, e = kw["start_date"][:10], kw["end_date"][:10]
             return envelope({"workouts": [w for w in self.workouts if s <= w["date"] <= e]})
+        if name == "tp_get_events":
+            s, e = kw["start_date"][:10], kw["end_date"][:10]
+            return envelope({"events": [
+                ev for ev in self.events
+                if s <= str(ev.get("eventDate") or ev.get("date") or "")[:10] <= e
+            ]})
+        if name == "tp_get_peaks":
+            pr_type = str(kw.get("pr_type") or "")
+            s_date = str(kw.get("start_date") or "")[:10]
+            e_date = str(kw.get("end_date") or "")[:10]
+            if s_date and e_date:
+                recs = self.peaks.get((pr_type, s_date, e_date))
+                if recs is None:
+                    recs = [
+                        r for r in (self.peaks.get((pr_type, 365)) or [])
+                        if s_date <= str(r.get("date") or "")[:10] <= e_date
+                    ]
+                return envelope({
+                    "sport": kw.get("sport", "Run"),
+                    "pr_type": pr_type,
+                    "start_date": s_date,
+                    "end_date": e_date,
+                    "records": recs,
+                })
+            days = int(kw.get("days") or 3650)
+            recs = self.peaks.get((pr_type, days)) or self.peaks.get((pr_type, 365 if days <= 365 else 3650)) or []
+            return envelope({"sport": kw.get("sport", "Run"), "pr_type": pr_type, "days": days, "records": recs})
         if name == "tp_list_notes":
             s, e = kw["start_date"][:10], kw["end_date"][:10]
             return envelope({"notes": [n for n in self.notes if s <= n["date"] <= e]})
@@ -324,5 +357,46 @@ class FakeRunnerEnv:
             return envelope({"success": True})
         if name == "tp_delete_note":
             self.notes = [n for n in self.notes if str(n.get("id")) != str(kw["note_id"])]
+            return envelope({"success": True})
+        if name == "tp_create_event":
+            ev_id = f"ev-{len(self.events) + 1}"
+            ev = {
+                "id": ev_id,
+                "name": kw.get("name"),
+                "eventDate": kw.get("date"),
+                "eventType": kw.get("event_type") or "RunningRoad",
+                "atpPriority": kw.get("priority") or "C",
+                "raceTypeDuration": kw.get("race_type_duration"),
+                "distance": round(float(kw["distance_km"]) * 1000.0, 1) if kw.get("distance_km") is not None else None,
+                "distanceUnits": "Meters" if kw.get("distance_km") is not None else None,
+                "goals": {
+                    "time": {"value": 0.0} if kw.get("goal_time") else None,
+                    "place": {"value": int(kw["goal_place"])} if kw.get("goal_place") is not None else None,
+                    "pr": {"value": bool(kw["goal_pr"])} if kw.get("goal_pr") is not None else None,
+                },
+            }
+            self.events.append(ev)
+            return envelope({"success": True, "event_id": ev_id, "name": kw.get("name"), "date": kw.get("date")})
+        if name == "tp_update_event":
+            ev_id = str(kw.get("event_id") or "")
+            for ev in self.events:
+                if str(ev.get("id") or "") == ev_id:
+                    if kw.get("name") is not None:
+                        ev["name"] = kw["name"]
+                    if kw.get("date") is not None:
+                        ev["eventDate"] = kw["date"]
+                    if kw.get("event_type") is not None:
+                        ev["eventType"] = kw["event_type"]
+                    if kw.get("priority") is not None:
+                        ev["atpPriority"] = kw["priority"]
+                    if kw.get("race_type_duration") is not None:
+                        ev["raceTypeDuration"] = kw["race_type_duration"]
+                    if kw.get("distance_km") is not None:
+                        ev["distance"] = round(float(kw["distance_km"]) * 1000.0, 1)
+                        ev["distanceUnits"] = "Meters"
+                    break
+            return envelope({"success": True, "event_id": ev_id})
+        if name == "tp_delete_event":
+            self.events = [e for e in self.events if str(e.get("id")) != str(kw["event_id"])]
             return envelope({"success": True})
         return envelope({})

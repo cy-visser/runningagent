@@ -5,7 +5,21 @@ from typing import Any, Optional
 # Unit heuristics for MCP values that arrive without (reliable) units.
 METERS_IF_ABOVE = 100.0        # distances above this are metres (no lap is 100+ km)
 PACE_SECONDS_IF_ABOVE = 30.0   # paces above this are s/km (nobody runs 30 min/km)
-_KM_PER_UNIT = {"m": 0.001, "km": 1.0, "mi": 1.609344}
+_KM_PER_UNIT = {
+    "m": 0.001,
+    "meter": 0.001,
+    "meters": 0.001,
+    "metre": 0.001,
+    "metres": 0.001,
+    "km": 1.0,
+    "kilometer": 1.0,
+    "kilometers": 1.0,
+    "kilometre": 1.0,
+    "kilometres": 1.0,
+    "mi": 1.609344,
+    "mile": 1.609344,
+    "miles": 1.609344,
+}
 
 
 def as_float(value: Any) -> Optional[float]:

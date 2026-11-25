@@ -85,6 +85,42 @@ class TestTpGetPeaks:
         assert "isError" not in result or not result.get("isError")
         assert result["records"] == []
 
+    @pytest.mark.asyncio
+    async def test_get_peaks_explicit_calendar_year_dates(self):
+        """Test peaks with explicit start_date and end_date calendar bounds."""
+        peaks_response = APIResponse(
+            success=True,
+            data=[
+                {"rank": 0, "value": 4.2, "workoutId": 3001, "workoutTitle": "2024 5K", "workoutDate": "2024-06-15T00:00:00"},
+            ],
+        )
+
+        with patch("tp_mcp.tools.peaks.TPClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_instance.ensure_athlete_id = AsyncMock(return_value=123)
+            mock_instance.get = AsyncMock(return_value=peaks_response)
+            mock_client.return_value.__aenter__.return_value = mock_instance
+
+            result = await tp_get_peaks(
+                sport="Run",
+                pr_type="speed5K",
+                start_date="2024-01-01",
+                end_date="2024-12-31",
+            )
+
+        assert not result.get("isError")
+        assert len(result["records"]) == 1
+        call_params = mock_instance.get.call_args.kwargs["params"]
+        assert call_params["startDate"] == "2024-01-01T00:00:00"
+        assert call_params["endDate"] == "2024-12-31T00:00:00"
+
+    @pytest.mark.asyncio
+    async def test_get_peaks_rejects_partial_date_range(self):
+        """Passing only start_date without end_date returns VALIDATION_ERROR."""
+        result = await tp_get_peaks(sport="Run", pr_type="speed5K", start_date="2024-01-01")
+        assert result["isError"] is True
+        assert result["error_code"] == "VALIDATION_ERROR"
+
 
 class TestTpGetWorkoutPrs:
     """Tests for tp_get_workout_prs tool."""

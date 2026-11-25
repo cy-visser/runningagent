@@ -55,19 +55,29 @@ async def tp_get_peaks(
     sport: Literal["Bike", "Run"],
     pr_type: str,
     days: int = 3650,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> dict[str, Any]:
     """Get personal records (peaks) for a sport and PR type.
 
     Args:
         sport: Sport type - "Bike" or "Run"
         pr_type: PR type - e.g., "power5sec", "power20min", "speed5K"
-        days: Days of history to query (default 3650 = ~10 years for all-time)
+        days: Days of history to query when start_date/end_date are omitted (default 3650)
+        start_date: Optional explicit range start (YYYY-MM-DD); requires end_date
+        end_date: Optional explicit range end (YYYY-MM-DD); requires start_date
 
     Returns:
         Dict with ranked list of personal records.
     """
     try:
-        validated = PeaksInput(sport=sport, pr_type=pr_type, days=days)
+        validated = PeaksInput(
+            sport=sport,
+            pr_type=pr_type,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+        )
     except (ValidationError, ValueError) as e:
         msg = format_validation_error(e) if isinstance(e, ValidationError) else str(e)
         return {
@@ -85,14 +95,18 @@ async def tp_get_peaks(
                 "message": "Could not get athlete ID. Re-authenticate.",
             }
 
-        end_date = date.today()
-        start_date = end_date - timedelta(days=validated.days)
+        if validated.start_date and validated.end_date:
+            q_start = validated.start_date
+            q_end = validated.end_date
+        else:
+            q_end = date.today()
+            q_start = q_end - timedelta(days=validated.days)
 
         endpoint = f"/personalrecord/v2/athletes/{athlete_id}/{sport}"
         params = {
             "prType": pr_type,
-            "startDate": f"{start_date}T00:00:00",
-            "endDate": f"{end_date}T00:00:00",
+            "startDate": f"{q_start}T00:00:00",
+            "endDate": f"{q_end}T00:00:00",
         }
 
         response = await client.get(endpoint, params=params)

@@ -16,6 +16,9 @@ evals/*
 webapp
 webapp/
 webapp/*
+scripts
+scripts/
+scripts/*
 *.log
 deploy_help.txt
 deploy.sh

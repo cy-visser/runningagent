@@ -32,6 +32,8 @@ class FakeProfileStore:
         self.users: dict[str, dict[str, Any]] = {}
         self.creds: dict[str, dict[str, Any]] = {}
         self.race_projections: dict[str, dict[str, Any]] = {}
+        self.year_reviews: dict[tuple[str, int], dict[str, Any]] = {}
+        self.year_review_indices: dict[str, dict[str, Any]] = {}
 
     async def find_by_email(self, email: str) -> Optional[tuple[str, dict[str, Any]]]:
         for rid, doc in self.users.items():
@@ -54,6 +56,18 @@ class FakeProfileStore:
     async def delete_race_projection_cache(self, runner_id: Optional[str]) -> None:
         if runner_id:
             self.race_projections.pop(runner_id, None)
+
+    async def get_year_review_cache(self, runner_id: Optional[str], year: int) -> Optional[dict[str, Any]]:
+        if not runner_id:
+            return None
+        doc = self.year_reviews.get((runner_id, int(year)))
+        return dict(doc) if doc else None
+
+    async def get_year_review_index(self, runner_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not runner_id:
+            return None
+        doc = self.year_review_indices.get(runner_id)
+        return dict(doc) if doc else None
 
     async def connect_trainingpeaks(self, email: str, account: ValidatedTpAccount) -> dict[str, Any]:
         by_email = await self.find_by_email(email)
