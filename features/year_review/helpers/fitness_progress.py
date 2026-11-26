@@ -1,4 +1,4 @@
-"""Start-of-year vs. current fitness/recovery shift and 12-month peak performances."""
+"""Start-of-year vs. current fitness/recovery shift and calendar-year peak performances."""
 
 from __future__ import annotations
 
@@ -90,41 +90,44 @@ def compute_fitness_shift(
                 "verdict": verdict,
             })
 
-    # 2. Resting HR & HRV (first 8 weeks vs last 8 weeks of the 12-month window).
-    early_end = start + timedelta(weeks=SHIFT_WINDOW_WEEKS) - timedelta(days=1)
-    late_start = today - timedelta(weeks=SHIFT_WINDOW_WEEKS) + timedelta(days=1)
+    # 2. Resting HR & HRV (early vs latest non-overlapping windows in the calendar year, up to 8 weeks each).
+    elapsed_days = (today - start).days + 1
+    if elapsed_days >= SHIFT_WINDOW_WEEKS * 7:
+        win_days = min(SHIFT_WINDOW_WEEKS * 7, elapsed_days // 2)
+        early_end = start + timedelta(days=win_days - 1)
+        late_start = today - timedelta(days=win_days - 1)
 
-    rhr_series = (dated_metrics or {}).get("rhr") or []
-    rhr_first = _dated_window_avg(rhr_series, start, early_end)
-    rhr_latest = _dated_window_avg(rhr_series, late_start, today)
-    if rhr_first is not None and rhr_latest is not None:
-        diff = rhr_latest - rhr_first
-        arrow, verdict = _verdict(diff, rhr_first, higher_is_better=False, rel_tol=0.015)
-        items.append({
-            "key": "rhr",
-            "label": "Resting Heart Rate",
-            "start": f"{rhr_first:.0f} bpm",
-            "latest": f"{rhr_latest:.0f} bpm",
-            "delta": f"{diff:+.0f} bpm",
-            "arrow": arrow,
-            "verdict": verdict,
-        })
+        rhr_series = (dated_metrics or {}).get("rhr") or []
+        rhr_first = _dated_window_avg(rhr_series, start, early_end)
+        rhr_latest = _dated_window_avg(rhr_series, late_start, today)
+        if rhr_first is not None and rhr_latest is not None:
+            diff = rhr_latest - rhr_first
+            arrow, verdict = _verdict(diff, rhr_first, higher_is_better=False, rel_tol=0.015)
+            items.append({
+                "key": "rhr",
+                "label": "Resting Heart Rate",
+                "start": f"{rhr_first:.0f} bpm",
+                "latest": f"{rhr_latest:.0f} bpm",
+                "delta": f"{diff:+.0f} bpm",
+                "arrow": arrow,
+                "verdict": verdict,
+            })
 
-    hrv_series = (dated_metrics or {}).get("hrv") or []
-    hrv_first = _dated_window_avg(hrv_series, start, early_end)
-    hrv_latest = _dated_window_avg(hrv_series, late_start, today)
-    if hrv_first is not None and hrv_latest is not None and hrv_first > 0:
-        pct = (hrv_latest / hrv_first - 1.0) * 100.0
-        arrow, verdict = _verdict(hrv_latest - hrv_first, hrv_first, higher_is_better=True, rel_tol=0.025)
-        items.append({
-            "key": "hrv",
-            "label": "HRV (Morning Avg)",
-            "start": f"{hrv_first:.0f} ms",
-            "latest": f"{hrv_latest:.0f} ms",
-            "delta": f"{pct:+.0f}%",
-            "arrow": arrow,
-            "verdict": verdict,
-        })
+        hrv_series = (dated_metrics or {}).get("hrv") or []
+        hrv_first = _dated_window_avg(hrv_series, start, early_end)
+        hrv_latest = _dated_window_avg(hrv_series, late_start, today)
+        if hrv_first is not None and hrv_latest is not None and hrv_first > 0:
+            pct = (hrv_latest / hrv_first - 1.0) * 100.0
+            arrow, verdict = _verdict(hrv_latest - hrv_first, hrv_first, higher_is_better=True, rel_tol=0.025)
+            items.append({
+                "key": "hrv",
+                "label": "HRV (Morning Avg)",
+                "start": f"{hrv_first:.0f} ms",
+                "latest": f"{hrv_latest:.0f} ms",
+                "delta": f"{pct:+.0f}%",
+                "arrow": arrow,
+                "verdict": verdict,
+            })
 
     # 3. Avg Weekly Volume (first 8 complete weeks vs last 8 complete weeks).
     complete_weeks = [w for w in weekly if not w.get("partial")]
@@ -184,18 +187,18 @@ def _dates_within_one_day(a_iso: Optional[str], b_iso: Optional[str]) -> bool:
 
 
 def format_peak_performances(
-    peaks_365: dict[str, dict[str, Any]],
+    year_peaks: dict[str, dict[str, Any]],
     profile: Optional[dict[str, Any]],
     start: date,
     today: date,
 ) -> list[dict[str, Any]]:
-    """Extracts true #1 12-month fastest efforts per distance and compares strictly against `profile.personal_records`."""
+    """Extracts true #1 calendar-year fastest efforts per distance and compares strictly against `profile.personal_records`."""
     start_iso, end_iso = iso_date(start), iso_date(today)
     prs = (profile or {}).get("personal_records")
     prs = prs if isinstance(prs, dict) else {}
     out: list[dict[str, Any]] = []
     for pr_type, label, dist_m, pr_key in PEAK_DISTANCES:
-        top_yr = _top_peak(peaks_365.get(pr_type))
+        top_yr = _top_peak(year_peaks.get(pr_type))
         if not top_yr:
             continue
         speed_ms = as_float(top_yr.get("value"))

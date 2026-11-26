@@ -24,7 +24,9 @@ function monthHeaders(weeks: YearReviewHeatmap["weeks"]): Array<{ col: number; l
   const out: Array<{ col: number; label: string }> = [];
   let prevMonth = -1;
   weeks.forEach((wk, idx) => {
-    const month = Number(wk.week.slice(5, 7)) - 1;
+    const inYearDay = wk.days.find((d) => d.level !== -1);
+    if (!inYearDay) return;
+    const month = Number(inYearDay.date.slice(5, 7)) - 1;
     if (!Number.isNaN(month) && month !== prevMonth) {
       if (out.length === 0 || idx - out[out.length - 1].col >= 3) {
         out.push({ col: idx, label: MONTH_NAMES[month] ?? "" });

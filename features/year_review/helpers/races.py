@@ -1,4 +1,4 @@
-"""Structured multi-signal main-race detection and profile-only PR matching for the 12-month review."""
+"""Structured multi-signal main-race detection and profile-only PR matching for the calendar-year review."""
 
 from __future__ import annotations
 

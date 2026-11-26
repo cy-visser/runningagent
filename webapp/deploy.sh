@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
 if [ -f ../.env ]; then
     export $(grep -v '^[[:space:]]*#' ../.env | grep -v '^[[:space:]]*$' | xargs)
@@ -116,7 +117,7 @@ echo "Ensuring IAP service identity exists..."
 gcloud beta services identity create \
     --service=iap.googleapis.com \
     --project="${PROJECT_ID}" \
-    --quiet >/dev/null 2>&1 || true
+    --quiet </dev/null >/dev/null 2>&1 || true
 
 echo "Building & deploying Cloud Run service '${WEB_SERVICE_NAME}'..."
 gcloud run deploy "${WEB_SERVICE_NAME}" \

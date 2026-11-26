@@ -11,6 +11,12 @@ if [ -f .env ] && grep -q -E '^[[:space:]]*TP_AUTH_COOKIE=' .env; then
     exit 1
 fi
 
+# Refuse to run if DEV_RUNNER_EMAIL is set (local adk web / adk eval only; never deploy to production).
+if { [ -f .env ] && grep -q -E '^[[:space:]]*DEV_RUNNER_EMAIL=' .env; } || [ -n "${DEV_RUNNER_EMAIL:-}" ]; then
+    echo "Error: DEV_RUNNER_EMAIL is for local 'adk web' / 'adk eval' only and must not be set in .env or during deploy." >&2
+    exit 1
+fi
+
 if [ -f .env ]; then
     export $(grep -v '^[[:space:]]*#' .env | grep -v '^[[:space:]]*$' | xargs)
 fi
@@ -88,9 +94,17 @@ if ! grep -q "${TP_MCP_WHEEL}" requirements.txt; then
     echo "Error: requirements.txt does not reference ${TP_MCP_WHEEL}." >&2
     exit 1
 fi
-if [ -n "$(find trainingpeaks-mcp/src -type f -name '*.py' -newer "$TP_MCP_WHEEL" -print -quit)" ]; then
-    echo "Error: ${TP_MCP_WHEEL} is older than files in trainingpeaks-mcp/src/." >&2
-    echo "Rebuild it with: (cd trainingpeaks-mcp && uv build --wheel --out-dir ..)" >&2
+if ! python3 - "$TP_MCP_WHEEL" <<'PY'
+import pathlib, sys, zipfile
+whl, src = pathlib.Path(sys.argv[1]), pathlib.Path("trainingpeaks-mcp/src")
+with zipfile.ZipFile(whl) as zf:
+    whl_py = {n: zf.read(n) for n in zf.namelist() if n.startswith("tp_mcp/") and n.endswith(".py")}
+src_py = {p.relative_to(src).as_posix(): p.read_bytes() for p in src.rglob("*.py")}
+sys.exit(0 if whl_py == src_py else 1)
+PY
+then
+    echo "Error: ${TP_MCP_WHEEL} does not match files in trainingpeaks-mcp/src/." >&2
+    echo "Bump the version and rebuild it with: (cd trainingpeaks-mcp && uv build --wheel --out-dir ..)" >&2
     exit 1
 fi
 

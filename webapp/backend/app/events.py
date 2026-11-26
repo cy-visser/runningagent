@@ -28,7 +28,7 @@ PLAN_BACKEND_ONLY_KEYS = ("spec", "zones")
 TOOL_LABELS: dict[str, str] = {
     "fetch_checkin_data": "Pulling 14 days of TrainingPeaks data",
     "refresh_race_projection": "Refreshing 12-week race projection",
-    "refresh_year_review": "Compiling your 12-month review",
+    "refresh_year_review": "Compiling your annual review",
     "fetch_trend_data": "Analysing 6-month training log & load capacity",
     "analyze_workout": "Analysing workout telemetry & recovery",
     "fetch_plan_audit_data": "Auditing weekly schedule & calendar notes",

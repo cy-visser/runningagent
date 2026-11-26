@@ -273,7 +273,7 @@ class FakeRunnerEnv:
                 recs = self.peaks.get((pr_type, s_date, e_date))
                 if recs is None:
                     recs = [
-                        r for r in (self.peaks.get((pr_type, 365)) or [])
+                        r for r in (self.peaks.get(pr_type) or [])
                         if s_date <= str(r.get("date") or "")[:10] <= e_date
                     ]
                 return envelope({
@@ -284,7 +284,7 @@ class FakeRunnerEnv:
                     "records": recs,
                 })
             days = int(kw.get("days") or 3650)
-            recs = self.peaks.get((pr_type, days)) or self.peaks.get((pr_type, 365 if days <= 365 else 3650)) or []
+            recs = self.peaks.get((pr_type, days)) or self.peaks.get(pr_type) or []
             return envelope({"sport": kw.get("sport", "Run"), "pr_type": pr_type, "days": days, "records": recs})
         if name == "tp_list_notes":
             s, e = kw["start_date"][:10], kw["end_date"][:10]

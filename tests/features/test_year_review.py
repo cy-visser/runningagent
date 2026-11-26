@@ -18,7 +18,10 @@ from google.genai import types
 from running_coach.agent import app
 from running_coach.coach.coaching.coaching_agent import coaching_agent
 from running_coach.coach.coaching.quick_actions import QUICK_ACTION_PART_PREFIX
-from running_coach.features.year_review.helpers.fitness_progress import format_peak_performances
+from running_coach.features.year_review.helpers.fitness_progress import (
+    compute_fitness_shift,
+    format_peak_performances,
+)
 from running_coach.features.year_review.helpers.races import detect_main_races
 from running_coach.features.year_review.refresh_year_review_tool import refresh_year_review
 from running_coach.shared.session_state import AUTH_EMAIL_STATE_KEY
@@ -438,7 +441,7 @@ def test_refresh_year_review_incremental_only_pulls_new_dates_and_caches_finishe
         },
     ])
     runner.peaks = {
-        ("speed5K", 365): [
+        "speed5K": [
             {"rank": 0, "value": 4.016, "workout_id": "w_race_5k", "workout_title": "Amsterdam 5K", "date": "2026-05-10"}
         ],
     }
@@ -642,6 +645,56 @@ def test_aggregate_year_uses_peak_ctl_for_monthly_and_weekly_series():
     assert agg["kpis"]["ctl_peak"] == 68.2
     assert agg["kpis"]["ctl_peak_date"] == "2026-10-11"
     assert agg["kpis"]["ctl_end"] == 58.3
+
+
+def test_compute_fitness_shift_guards_early_calendar_year_rhr_and_hrv_overlap():
+    start = date(2026, 1, 1)
+
+    # 1. Early January (< 8 weeks elapsed): must NOT compare January RHR/HRV against itself
+    jan_today = date(2026, 1, 15)
+    jan_metrics = {
+        "rhr": [(start + timedelta(days=i), 54.0) for i in range(15)],
+        "hrv": [(start + timedelta(days=i), 50.0) for i in range(15)],
+    }
+    jan_shift = compute_fitness_shift(
+        records=[],
+        weekly=[],
+        dated_metrics=jan_metrics,
+        start=start,
+        today=jan_today,
+        lthr=172.0,
+        lt1_hr=150.0,
+    )
+    assert jan_shift["items"] == []
+
+    # 2. 10 weeks elapsed (70 days -> non-overlapping 35-day early vs 35-day late windows)
+    mar_today = start + timedelta(days=69)  # 2026-03-11 (70 days inclusive)
+    mar_metrics = {
+        "rhr": (
+            [(start + timedelta(days=i), 56.0) for i in range(35)]
+            + [(start + timedelta(days=35 + i), 50.0) for i in range(35)]
+        ),
+        "hrv": (
+            [(start + timedelta(days=i), 48.0) for i in range(35)]
+            + [(start + timedelta(days=35 + i), 60.0) for i in range(35)]
+        ),
+    }
+    mar_shift = compute_fitness_shift(
+        records=[],
+        weekly=[],
+        dated_metrics=mar_metrics,
+        start=start,
+        today=mar_today,
+        lthr=172.0,
+        lt1_hr=150.0,
+    )
+    by_key = {item["key"]: item for item in mar_shift["items"]}
+    assert by_key["rhr"]["start"] == "56 bpm"
+    assert by_key["rhr"]["latest"] == "50 bpm"
+    assert by_key["rhr"]["verdict"] == "improving"
+    assert by_key["hrv"]["start"] == "48 ms"
+    assert by_key["hrv"]["latest"] == "60 ms"
+    assert by_key["hrv"]["verdict"] == "improving"
 
 
 def test_fix_historical_tss_script_computes_rtss_filters_and_rolls_back(tmp_path):

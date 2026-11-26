@@ -46,7 +46,7 @@ cp .env.example .env
 ### 3. Run Locally
 - **ADK Developer UI**:
   ```bash
-  adk web
+  DEV_RUNNER_EMAIL=you@yourdomain.com adk web
   ```
 - **Cloud Run Web App UI** (demo mode or full local stack): see [`webapp/README.md`](webapp/README.md).
 
@@ -71,7 +71,7 @@ Behavioural eval sets in `evals/` exercise the full agent with live credentials:
 
 ```bash
 # ADK 2.x: the eval set id must not contain a path, so run from evals/ ("n" answers the telemetry prompt)
-cd evals && echo n | adk eval .. comprehensive_coach_evals.evalset.json --config_file_path eval_config.json
+cd evals && echo n | DEV_RUNNER_EMAIL=you@yourdomain.com adk eval .. comprehensive_coach_evals.evalset.json --config_file_path eval_config.json
 ```
 
 ---

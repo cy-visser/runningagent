@@ -3,7 +3,8 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { DEMO_AVAILABLE_YEARS, DEMO_YEAR_REVIEW_RESPONSE } from "../../demo/fixtures";
 import * as api from "../../shared/api";
-import type { YearReviewResponse } from "../../shared/types";
+import type { YearReviewHeatmap, YearReviewResponse } from "../../shared/types";
+import { ActivityHeatmap } from "./ActivityHeatmap";
 import YearReviewChart from "./YearReviewChart";
 import { YearReviewModal, buildDiscussYearPrompt } from "./YearReviewModal";
 
@@ -214,5 +215,37 @@ describe("YearReviewModal", () => {
     expect(screen.getByText("Peak CTL")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Weekly" }));
     expect(screen.getByText(/Weekly running km/i)).toBeInTheDocument();
+  });
+
+  it("renders Jan (not Dec) as the first month header when Jan 1 falls mid-week with out-of-year padding", () => {
+    // 2026-01-01 is Thursday -> week 0 starts Monday 2025-12-29 with Dec 29-31 padded as level -1
+    const startMon = new Date(Date.UTC(2025, 11, 29));
+    const weeks: YearReviewHeatmap["weeks"] = Array.from({ length: 10 }, (_, w) => {
+      const mon = new Date(startMon.getTime() + w * 7 * 86400_000);
+      const weekIso = mon.toISOString().slice(0, 10);
+      const days = Array.from({ length: 7 }, (__, d) => {
+        const cur = new Date(mon.getTime() + d * 86400_000);
+        const iso = cur.toISOString().slice(0, 10);
+        return {
+          date: iso,
+          km: iso < "2026-01-01" ? 0 : 8,
+          level: iso < "2026-01-01" ? -1 : 2,
+          is_race: false,
+          race_name: null,
+        };
+      });
+      return { week: weekIso, days };
+    });
+
+    render(
+      <ActivityHeatmap
+        year={2026}
+        isComplete={false}
+        heatmap={{ weeks, run_days: 67, longest_streak_weeks: 10 }}
+      />,
+    );
+    expect(screen.getByText("Jan")).toBeInTheDocument();
+    expect(screen.getByText("Feb")).toBeInTheDocument();
+    expect(screen.queryByText("Dec")).not.toBeInTheDocument();
   });
 });
