@@ -57,12 +57,19 @@ def _pace_seconds(text: str) -> Optional[float]:
     return total if 0 <= seconds < 60 and 90 <= total <= 1200 else None
 
 
+def _clean_pace_text(pace: Any) -> str:
+    text = str(pace).strip().lstrip("@").lower()
+    for unit in ("min/km", "/km", "per km", "p/km"):
+        text = text.replace(unit, "")
+    return text.replace("–", "-").replace("—", "-").replace(" ", "")
+
+
 def pace_to_percent(pace: str, threshold_speed: float) -> tuple[int, int]:
     """'4:25-4:35' or '4:30' -> (min %, max %) of threshold pace, whole %; the faster pace is the higher %.
 
     Raises ValueError on an unreadable pace.
     """
-    text = str(pace).lower().replace("/km", "").replace("–", "-").replace("—", "-").replace(" ", "")
+    text = _clean_pace_text(pace)
     bounds = [_pace_seconds(p) for p in text.split("-")]
     if not 1 <= len(bounds) <= 2 or any(b is None for b in bounds):
         raise ValueError(f"unreadable pace '{pace}' (use 'm:ss' or 'm:ss-m:ss' per km)")
@@ -77,7 +84,7 @@ def pace_band(pace: str, threshold_speed: float, half_width_pct: float = 1.0) ->
 
     Raises ValueError on an unreadable pace.
     """
-    text = str(pace).lower().replace("/km", "").replace("–", "-").replace("—", "-").replace(" ", "")
+    text = _clean_pace_text(pace)
     if "-" in text:
         return list(pace_to_percent(text, threshold_speed))
     seconds = _pace_seconds(text)
@@ -95,6 +102,26 @@ def _percent_to_pace(pct: float, threshold_speed: float) -> float:
 # Coach structure -> native TrainingPeaks builder
 # ------------------------------------------------------------------------------
 
+def _resolve_step_length(raw: dict) -> tuple[Any, Any]:
+    dist_m = raw.get("distance_m")
+    if dist_m in (None, "") and raw.get("distance_km") not in (None, ""):
+        km = as_float(raw.get("distance_km"))
+        dist_m = km * 1000.0 if km is not None else raw.get("distance_km")
+    dur_s = raw.get("duration_seconds")
+    if dur_s in (None, "") and raw.get("duration_minutes") not in (None, ""):
+        mins = as_float(raw.get("duration_minutes"))
+        dur_s = mins * 60.0 if mins is not None else raw.get("duration_minutes")
+    if dist_m in (None, "") and dur_s in (None, "") and isinstance(raw.get("length"), dict):
+        unit = str(raw["length"].get("unit") or "").strip().lower().rstrip("s")
+        val = as_float(raw["length"].get("value"))
+        if val is not None:
+            if unit in _DIST_UNITS:
+                dist_m = val * _DIST_UNITS[unit]
+            elif unit in _TIME_UNITS:
+                dur_s = val * _TIME_UNITS[unit]
+    return dist_m, dur_s
+
+
 def _wire_step(raw: Any, metric: str, thr: dict, where: str) -> tuple[Optional[dict], Optional[str]]:
     if not isinstance(raw, dict):
         return None, f"{where} must be an object"
@@ -104,17 +131,22 @@ def _wire_step(raw: Any, metric: str, thr: dict, where: str) -> tuple[Optional[d
     if cls not in INTENSITY_CLASSES:
         return None, f"{where}: intensityClass must be one of {', '.join(INTENSITY_CLASSES)}"
 
-    has_distance = raw.get("distance_m") not in (None, "")
-    has_duration = raw.get("duration_seconds") not in (None, "")
+    dist_m_raw, dur_s_raw = _resolve_step_length(raw)
+    has_distance = dist_m_raw not in (None, "")
+    has_duration = dur_s_raw not in (None, "")
     if has_distance == has_duration:
         return None, f"{where}: give exactly one of distance_m or duration_seconds"
-    value = as_float(raw.get("distance_m") if has_distance else raw.get("duration_seconds"))
+    value = as_float(dist_m_raw if has_distance else dur_s_raw)
     limit = MAX_DISTANCE_M if has_distance else MAX_DURATION_S
     if value is None or not 0 < value <= limit:
         return None, f"{where}: {'distance_m' if has_distance else 'duration_seconds'} must be > 0 and <= {limit}"
     length = {"value": _exact(value), "unit": "meter" if has_distance else "second"}
 
     lo, hi = as_float(raw.get("intensity_min")), as_float(raw.get("intensity_max"))
+    if (lo is None or hi is None) and isinstance(raw.get("targets"), list) and raw["targets"]:
+        first_target = raw["targets"][0]
+        if isinstance(first_target, dict):
+            lo, hi = as_float(first_target.get("minValue")), as_float(first_target.get("maxValue"))
     default_bands = (
         {"warmUp": (50, 65), "coolDown": (50, 65), "rest": (45, 55)}
         if metric == FTP
@@ -129,7 +161,7 @@ def _wire_step(raw: Any, metric: str, thr: dict, where: str) -> tuple[Optional[d
             return None, (f"{where}: the runner's threshold pace is not available in TrainingPeaks to convert "
                           "the pace; use intensity_min/intensity_max (% of threshold pace)")
         try:
-            lo, hi = pace_to_percent(str(raw["pace"]), thr["threshold_speed"])
+            lo, hi = pace_band(str(raw["pace"]), thr["threshold_speed"])
         except ValueError as e:
             return None, f"{where}: {e}"
     elif cls in default_bands:
@@ -168,7 +200,12 @@ def _uses_pace_only(steps: list) -> bool:
     """True when some step targets a pace and no step gives explicit % values (pace targets are % threshold pace)."""
     flat = _flat_steps(steps)
     has_pace = any(s.get("pace") not in (None, "") for s in flat)
-    has_pct = any(s.get("intensity_min") not in (None, "") or s.get("intensity_max") not in (None, "") for s in flat)
+    has_pct = any(
+        s.get("intensity_min") not in (None, "")
+        or s.get("intensity_max") not in (None, "")
+        or bool(s.get("targets"))
+        for s in flat
+    )
     return has_pace and not has_pct
 
 

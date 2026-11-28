@@ -536,3 +536,81 @@ def test_apply_staged_changes_throttles_100_workouts_handles_429_and_retries_fai
     assert [n for n, _ in runner.tp_calls] == ["tp_update_workout"]
     assert ctx2.state[STAGED_CHANGES_STATE_KEY] is None
     assert ctx2.state[APPLIED_CHANGES_STATE_KEY]["applied"] == 1
+
+
+def test_trace_semicolon_delete_event_and_clock_pace_race_stage_in_one_call_without_tp_get_workout(runner):
+    """Regressions from traces 079f66f4620024f5 & 77a64e2a03d71299: `; delete strength`, `; event C ...`,
+    and `RACE 15k @4:35` stage in a single call with zero `tp_get_workout` calls and preserve note semicolons."""
+    runner.workouts.append({"id": "str-fri", "date": "2026-11-06", "sport": "Strength", "title": "General S&C Work",
+                            "type": "planned", "duration_minutes": 45})
+    ctx = runner.ctx()
+    runner.tp_calls.clear()
+    res = _stage(_fresh(ctx), [
+        "2026-11-06: T 2x2k @4:25 r2'; delete strength",
+        "2027-04-04: RACE 15k @4:35 Nescioloop 15k; event C RunningRoad 15k Nescioloop 15k | goal=1:08:45 pr=false",
+        "2026-11-08: note Travel | Flight at 10:00; hotel gym",
+    ])
+    assert res["staged"] == 5 and "needs_structure" not in res
+    assert "tp_get_workout" not in [n for n, _ in runner.tp_calls]
+    assert res["strides_added"] == ["2026-11-06"]
+
+    staged = ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    del_str = next(c for c in staged if c.get("sport") == "Strength" and c["action"] == "delete")
+    race_w = next(c for c in staged if c["date"] == "2027-04-04" and c.get("kind") != "event")
+    cal_ev = next(c for c in staged if c["date"] == "2027-04-04" and c.get("kind") == "event")
+    travel_note = next(c for c in staged if c.get("kind") == "note")
+    assert del_str["workout_id"] == "str-fri"
+    assert race_w["title"] == "Race: Nescioloop 15k" and race_w["distance_km"] == 15.0
+    assert cal_ev["priority"] == "C" and cal_ev["goal_time"] == "1:08:45" and cal_ev["goal_pr"] is False
+    assert travel_note["description"] == "Flight at 10:00; hotel gym"
+
+
+def test_forgiving_dsl_bullets_weekdays_synonyms_and_fallback_builder_stage_in_one_call(runner):
+    runner.workouts.append(
+        {"id": "str-tue", "date": "2026-11-03", "sport": "Strength", "title": "Heavy Lower", "type": "planned"}
+    )
+    ctx = runner.ctx()
+    custom_structure = {
+        "steps": [
+            {"intensityClass": "warmUp", "duration_minutes": 15},
+            {"intensityClass": "active", "distance_km": 10, "pace": "@4:35 min/km"},
+            {
+                "intensityClass": "coolDown",
+                "length": {"value": 10, "unit": "minutes"},
+                "targets": [{"minValue": 72, "maxValue": 80}],
+            },
+        ]
+    }
+    res = _stage(
+        _fresh(ctx),
+        [
+            "- Tue 2026-11-03: TEMPO 3x2k 4:20/km r 2'; drop S&C",
+            "`2026-11-04 (Wed) +create: S 30' moderate`",
+            "move 2026-11-05 to 2026-11-06: bike",
+            "2027-04-04: event C RunningRoad 15k Nescioloop 15k | goal=1:08:45, place=none, pr=false",
+            {"date_str": "2026-11-07", "title": "Custom Steady 10k", "structure": custom_structure},
+        ],
+    )
+    assert res["staged"] == 6 and "needs_structure" not in res and ctx.actions.skip_summarization is True
+    staged = ctx.state[STAGED_CHANGES_STATE_KEY]["changes"]
+    tue_run = next(c for c in staged if c["date"] == "2026-11-03" and c.get("sport") == "Run")
+    tue_del = next(c for c in staged if c["date"] == "2026-11-03" and c.get("sport") == "Strength")
+    wed_str = next(c for c in staged if c["date"] == "2026-11-04" and c.get("sport") == "Strength")
+    moved_bike = next(c for c in staged if c.get("sport") == "Bike")
+    ev = next(c for c in staged if c.get("kind") == "event")
+    sat_custom = next(c for c in staged if c["date"] == "2026-11-07")
+
+    assert tue_run["title"] == "Threshold 3x2km"
+    assert tue_del["action"] == "delete" and tue_del["workout_id"] == "str-tue"
+    assert wed_str["duration_minutes"] == 30 and "Trap-bar deadlift 3x4" in wed_str["description"]
+    assert moved_bike["date"] == "2026-11-06" and moved_bike["replaces"]["date"] == "2026-11-05"
+    assert ev["goal_time"] == "1:08:45" and ev.get("goal_place") is None and ev["goal_pr"] is False
+    active_10k = next(
+        s
+        for b in sat_custom["structured_workout"]["structure"]
+        for s in b["steps"]
+        if s["length"] == {"value": 10000, "unit": "meter"}
+    )
+    active_target = active_10k["targets"][0]
+    assert (active_target["minValue"], active_target["maxValue"]) == (103, 105)
+

@@ -69,6 +69,10 @@ async def fetch_plan_audit_data(
     add_notes_to_weeks(weeks, raw["calendar notes"] or [])
     week_list = annotate_long_runs(list(weeks.values()), profile)
     annotate_week_over_week(week_list, prior_km)
+    if q_start.weekday() != 0 and len(week_list) >= 2:
+        first_full = build_week_buckets(all_workouts, monday_of(q_start), week_list[0]["end_date"])
+        first_full_km = sum(w["total_distance_km"] or 0.0 for w in first_full.values())
+        annotate_week_over_week(week_list[1:], first_full_km)
     history_entries = await get_or_fetch_volume_history(
         tool_context,
         profile,

@@ -189,16 +189,55 @@ def test_clock_pace_range_on_steady_runs_uses_nearest_rounding():
     assert build_session("L 16 @5:31–5:52", ZONES)["structured_workout"] == long_run["structured_workout"]
     easy = build_session("E 8 @5:40", ZONES)
     assert _work_targets(easy["structured_workout"]) == [(83, 85)]
-    # With segments the clock pace sets the easy remainder; segments keep their named pace.
+    # With segments the clock pace sets the easy remainder; segments take either named or clock paces.
     fast_finish = build_session("L 22 @5:31-5:52 +6@M", ZONES)
     assert _targets(fast_finish["structured_workout"]) == [(81, 86), tuple(ZONES["goal"]["M"]["pct"])]
+    clock_finish = build_session("L 18 +6@4:35", ZONES)
+    assert _targets(clock_finish["structured_workout"])[-1] == (103, 105)
+    assert clock_finish["title"] == "Long Run 18 km (last 6 km @4:35)"
+
+    # RACE and EVENT accept explicit clock paces (e.g. Trace 77a64e2a03d71299: Nescioloop 15K @4:35).
+    race_clock = build_session("RACE 15k @4:35 Nescioloop 15k", ZONES)
+    assert _work_targets(race_clock["structured_workout"]) == [(103, 105)]
+    assert race_clock["title"] == "Race: Nescioloop 15k" and race_clock["distance_km"] == 15.0
+    event_clock = build_session("EVENT 15k @4:35 Nescioloop 15k", ZONES)
+    assert _work_targets(event_clock["structured_workout"]) == [(103, 105)]
+    assert event_clock["title"] == "Event: Nescioloop 15k (@4:35)"
 
 
-@pytest.mark.parametrize("code", ["L 16 @M", "RACE 5k @4:10", "B 60' @4:10", "E 8 @4:99"])
+@pytest.mark.parametrize("code", ["L 16 @M", "RACE 5k @4:99", "B 60' @4:10", "E 8 @4:99"])
 def test_clock_pace_misuse_is_rejected_with_a_reason(code):
     with pytest.raises(CodeError) as err:
         build_session(code, ZONES)
     assert str(err.value)
+
+
+@pytest.mark.parametrize(
+    ("code", "expected_sport", "expected_title", "expected_desc_substr"),
+    [
+        ("TEMPO 2x15' rec 2'", "Run", "Threshold 2x15'", "2' rec"),
+        ("EASY 10 (HR <135) @E", "Run", "Easy Run 10 km", "Conversational"),
+        ("R 6 @R", "Run", "Recovery Run 6 km", "Very easy"),
+        ("L 18 @L", "Run", "Long Run 18 km", "Start easy"),
+        ('INTERVALS 5x1k 4:10/km r 90"', "Run", "Intervals 5x1km", "4:08–4:12/km"),
+        ("S 30' moderate", "Strength", "Strength: full body", "Trap-bar deadlift 3x4"),
+        ("S 25' light activation", "Strength", "Strength: full body", "Activation:"),
+        ("S 45' heavy lower body", "Strength", "Strength: heavy lower body", "Goblet squat"),
+        ("S 30' core & hips", "Strength", "Strength: core & hips", "Dead bug"),
+        ("S 30'", "Strength", "Strength: full body", "Goblet squat"),
+        ("B 60 Z2", "Bike", "Endurance Ride 60'", "60' @"),
+        ("RIDE 45' Z1", "Bike", "Recovery Ride 45'", "45'"),
+        ("SWIM 40", "Swim", "Swim 40'", "Easy swim"),
+        ("WALK 30'", "Walk", "Walk 30'", "Easy walk"),
+    ],
+)
+def test_natural_code_and_strength_variations_normalize_without_retries(
+    code, expected_sport, expected_title, expected_desc_substr
+):
+    built = build_session(code, ZONES)
+    assert built["sport"] == expected_sport
+    assert built["title"] == expected_title
+    assert expected_desc_substr in built["description"]
 
 
 def test_clock_pace_without_threshold_is_rejected():

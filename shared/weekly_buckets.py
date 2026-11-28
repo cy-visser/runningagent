@@ -2,11 +2,33 @@
 
 from collections import Counter
 from datetime import date, timedelta
+import re
 from typing import Any, Optional
 
 from .dates import iso_week_key, parse_date
 from .sports import BIKE_SPORTS, NON_TRAINING_SPORTS, RUN_SPORTS, STRENGTH_SPORTS, is_quality_title
 from .workout_status import is_workout_completed
+
+PRESCRIPTION_MAX_CHARS = 120
+_MAIN_LINE_RE = re.compile(r"^main(?:\s+set)?\s*:\s*(.+)$", re.IGNORECASE)
+_SKIP_DESC_RE = re.compile(r"^(?:plan\s+code\s*:|warm[- ]?up\b|cool[- ]?down\b)", re.IGNORECASE)
+
+
+def compact_prescription(description: Any) -> Optional[str]:
+    """Compact 1-line workout prescription from `description` (builder summary, `Main:` exercises, or coach line)."""
+    lines = [ln.strip() for ln in str(description or "").splitlines() if ln.strip()]
+    if not lines:
+        return None
+    chosen: Optional[str] = None
+    for ln in lines:
+        if m := _MAIN_LINE_RE.match(ln):
+            chosen = m.group(1).strip()
+            break
+    if not chosen:
+        chosen = next((ln for ln in lines if not _SKIP_DESC_RE.match(ln)), None)
+    if not chosen:
+        return None
+    return chosen if len(chosen) <= PRESCRIPTION_MAX_CHARS else chosen[: PRESCRIPTION_MAX_CHARS - 1].rstrip() + "…"
 
 _SPORT_SHORT = {
     "run": "Run",
@@ -113,6 +135,7 @@ def tally_workout(bucket: dict, workout: dict, w_date: date) -> None:
         "minutes": (duration_h or 0.0) * 60.0,
         "tss": tss,
         "completed": completed,
+        "prescription": compact_prescription(workout.get("description")),
     })
 
 
@@ -138,11 +161,17 @@ def build_week_buckets(workouts: Optional[list[dict]], start: date, end: date) -
 
 
 def _title_has_km(title: str, km: float) -> bool:
-    import re
     return bool(re.search(rf"(?<![\d.]){re.escape(f'{km:g}')}\s*k(?:m)?\b", title, re.IGNORECASE))
 
 
-def _format_session_item(item: dict, multi_day: bool, dup_sport_days: set[tuple[date, str]]) -> str:
+def _format_session_item(
+    item: dict,
+    multi_day: bool,
+    dup_sport_days: set[tuple[date, str]],
+    *,
+    show_prescriptions: bool = False,
+    force_planned_ids: bool = False,
+) -> str:
     sport_raw = (item.get("sport") or "Run").strip()
     sport = _sport_label(sport_raw)
     time_str = f"@{item['time']}" if multi_day and item.get("time") else ""
@@ -158,14 +187,21 @@ def _format_session_item(item: dict, multi_day: bool, dup_sport_days: set[tuple[
     need_id = (
         not item.get("completed")
         and bool(item.get("id"))
-        and (item["date"], sport_raw.lower()) in dup_sport_days
+        and (force_planned_ids or (item["date"], sport_raw.lower()) in dup_sport_days)
     )
     id_str = f" [{item['id']}]" if need_id else ""
+    prescription = str(item.get("prescription") or "").strip() if show_prescriptions else ""
+    presc_str = f" ({prescription})" if prescription and prescription.casefold() != title.strip().casefold() else ""
     prefix = f"{sport}{time_str} " if (sport != "Run" or time_str) else ""
-    return f"{prefix}'{title}'{metric}{id_str}"
+    return f"{prefix}'{title}'{metric}{presc_str}{id_str}"
 
 
-def format_week_sessions(items: list[dict]) -> str:
+def format_week_sessions(
+    items: list[dict],
+    *,
+    show_prescriptions: bool = False,
+    force_planned_ids: bool = False,
+) -> str:
     """Formats a week's sessions grouped chronologically by weekday (`Tue: ... | Wed/Thu: ...`)."""
     if not items:
         return ""
@@ -183,7 +219,16 @@ def format_week_sessions(items: list[dict]) -> str:
     groups: list[tuple[list[date], str, bool]] = []
     for day, day_items in by_day.items():
         multi_day = len(day_items) >= 2
-        rendered = "; ".join(_format_session_item(s, multi_day, dup_sport_days) for s in day_items)
+        rendered = "; ".join(
+            _format_session_item(
+                s,
+                multi_day,
+                dup_sport_days,
+                show_prescriptions=show_prescriptions,
+                force_planned_ids=force_planned_ids,
+            )
+            for s in day_items
+        )
         mergeable = not multi_day and "[" not in rendered
         if (
             mergeable

@@ -12,6 +12,7 @@ called anything but `load_skill` of the report's own skill. Otherwise the tool i
 write, no report card) and the model is told to answer from the data in the conversation.
 """
 
+from datetime import date
 import re
 from typing import Any, Optional
 
@@ -21,9 +22,12 @@ from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from opentelemetry import trace
 
+from ...features.schedule_lookup.get_schedule_tool import PRESCRIPTION_MAX_DAYS, resolve_schedule_window
+from ...shared.dates import iso_date
 from .quick_actions import (
     SYNTHESIS_GUARD_STATE_KEY,
     has_action_or_event_intent,
+    is_force_prose,
     is_plan_intake,
     is_synthesis_guard,
     is_trend_synthesis,
@@ -33,8 +37,22 @@ TURN_CALLS_STATE_KEY = "temp:turn_calls"
 LOAD_SKILL = "load_skill"
 FETCH_PLAN_CONTEXT = "fetch_plan_context"
 FETCH_TREND_DATA = "fetch_trend_data"
+GET_SCHEDULE = "get_schedule"
 PLAN_BUILDER_SKILL = "plan-builder"
 ANALYZE_WORKOUT = "analyze_workout"
+_APPLY_TOOLS = frozenset({"apply_staged_changes", "apply_training_plan"})
+_SCHEDULE_HEADER_RE = re.compile(r"^### Schedule \((\d{4}-\d{2}-\d{2})\s*[–-]\s*(\d{4}-\d{2}-\d{2})\)")
+_SCHEDULE_BLOCK_RE = re.compile(r'<report tool="get_schedule"(?P<attrs>[^>]*)>\s*(?P<body>.*?)\s*</report>', re.DOTALL)
+_AUDIT_BLOCK_RE = re.compile(r'<report tool="fetch_plan_audit_data"[^>]*>\s*(?P<body>.*?)\s*</report>', re.DOTALL)
+_AUDIT_WEEK_RE = re.compile(
+    r"^\*\s+\*\*(?P<s_iso>\d{4}-\d{2}-\d{2})\s*[–-]\s*(?:(?P<e_iso>\d{4}-\d{2}-\d{2})|(?P<e_mon>[A-Za-z]{3})\s+(?P<e_day>\d{1,2}))\*\*",
+    re.MULTILINE,
+)
+_SHORT_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+_EXPLICIT_REFRESH_RE = re.compile(r"\b(?:refresh|reload|re-?check|check\s+again|pull\s+up\s+again)\b", re.IGNORECASE)
 
 # report data tool -> the skill whose report it renders
 REPORT_TOOL_SKILLS = {
@@ -122,10 +140,134 @@ def blocked_message(tool_name: str) -> str:
     )
 
 
+def _audit_window_from_text(text: str) -> Optional[tuple[str, str]]:
+    stripped = text.lstrip()
+    if not stripped.startswith("### Training Plan Audit"):
+        return None
+    matches = list(_AUDIT_WEEK_RE.finditer(stripped))
+    if not matches:
+        return None
+    start_iso = matches[0].group("s_iso")
+    last = matches[-1]
+    if last.group("e_iso"):
+        return start_iso, last.group("e_iso")
+    try:
+        s_day = date.fromisoformat(last.group("s_iso"))
+        month = _SHORT_MONTHS.get((last.group("e_mon") or "").lower())
+        if not month:
+            return None
+        year = s_day.year + 1 if month < s_day.month else s_day.year
+        end_iso = date(year, month, int(last.group("e_day"))).isoformat()
+        return start_iso, end_iso
+    except ValueError:
+        return None
+
+
+def _covering_schedule(
+    tool_context: ToolContext, args: dict[str, Any]
+) -> Optional[tuple[str, str, str, str, str]]:
+    """Returns `(req_start, req_end, prev_start, prev_end, source)` when an active Schedule or Plan Audit covers `args`."""
+    # Pre-dispatched standalone schedule commands (`"Pull up next week"`) or explicit refresh requests run live.
+    if is_synthesis_guard(tool_context.state, getattr(tool_context, "invocation_id", None)):
+        return None
+    user_content = getattr(tool_context, "user_content", None)
+    user_text = " ".join(p.text for p in (user_content.parts or []) if p.text).strip() if user_content else ""
+    if _EXPLICIT_REFRESH_RE.search(user_text):
+        return None
+
+    session = getattr(tool_context, "session", None)
+    events = getattr(session, "events", None) if session is not None else None
+    if not events:
+        return None
+
+    want_details = bool(args.get("include_details"))
+    q_start, q_end, _ = resolve_schedule_window(
+        args.get("start_date"), args.get("end_date"), include_details=want_details
+    )
+    req_s, req_e = iso_date(q_start), iso_date(q_end)
+
+    detail_call_ids: set[str] = set()
+    active: list[tuple[str, str, bool]] = []
+    active_audits: list[tuple[str, str]] = []
+    for ev in events:
+        for part in (ev.content.parts if ev.content else None) or []:
+            fc = part.function_call
+            if fc and fc.name == GET_SCHEDULE and fc.id and bool((fc.args or {}).get("include_details")):
+                detail_call_ids.add(fc.id)
+            resp = part.function_response
+            if resp and resp.name in _APPLY_TOOLS:
+                active.clear()
+                active_audits.clear()
+            elif resp and resp.name == GET_SCHEDULE:
+                payload = resp.response or {}
+                raw_text = payload.get("result", payload) if isinstance(payload, dict) else payload
+                m = _SCHEDULE_HEADER_RE.match(str(raw_text or "").lstrip())
+                if m:
+                    active.append((m.group(1), m.group(2), (resp.id or "") in detail_call_ids))
+            elif resp and resp.name == "fetch_plan_audit_data":
+                payload = resp.response or {}
+                raw_text = payload.get("result", payload) if isinstance(payload, dict) else payload
+                audit_win = _audit_window_from_text(str(raw_text or ""))
+                if audit_win:
+                    active_audits.append(audit_win)
+            elif part.text and not getattr(part, "thought", False):
+                if 'tool="get_schedule"' in part.text:
+                    for bm in _SCHEDULE_BLOCK_RE.finditer(part.text):
+                        hm = _SCHEDULE_HEADER_RE.match(bm.group("body"))
+                        if hm:
+                            active.append((hm.group(1), hm.group(2), "include_details=True" in bm.group("attrs")))
+                if 'tool="fetch_plan_audit_data"' in part.text:
+                    for am in _AUDIT_BLOCK_RE.finditer(part.text):
+                        audit_win = _audit_window_from_text(am.group("body"))
+                        if audit_win:
+                            active_audits.append(audit_win)
+
+    for prev_s, prev_e, prev_details in reversed(active):
+        if prev_s <= req_s and req_e <= prev_e and (not want_details or prev_details):
+            return req_s, req_e, prev_s, prev_e, "### Schedule"
+    if not want_details and (q_end - q_start).days > PRESCRIPTION_MAX_DAYS:
+        for prev_s, prev_e in reversed(active_audits):
+            if prev_s <= req_s and req_e <= prev_e:
+                return req_s, req_e, prev_s, prev_e, "### Training Plan Audit"
+    return None
+
+
 def guard_report_tools(
     tool: BaseTool, args: dict[str, Any], tool_context: ToolContext
 ) -> Optional[dict]:
-    """before_tool_callback: skips report tools used as lookups, and blocks internal/UI-only tools from chat."""
+    """before_tool_callback: skips report tools used as lookups, deduplicates sub-window schedule checks,
+    and blocks internal/UI-only or force-prose synthesis tool calls."""
+    if is_force_prose(tool_context.state, getattr(tool_context, "invocation_id", None)):
+        return {
+            "result": (
+                f"{tool.name} was not run: the data for this turn is already loaded above. "
+                "Reply directly in prose from the data in this conversation (if a specific detail is "
+                "not shown, state that plainly)."
+            )
+        }
+    if tool.name == GET_SCHEDULE:
+        covered = _covering_schedule(tool_context, args or {})
+        if covered is not None:
+            req_s, req_e, prev_s, prev_e, source = covered
+            trace.get_current_span().set_attribute("coach.skipped_duplicate_schedule", f"{req_s}..{req_e}")
+            if source == "### Training Plan Audit":
+                return {
+                    "result": (
+                        f"get_schedule was not run: {req_s}..{req_e} is already in the active "
+                        f"### Training Plan Audit ({prev_s} – {prev_e}) in this conversation. Answer directly from "
+                        "that audit (call get_schedule on a <= 14-day window only when a specific workout's step "
+                        "prescription is needed)."
+                    )
+                }
+            return {
+                "result": (
+                    f"get_schedule was not run: {req_s}..{req_e} is already in the active "
+                    f"### Schedule ({prev_s} – {prev_e}) in this conversation. Answer directly from "
+                    "that schedule (call get_schedule with include_details=True only when a planned "
+                    "workout's step targets are not shown there)."
+                )
+            }
+        return None
     if tool.name == FETCH_PLAN_CONTEXT:
         if is_plan_builder_turn(tool_context):
             return None

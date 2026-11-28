@@ -144,3 +144,23 @@ def test_plan_audit_reports_tp_failure_instead_of_empty_schedule(runner):
     assert "TrainingPeaks" in out and "empty" in out
     assert "no runs planned" not in out
     assert "audit_report_data" not in ctx.state
+
+
+def test_plan_audit_midweek_sunday_start_uses_full_iso_week_for_week2_vs_prior(runner):
+    """Regression for trace c53bb132b620e6f9 (`start_date='2027-02-07'`, Sunday 5K race day): Week 2 (`Feb 08`)
+    must compare against the full `29.4 km` ISO week (`Feb 01-07`), not just Sunday's clipped `5.0 km` (`+1092%`)."""
+    runner.workouts.extend([
+        {"id": "w_tue", "date": "2027-02-03", "sport": "Run", "title": "Sharpening", "type": "planned",
+         "distance_planned_km": 8.0, "duration_planned": 0.75, "tss_planned": 60.0},
+        {"id": "w_thu", "date": "2027-02-05", "sport": "Run", "title": "Easy + Shakeout", "type": "planned",
+         "distance_planned_km": 16.4, "duration_planned": 1.5, "tss_planned": 95.0},
+        {"id": "w_race", "date": "2027-02-07", "sport": "Run", "title": "5k Race", "type": "planned",
+         "distance_planned_km": 5.0, "duration_planned": 0.35, "tss_planned": 46.0},
+        {"id": "w_next", "date": "2027-02-10", "sport": "Run", "title": "10K Block W1", "type": "planned",
+         "distance_planned_km": 59.6, "duration_planned": 5.0, "tss_planned": 440.0},
+    ])
+    ctx = runner.ctx()
+    out = asyncio.run(fetch_plan_audit_data(ctx, start_date="2027-02-07", end_date="2027-02-14"))
+    assert "+1092%" not in out and "vs prior 5.0 km" not in out
+    assert "**2027-02-08 – Feb 14**" in out and "+103% vs prior 29.4 km" in out
+

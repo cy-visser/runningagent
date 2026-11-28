@@ -17,6 +17,7 @@ Prefix-cache invariant:
 
 import json
 import logging
+import uuid
 from typing import Any, Optional
 
 from google.adk.agents.callback_context import CallbackContext
@@ -62,6 +63,8 @@ QUICK_ACTION_PART_PREFIX = "[[running_coach:quick_action]]"
 PLAN_INTAKE_STATE_KEY = "temp:plan_intake_invocation"
 # Invocation id of a report/schedule synthesis call: keeps the full prefix cached while dropping stray tool calls.
 SYNTHESIS_GUARD_STATE_KEY = "temp:report_synthesis_guard"
+# Invocation id of a synthesis/intake recovery step after the model returned only tool call(s) with no prose.
+FORCE_PROSE_STATE_KEY = "temp:force_prose_invocation"
 # Invocation id of a UI-button Trend Analysis turn: authorizes `fetch_trend_data` and injects the transient rubric.
 TREND_SYNTHESIS_STATE_KEY = "temp:trend_synthesis_invocation"
 
@@ -118,6 +121,11 @@ def is_plan_intake(state: Any, invocation_id: Optional[str]) -> bool:
 def is_synthesis_guard(state: Any, invocation_id: Optional[str]) -> bool:
     """True during a report/schedule synthesis call (keeps full prefix cached while dropping stray tool calls)."""
     return bool(invocation_id) and state.get(SYNTHESIS_GUARD_STATE_KEY) == invocation_id
+
+
+def is_force_prose(state: Any, invocation_id: Optional[str]) -> bool:
+    """True on the recovery step after a synthesis/intake call returned only tool call(s) with no prose."""
+    return bool(invocation_id) and state.get(FORCE_PROSE_STATE_KEY) == invocation_id
 
 
 def is_trend_synthesis(state: Any, invocation_id: Optional[str]) -> bool:
@@ -203,7 +211,11 @@ def quick_action_calls(
         calls.append((LOAD_SKILL, {"skill_name": skill}))
     return [
         types.Part(
-            function_call=types.FunctionCall(name=name, args=call_args),
+            function_call=types.FunctionCall(
+                id=f"qa_{uuid.uuid4().hex[:12]}",
+                name=name,
+                args=call_args,
+            ),
             thought_signature=SYNTHETIC_THOUGHT_SIGNATURE if i == 0 else None,
         )
         for i, (name, call_args) in enumerate(calls)
@@ -224,6 +236,9 @@ def dispatch_quick_action(
     if is_synthesis_guard(state, invocation_id):
         if is_trend_synthesis(state, invocation_id):
             _inject_trend_synthesis_prompt(llm_request)
+        if is_force_prose(state, invocation_id):
+            llm_request.config = llm_request.config or types.GenerateContentConfig()
+            llm_request.config.tool_config = NO_TOOL_CALLS
         return None
 
     action, inferred = _consume_or_infer_action(callback_context, llm_request)
@@ -245,10 +260,15 @@ def dispatch_quick_action(
     return LlmResponse(content=types.Content(role="model", parts=parts))
 
 
+def _has_visible_text(parts: list[types.Part]) -> bool:
+    return any(not getattr(p, "thought", False) and p.text and p.text.strip() for p in parts)
+
+
 def drop_disabled_tool_calls(
     callback_context: CallbackContext, llm_response: LlmResponse
 ) -> Optional[LlmResponse]:
-    """after_model_callback: synthesis and intake calls must end on text; drop any stray function calls."""
+    """after_model_callback: synthesis and intake calls must end on text; drop stray function calls when text exists,
+    or arm force-prose recovery when the model returned only function calls."""
     content = llm_response.content
     if llm_response.partial or not content or not content.parts:
         return None
@@ -260,8 +280,14 @@ def drop_disabled_tool_calls(
     kept = [p for p in content.parts if not p.function_call]
     if len(kept) == len(content.parts):
         return None
-    trace.get_current_span().set_attribute("coach.dropped_tool_calls", len(content.parts) - len(kept))
-    logger.warning("Dropped %d function call(s) from a synthesis/intake call", len(content.parts) - len(kept))
+    dropped = len(content.parts) - len(kept)
+    if not _has_visible_text(kept):
+        callback_context.state[FORCE_PROSE_STATE_KEY] = callback_context.invocation_id
+        trace.get_current_span().set_attribute("coach.synthesis_tool_only_recovery", dropped)
+        logger.warning("Synthesis/intake call returned %d tool call(s) with no prose; forcing prose retry", dropped)
+        return None
+    trace.get_current_span().set_attribute("coach.dropped_tool_calls", dropped)
+    logger.warning("Dropped %d function call(s) from a synthesis/intake call", dropped)
     return llm_response.model_copy(update={"content": content.model_copy(update={"parts": kept})})
 
 
@@ -303,6 +329,7 @@ class QuickActionPlugin(BasePlugin):
 
 __all__ = [
     "BIKE_WORKOUT_SKILL",
+    "FORCE_PROSE_STATE_KEY",
     "LOAD_SKILL",
     "NO_TOOL_CALLS",
     "PLAN_INTAKE",
@@ -327,6 +354,7 @@ __all__ = [
     "extract_quick_action",
     "has_action_or_event_intent",
     "infer_typed_quick_action",
+    "is_force_prose",
     "is_plan_intake",
     "is_synthesis_guard",
     "is_trend_synthesis",

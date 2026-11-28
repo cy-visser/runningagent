@@ -543,8 +543,40 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
         "skill": "plan-audit",
         "args": {"start_date": "2026-12-15", "end_date": "2027-02-14"},
     }
-    # Typed trend prompts (UI-button-only), mutation/staging/weather/event, tail date-window, second report,
-    # pasted plan, or undated named/vague blocks stay on LLM routing (never pre-dispatched to trend-analysis):
+    # Trace c53bb132b620e6f9 & sister audit turns: `between <d1> and <d2>` and natural multi-week block leads.
+    assert infer_typed_quick_action("Audit my 10k block between Feb 7th and March 21st", today) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2027-02-07", "end_date": "2027-03-21"},
+    }
+    assert infer_typed_quick_action("Lets look at my HM block from March 22nd until June 12th", today) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2027-03-22", "end_date": "2027-06-12"},
+    }
+    assert infer_typed_quick_action("Review my marathon plan between Nov 1st and Apr 23rd", today) == {
+        "skill": "plan-audit",
+        "args": {"start_date": "2026-11-01", "end_date": "2027-04-23"},
+    }
+    # Generalized window & lead phrasings (bare `<d1> to/- <d2>`, `until <d2>`, month windows, check-in/schedule/workout leads):
+    for prompt, expected in (
+        ("Audit my 10k block Feb 7th to March 21st", {"skill": "plan-audit", "args": {"start_date": "2027-02-07", "end_date": "2027-03-21"}}),
+        ("Audit my 5k block until Feb 7th", {"skill": "plan-audit", "args": {"start_date": "2026-11-16", "end_date": "2027-02-07"}}),
+        ("Check my schedule from Dec 14th to Dec 20th", {"skill": "schedule-lookup", "args": {"start_date": "2026-12-14", "end_date": "2026-12-20"}}),
+        ("Show my schedule Dec 14 - Dec 27", {"skill": "schedule-lookup", "args": {"start_date": "2026-12-14", "end_date": "2026-12-27"}}),
+        ("Let's look at my calendar for December", {"skill": "schedule-lookup", "args": {"start_date": "2026-12-01", "end_date": "2026-12-31"}}),
+        ("Check my schedule next month", {"skill": "schedule-lookup", "args": {"start_date": "2026-12-01", "end_date": "2026-12-31"}}),
+        ("What runs do I have next week?", {"skill": "schedule-lookup", "args": {"start_date": "2026-11-23", "end_date": "2026-11-29"}}),
+        ("How did my training week go?", {"skill": "check-in-report", "args": {}}),
+        ("Can you do my weekly check-in?", {"skill": "check-in-report", "args": {}}),
+        ("Weekly review. Did my HRV recover?", {"skill": "check-in-report", "args": {}}),
+        ("How did today's tempo run go?", {"skill": "workout-analysis", "args": {"date_str": "today", "sport": "run"}}),
+        ("How was yesterday's bike ride?", {"skill": "bike-workout-analysis", "args": {"date_str": "2026-11-15", "sport": "bike"}}),
+        ("Check my run on Oct 15th", {"skill": "workout-analysis", "args": {"date_str": "2026-10-15", "sport": "run"}}),
+        ("Let's look at today's workout", {"skill": "workout-analysis", "args": {"date_str": "today"}}),
+    ):
+        assert infer_typed_quick_action(prompt, today) == expected, prompt
+
+    # Typed trend prompts (UI-button-only), mutation/staging/tweak/weather/event, tail date-window, second report,
+    # pasted plan, or undated named/vague blocks stay on LLM routing:
     for non_match in (
         "Analyze my trends for the last 12 weeks. Are my easy paces improving?",
         "Trend analysis for the past 6 months",
@@ -552,7 +584,16 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
         "Analyze my trends. Look at the last 16 weeks.",
         "Audit the next few months",
         "Audit my plan. Look at the next 3 months.",
+        "Audit my plan. Specifically look at next month.",
         "Audit my plan from Nov 30 to Feb 7 and move Friday S&C",
+        "Audit my plan between Feb 7th and March 21st and move Friday S&C",
+        "Audit my plan between Feb 7th and March 21st and analyze yesterday's run",
+        "Check my schedule next week and trim Friday's easy run",
+        "Audit my plan and dial back next week",
+        "Show my schedule this week and bump Sunday's long run to 20k",
+        "Pull up this week and make Friday a rest day",
+        "Check Oct 15th",
+        "Look at my HM block",
         "Audit my plan and drop Friday's S&C",
         "Audit my Amsterdam Half block",
         "Audit my plan. Specifically look at Nov 30th until Feb 7th.",
@@ -687,6 +728,136 @@ def test_typed_dated_audit_and_trend_questions_pre_dispatch_in_one_call_and_fall
     assert req4_warm.contents[:-1] == req5_followup.contents[: len(req4_warm.contents) - 1]
     assert req4_warm.contents[-1].parts[0] == req5_followup.contents[len(req4_warm.contents) - 1].parts[0]
     assert req5_followup.contents[len(req4_warm.contents) - 1].parts[1].function_response.response["instructions"] == STALE_SKILL_STUB
+
+
+def test_tool_only_synthesis_response_recovers_into_prose_instead_of_no_actionable_content_error(runner, monkeypatch):
+    """Exact regression for trace 9b608545aa95f085: when a synthesis-guarded step returns ONLY a tool call +
+    thought + trailing empty SSE text part (finish_reason=STOP), ADK must NOT fail with MODEL_RETURNED_NO_CONTENT;
+    the stray tool is blocked with zero TP I/O and the recovery call forces prose with FunctionCallingConfigMode.NONE."""
+    from running_coach.coach.coaching.quick_actions import FORCE_PROSE_STATE_KEY
+
+    class ToolOnlySynthesisLlm(BaseLlm):
+        requests: list = []
+
+        async def generate_content_async(
+            self, llm_request: LlmRequest, stream: bool = False
+        ) -> AsyncGenerator[LlmResponse, None]:
+            self.requests.append(llm_request)
+            step = len(self.requests)
+            if step == 1:
+                # Step 1: LLM routes to get_schedule (arms mark_report_synthesis).
+                yield LlmResponse(
+                    content=types.Content(role="model", parts=[
+                        types.Part(text="**Investigating Workout Details**", thought=True),
+                        types.Part(function_call=types.FunctionCall(
+                            id="call_sched",
+                            name="get_schedule",
+                            args={"start_date": "2026-10-27", "end_date": "2026-10-27"},
+                        )),
+                        types.Part(text=""),
+                    ]),
+                    finish_reason=types.FinishReason.STOP,
+                )
+                return
+            if step == 2:
+                # Step 2 (under SYNTHESIS_GUARD): model returns ONLY a function_call + thought + empty text!
+                yield LlmResponse(
+                    content=types.Content(role="model", parts=[
+                        types.Part(text="Trying nutrition context for details...", thought=True),
+                        types.Part(function_call=types.FunctionCall(
+                            id="call_nutr",
+                            name="fetch_nutrition_context",
+                            args={"days_forward": 4},
+                        )),
+                        types.Part(text=""),
+                    ]),
+                    finish_reason=types.FinishReason.STOP,
+                )
+                return
+            # Step 3 (recovery with NO_TOOL_CALLS): forced prose answer.
+            yield LlmResponse(
+                content=types.Content(role="model", parts=[
+                    types.Part(text="Tuesday's 6x400m matches the pacing target; lengthen recovery to 90s walk."),
+                ]),
+                finish_reason=types.FinishReason.STOP,
+            )
+
+    llm = ToolOnlySynthesisLlm(model="fake")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+
+    async def scenario():
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        events = await _turn(
+            r, session.id, "Can you check the workout of Tuesday whether it meets the recommendation"
+        )
+        s = await r.session_service.get_session(app_name="running_coach", user_id="web_runner", session_id=session.id)
+        return events, s
+
+    events, s = asyncio.run(scenario())
+    assert not [e.error_message for e in events if e.error_code or e.error_message]
+    # Only the initial get_schedule touched TrainingPeaks; fetch_nutrition_context was blocked before TP/weather I/O.
+    assert sorted(name for name, _ in runner.tp_calls) == ["tp_get_workouts", "tp_list_notes"]
+    nutr_resps = [
+        p.function_response.response
+        for e in events if e.content
+        for p in e.content.parts or []
+        if p.function_response and p.function_response.name == "fetch_nutrition_context"
+    ]
+    assert len(nutr_resps) == 1 and "fetch_nutrition_context was not run:" in nutr_resps[0]["result"]
+    # Step 2 kept full prefix cache (_tool_mode is None); Step 3 forced FunctionCallingConfigMode.NONE.
+    assert _tool_mode(llm.requests[1]) is None
+    assert _tool_mode(llm.requests[2]) == types.FunctionCallingConfigMode.NONE
+    final_texts = [
+        p.text for e in events if e.author == "coaching_agent" and e.content
+        for p in e.content.parts or [] if p.text and p.text.strip() and not p.thought
+    ]
+    assert final_texts[-1].startswith("Tuesday's 6x400m matches the pacing target")
+    assert FORCE_PROSE_STATE_KEY not in s.state
+
+
+def test_quick_action_call_ids_survive_gemini_request_copy_and_compaction_is_token_thresholded(runner, monkeypatch):
+    from running_coach.coach.coaching.quick_actions import quick_action_calls
+
+    cfg = app.events_compaction_config
+    assert cfg.token_threshold == 20_000 and cfg.event_retention_size == 6
+    assert cfg.compaction_interval is None
+
+    parts = quick_action_calls({"skill": "workout-creator", "args": {"staged_id": "s-123"}})
+    assert len(parts) == 1
+    cid = parts[0].function_call.id
+    assert cid and cid.startswith("qa_") and not cid.startswith("adk-")
+
+    # End-to-end: stage -> button Update TrainingPeaks -> next chat turn sees compacted applied staging.
+    llm = RecordingLlm(model="gemini-4-argon")
+    llm.requests = []
+    monkeypatch.setattr(coaching_agent, "model", llm)
+
+    async def scenario():
+        from running_coach.features.workout_creator.stage_workout_changes_tool import stage_workout_changes
+
+        r = InMemoryRunner(app=app)
+        session = await r.session_service.create_session(app_name="running_coach", user_id="web_runner")
+        ctx = runner.ctx()
+        staged_raw = await stage_workout_changes(ctx, ["2026-11-03: T 4x2k @4:20 r2'"], message="Smooth Tue threshold.")
+        staged_payload = ctx.state["staged_workout_changes"]
+        session = await r.session_service.create_session(
+            app_name="running_coach", user_id="web_runner", state={"staged_workout_changes": staged_payload}
+        )
+        await _turn(r, session.id, "Update TrainingPeaks",
+                    {"skill": "workout-creator", "args": {"staged_id": staged_payload["staged_id"]}})
+        await _turn(r, session.id, "What should my easy pace be tomorrow?")
+        return staged_raw, llm.requests[-1]
+
+    _, follow_req = asyncio.run(scenario())
+    apply_calls = [
+        p.function_call for c in follow_req.contents for p in c.parts or []
+        if p.function_call and p.function_call.name == "apply_staged_changes"
+    ]
+    assert len(apply_calls) == 1 and apply_calls[0].id and apply_calls[0].id.startswith("qa_")
+
+
 
 
 

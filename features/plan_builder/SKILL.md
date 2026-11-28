@@ -55,8 +55,8 @@ Lengths: km (`10`, `1k`, `1.5k`), miles (`10mi`), metres (`400m` or bare `>= 50`
 | `M 3x5k r1k` / `M 12k` | Marathon-pace work |
 | `P 4x2k@HM r2'` / `P 8k@10K` | Race-pace work (`@5K`, `@10K`, `@HM`, `@M` required) |
 | `H 8x60" r90"` | Hill reps |
-| `RACE` / `RACE 16k @HM [Name]` | Goal race on that day (`RACE`), or tune-up race at exact distance & effort (no auto WU/CD) |
-| `EVENT 16k @M [Name]` | Organized event at controlled pace (`@M`, `@T`, `@E`; exact distance, no auto WU/CD) |
+| `RACE` / `RACE 16k @HM [Name]` | Goal race on that day (`RACE`), or tune-up race at exact distance & effort (`@HM`, `@10K`, `@4:35`, etc.; no auto WU/CD) |
+| `EVENT 16k @M [Name]` | Organized event at controlled pace (`@M`, `@T`, `@E`, `@4:35`; exact distance, no auto WU/CD) |
 | `B 60' Z2` / `B 45' Z1` / `B 60' Z3` | Steady ride (% FTP) |
 | `B 4x8' @SS r4'` / `B 3x10' @T r5'` / `B 5x4' @VO2 r4'` | Ride intervals |
 | `S 45' heavy-lower` | Strength (`heavy-lower`, `full`, `core-hips`, `plyo`, `mobility`) |

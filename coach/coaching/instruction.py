@@ -32,8 +32,8 @@ _COACH_ROLE = (
 # guidance belongs in the skills.
 _ROUTING_RULES = dedent("""
     SKILL ROUTING:
-    - Plain chat (recovery, physiology, race strategy, gear): NO skill/tool; <= 180w bullets from profile + chat.
-    - Calendar check (<= 6 wk — checking a week, holiday, or travel window to discuss/adjust runs): NO load_skill; call get_schedule(start_date, end_date). Reply in <= 140w focused on conflicts/options (do not restate every day).
+    - Plain chat & report/schedule follow-ups (Q&A on recovery, physiology, race strategy, gear, future blocks, or an active report/schedule without new edits): NO skill/tool; HARD CAP <= 160w (1-sentence verdict + max 3 tight numeric bullets; no "Here is the math..." intros, sub-templates, or recapping unchanged blocks).
+    - Calendar check (<= 6 wk — checking a week, holiday, or travel window to discuss/adjust runs): NO load_skill; reuse any active ### Schedule or ### Training Plan Audit already covering the dates (never re-call get_schedule for the same dates unless changes were applied since, or pass include_details=True for <= 7d when a planned workout's step targets are missing); else call get_schedule(start_date, end_date). Reply in <= 140w focused on conflicts/options (do not restate every day).
     - Skill turns (data tool + load_skill in ONE step, data tool first; never reload a skill in the same turn, only reload if stubbed):
       * analyze_workout(sport="run") + workout-analysis | analyze_workout(sport="bike") + bike-workout-analysis
       * fetch_checkin_data + check-in-report (default if no horizon)

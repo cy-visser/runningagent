@@ -58,19 +58,27 @@ REPLACED_PLAN_STUB = "[replaced by a later staged plan below]"
 REPLACED_PLAN_RESULT = {"result": "[replaced: the current staged plan is further below]"}
 APPLIED_PLAN_STUB = "[applied plan: {weeks} weeks, {sessions} sessions, see the apply summary]"
 APPLIED_PLAN_CONTEXT_STUB = "[plan context settled: see the applied training plan summary below]"
+STALE_GUARD_STUB = "[{tool} skipped earlier]"
+MAX_SUMMARY_OUTPUT_TOKENS = 450
+# Matches `SYNTHETIC_THOUGHT_SIGNATURE` in `coach/coaching/quick_actions.py` (identifies pre-dispatched calls).
+_SYNTHETIC_THOUGHT_SIG = b"skip_thought_signature_validator"
 
 _REPORT_BLOCK_RE = re.compile(r'\n*<report tool="(?P<tool>[^"]+)"[^>]*>.*?</report>', re.DOTALL)
+_NOT_RUN_RE = re.compile(r"^\w+\s+was\s+not\s+run:", re.IGNORECASE)
+_SCHEDULE_HEADER_RE = re.compile(r"^### Schedule \((\d{4}-\d{2}-\d{2})\s*[–-]\s*(\d{4}-\d{2}-\d{2})\)")
 REPORT_MEMORY_HEADER = (
     "REPORT MEMORY: the latest report output from this part of the conversation, verbatim. Use it to "
     "answer follow-ups (planned sessions carry their [workout_id])."
 )
 
 COACH_SUMMARY_PROMPT = (
-    "The following is a conversation between a runner and their AI running coach. It may start from "
-    "an earlier summary. Write a concise summary that keeps: the runner's requests, preferences and "
-    "constraints; the coach's recommendations and the decisions taken, with their dates; workout and "
-    "calendar changes that were staged or applied in TrainingPeaks; and open questions. Report data "
-    "and skill instructions are kept separately: do not restate report numbers or calendars.\n\n"
+    "Summarize this runner-coach conversation in <= 160 words using compact bullets. Preserve: "
+    "(1) runner requests, preferences, constraints, and dates; "
+    "(2) coach recommendations and agreed decisions; "
+    "(3) TrainingPeaks changes strictly separated into APPLIED (confirmed by apply_staged_changes / "
+    "apply_training_plan) vs STAGED/PROPOSED (never mark staged or discussed ideas as applied); "
+    "(4) open questions. Report data and skill instructions are stored separately: do not restate "
+    "report numbers or calendars.\n\n"
     "{conversation_history}"
 )
 
@@ -87,7 +95,13 @@ def result_text(response: types.FunctionResponse) -> str:
 
 
 def _is_usable(text: str) -> bool:
-    return bool(text.strip()) and not text.lstrip().startswith("Error")
+    stripped = text.lstrip()
+    return bool(stripped) and not stripped.startswith("Error") and not _NOT_RUN_RE.match(stripped)
+
+
+def _schedule_window(text: str) -> Optional[tuple[str, str]]:
+    m = _SCHEDULE_HEADER_RE.match(text.lstrip())
+    return (m.group(1), m.group(2)) if m else None
 
 
 def _args_label(args: Optional[dict]) -> str:
@@ -133,40 +147,136 @@ def latest_report_blocks(events: list[Event]) -> list[str]:
 # ------------------------------------------------------------------------------
 
 def _placeholder(response: types.FunctionResponse) -> Optional[str]:
-    if response.name in REPORT_LABELS:
+    if response.name in REPORT_LABELS or response.name == PLAN_CONTEXT:
         return "[report output kept verbatim in the report memory]"
     if response.name == LOAD_SKILL:
         return "[skill instructions omitted]"
     return None
 
 
-def _without_bulky_responses(event: Event) -> Event:
-    """The event with report output and skill instructions replaced by short placeholders."""
-    if not event.content or not event.content.parts:
-        return event
-    parts, changed = [], False
-    for part in event.content.parts:
-        note = _placeholder(part.function_response) if part.function_response else None
-        if note:
-            response = part.function_response.model_copy(update={"response": {"result": note}})
-            part = part.model_copy(update={"function_response": response})
-            changed = True
-        parts.append(part)
-    if not changed:
-        return event
-    return event.model_copy(update={"content": event.content.model_copy(update={"parts": parts})})
+def _is_mid_plan_apply(events: list[Event]) -> bool:
+    """True when the compaction slice ends on an incomplete per-week `apply_training_plan` event."""
+    for event in reversed(events):
+        if not event.content or not event.content.parts:
+            continue
+        for part in reversed(event.content.parts):
+            response = part.function_response
+            if not response:
+                continue
+            if response.name != PLAN_APPLY:
+                return False
+            state = _result_json(response).get("applied_training_plan")
+            return isinstance(state, dict) and state.get("done") is False
+    return False
+
+
+def _prepare_events_for_summary(events: list[Event]) -> list[Event]:
+    """Strips thoughts, skill loads, superseded stagings, and raw apply JSON before LLM summarization."""
+    indexed = [(idx, e) for idx, e in enumerate(events) if e.content and e.content.parts and not (
+        e.actions and e.actions.compaction
+    )]
+    if not indexed:
+        return events
+    contents = [e.content for _, e in indexed]
+    keys = _call_response_keys(contents)
+    replaced, applied = staging_status(contents, keys)
+    replaced = replaced | superseded_failed_stagings(contents, keys, turn_start=len(contents))
+    plans = plan_status(contents, keys, turn_start=len(contents))
+
+    compacted_by_idx: dict[int, Optional[Event]] = {}
+    for ci, (ev_idx, event) in enumerate(indexed):
+        parts: list[types.Part] = []
+        changed = False
+        for pi, part in enumerate(event.content.parts or []):
+            if getattr(part, "thought", False):
+                changed = True
+                continue
+            call, response = part.function_call, part.function_response
+            key = keys.get((ci, pi))
+            if (call and call.name == LOAD_SKILL) or (response and response.name == LOAD_SKILL):
+                changed = True
+                continue
+            if response and _NOT_RUN_RE.match(result_text(response).lstrip()):
+                changed = True
+                continue
+            if _is_collapsed_apply(part, key, plans):
+                changed = True
+                continue
+            if (call and call.name == STAGE and key in replaced) or (
+                response and response.name == STAGE and key in replaced
+            ):
+                changed = True
+                continue
+            if response and response.name == STAGE and key in applied:
+                changed = True  # `apply_staged_changes` carries the compact applied summary right below
+                continue
+            if call and call.name == PLAN_STAGE and key in plans["replaced"]:
+                changed = True
+                continue
+            if response and response.name == PLAN_STAGE and key in plans["replaced"]:
+                changed = True
+                continue
+            note = _placeholder(response) if response else None
+            if note:
+                part = part.model_copy(
+                    update={"function_response": response.model_copy(update={"response": {"result": note}})}
+                )
+                changed = True
+            else:
+                new_part = (
+                    _compact_plan(part, key, plans, ci)
+                    or _compact_applied(part, key, applied)
+                )
+                if new_part is not None and new_part is not part:
+                    part = new_part
+                    changed = True
+            if not (part.text or part.function_call or part.function_response or part.inline_data or part.file_data):
+                changed = True
+                continue
+            parts.append(part)
+        if not parts:
+            compacted_by_idx[ev_idx] = None
+        elif changed:
+            compacted_by_idx[ev_idx] = event.model_copy(
+                update={"content": event.content.model_copy(update={"parts": parts})}
+            )
+        else:
+            compacted_by_idx[ev_idx] = event
+
+    out: list[Event] = []
+    for idx, event in enumerate(events):
+        if idx not in compacted_by_idx:
+            out.append(event)
+        elif compacted_by_idx[idx] is not None:
+            out.append(compacted_by_idx[idx])
+    return out
+
+
+class _CappedSummarizerLlm:
+    """Wraps a summarizer LLM to enforce `MAX_SUMMARY_OUTPUT_TOKENS` on every compaction call."""
+
+    def __init__(self, inner: BaseLlm):
+        self._inner = inner
+        self.model = getattr(inner, "model", "")
+
+    def generate_content_async(self, llm_request: LlmRequest, stream: bool = False):
+        cfg = llm_request.config or types.GenerateContentConfig()
+        llm_request.config = cfg.model_copy(update={"max_output_tokens": MAX_SUMMARY_OUTPUT_TOKENS})
+        return self._inner.generate_content_async(llm_request, stream=stream)
 
 
 class ReportMemorySummarizer(LlmEventSummarizer):
     """LLM summary of the conversation plus the latest report output, verbatim."""
 
     def __init__(self, llm: BaseLlm, prompt_template: Optional[str] = None):
-        super().__init__(llm=llm, prompt_template=prompt_template or COACH_SUMMARY_PROMPT)
+        super().__init__(llm=_CappedSummarizerLlm(llm), prompt_template=prompt_template or COACH_SUMMARY_PROMPT)
 
     def _format_events_for_prompt(self, events: list[Event]) -> str:
-        return super()._format_events_for_prompt([_without_bulky_responses(e) for e in events])
+        return super()._format_events_for_prompt(_prepare_events_for_summary(events))
 
     async def maybe_summarize_events(self, *, events: list[Event]) -> Optional[Event]:
+        if _is_mid_plan_apply(events):
+            return None
         compacted = await super().maybe_summarize_events(events=events)
         blocks = latest_report_blocks(events)
         if compacted is None or not blocks:
@@ -181,10 +291,37 @@ class ReportMemorySummarizer(LlmEventSummarizer):
 # Per request: only the latest report output and skill instructions
 # ------------------------------------------------------------------------------
 
-def _skill_name(part: types.Part, call_skills: dict[str, str]) -> Optional[str]:
+def _call_response_keys(contents: list[types.Content]) -> dict[tuple[int, int], str]:
+    """Maps `(ci, pi)` to a stable correlation key, pairing `id=None` calls/responses positionally.
+
+    Gemini's `_copy_content_for_request` strips `adk-*` client IDs to `None`; pairing by tool name in
+    FIFO order keeps button-dispatched `apply_staged_changes` and `apply_training_plan` turns linked.
+    """
+    keys: dict[tuple[int, int], str] = {}
+    pending_by_name: dict[str, list[str]] = {}
+    for ci, content in enumerate(contents):
+        for pi, part in enumerate(content.parts or []):
+            call, response = part.function_call, part.function_response
+            if call:
+                if call.id:
+                    keys[(ci, pi)] = call.id
+                else:
+                    syn = f"@pos:{ci}:{pi}"
+                    keys[(ci, pi)] = syn
+                    pending_by_name.setdefault(call.name or "", []).append(syn)
+            elif response:
+                if response.id:
+                    keys[(ci, pi)] = response.id
+                else:
+                    queue = pending_by_name.get(response.name or "")
+                    keys[(ci, pi)] = queue.pop(0) if queue else f"@resp:{ci}:{pi}"
+    return keys
+
+
+def _skill_name(part: types.Part, key: Optional[str], call_skills: dict[str, str]) -> Optional[str]:
     response = part.function_response
     payload = response.response if isinstance(response.response, dict) else {}
-    return payload.get("skill_name") or call_skills.get(response.id or "")
+    return payload.get("skill_name") or call_skills.get(key or response.id or "")
 
 
 def _result_json(response: types.FunctionResponse) -> dict:
@@ -195,20 +332,25 @@ def _result_json(response: types.FunctionResponse) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def staging_status(contents: list[types.Content]) -> tuple[set[str], set[str]]:
-    """Call ids of staged sets (replaced by a later staging, applied by a later apply)."""
+def staging_status(
+    contents: list[types.Content],
+    keys: Optional[dict[tuple[int, int], str]] = None,
+) -> tuple[set[str], set[str]]:
+    """Keys of staged sets (replaced by a later staging, applied by a later apply)."""
+    keys = keys if keys is not None else _call_response_keys(contents)
     replaced: set[str] = set()
     applied: set[str] = set()
     pending: Optional[str] = None
-    for content in contents:
-        for part in content.parts or []:
+    for ci, content in enumerate(contents):
+        for pi, part in enumerate(content.parts or []):
             response = part.function_response
-            if not response or not response.id:
+            if not response:
                 continue
-            if response.name == STAGE and (_result_json(response).get("staged") or 0) > 0:
+            key = keys.get((ci, pi))
+            if response.name == STAGE and key and (_result_json(response).get("staged") or 0) > 0:
                 if pending:
                     replaced.add(pending)
-                pending = response.id
+                pending = key
             elif response.name == APPLY and "results" in _result_json(response):
                 if pending:
                     applied.add(pending)
@@ -216,14 +358,21 @@ def staging_status(contents: list[types.Content]) -> tuple[set[str], set[str]]:
     return replaced, applied
 
 
-def superseded_failed_stagings(contents: list[types.Content]) -> set[str]:
-    """Call ids of failed `stage_workout_changes` (`staged: 0`) superseded by a later staging attempt."""
+def superseded_failed_stagings(
+    contents: list[types.Content],
+    keys: Optional[dict[tuple[int, int], str]] = None,
+    *,
+    turn_start: Optional[int] = None,
+) -> set[str]:
+    """Keys of failed `stage_workout_changes` (`staged: 0`) superseded by a later staging or from an earlier turn."""
+    keys = keys if keys is not None else _call_response_keys(contents)
     superseded: set[str] = set()
     failed_pending: set[str] = set()
-    for content in contents:
-        for part in content.parts or []:
+    for ci, content in enumerate(contents):
+        for pi, part in enumerate(content.parts or []):
             response = part.function_response
-            if not response or not response.id or response.name != STAGE:
+            key = keys.get((ci, pi))
+            if not response or not key or response.name != STAGE:
                 continue
             result = _result_json(response)
             if (result.get("staged") or 0) > 0:
@@ -232,63 +381,116 @@ def superseded_failed_stagings(contents: list[types.Content]) -> set[str]:
             elif result.get("staged") == 0:
                 superseded.update(failed_pending)
                 failed_pending.clear()
-                failed_pending.add(response.id)
+                if turn_start is not None and ci < turn_start:
+                    superseded.add(key)
+                else:
+                    failed_pending.add(key)
     return superseded
 
 
-def _last_runner_message(contents: list[types.Content]) -> int:
-    """Index of the latest runner message (a user content that is not only tool responses)."""
-    return max(
-        (i for i, c in enumerate(contents)
-         if c.role == "user" and any(not p.function_response for p in c.parts or [])),
-        default=0,
+def _is_runner_turn_message(content: types.Content) -> bool:
+    return content.role == "user" and any(
+        (p.text and p.text.strip()) or p.inline_data or p.file_data
+        for p in content.parts or []
+        if not p.function_response
     )
 
 
-def keep_latest_reports_and_skills(
-    callback_context: CallbackContext, llm_request: LlmRequest
-) -> Optional[LlmResponse]:
-    """before_model_callback: one copy of each report's latest output and each skill's instructions."""
-    contents = llm_request.contents or []
+def _last_runner_message(contents: list[types.Content]) -> int:
+    """Index of the latest runner message (a user content with non-empty runner input)."""
+    return max((i for i, c in enumerate(contents) if _is_runner_turn_message(c)), default=0)
+
+
+def _has_active_llm_routing_step(contents: list[types.Content], turn_start: int) -> bool:
+    """True on Step 2+ of an LLM-routed turn (Call 1 already ran and warmed `contents[:turn_start + 1]`).
+
+    Pre-dispatched turns stamp `_SYNTHETIC_THOUGHT_SIG` on `contents[turn_start + 1]` and pure-code apply
+    actions (`apply_staged_changes`, `apply_training_plan`) never make a routing LLM call.
+    """
+    if not (0 <= turn_start < len(contents) - 1) or not _is_runner_turn_message(contents[turn_start]):
+        return False
+    first_step = contents[turn_start + 1]
+    parts = first_step.parts or []
+    call_names = [p.function_call.name for p in parts if p.function_call]
+    if first_step.role != "model" or not call_names or any(n in (APPLY, PLAN_APPLY) for n in call_names):
+        return False
+    return not any(getattr(p, "thought_signature", None) == _SYNTHETIC_THOUGHT_SIG for p in parts)
+
+
+def _compact_slice(contents: list[types.Content], *, turn_start: int) -> list[types.Content]:
+    """Compacts a contiguous `contents` slice while keeping the latest report/skill/staging in that slice."""
+    keys = _call_response_keys(contents)
     call_skills = {
-        p.function_call.id: (p.function_call.args or {}).get("skill_name")
-        for c in contents for p in c.parts or []
-        if p.function_call and p.function_call.name == LOAD_SKILL and p.function_call.id
+        keys[(ci, pi)]: (p.function_call.args or {}).get("skill_name")
+        for ci, c in enumerate(contents)
+        for pi, p in enumerate(c.parts or [])
+        if p.function_call and p.function_call.name == LOAD_SKILL and (ci, pi) in keys
+    }
+    schedule_detail_calls = {
+        keys[(ci, pi)]
+        for ci, c in enumerate(contents)
+        for pi, p in enumerate(c.parts or [])
+        if p.function_call
+        and p.function_call.name == "get_schedule"
+        and (ci, pi) in keys
+        and bool((p.function_call.args or {}).get("include_details"))
     }
 
     # Pass 1: the position of the latest copy of each report / skill / plan context (later = newer).
+    # When a narrow `get_schedule(include_details=True)` inspects days strictly inside an earlier unapplied
+    # `get_schedule`, keep that enclosing week schedule verbatim too so the rest of the week is not lost.
     latest: dict[tuple[str, str], tuple[int, int, int]] = {}
+    schedules_since_apply: list[tuple[int, int, tuple[str, str], bool]] = []
     for ci, content in enumerate(contents):
         for pi, part in enumerate(content.parts or []):
             response = part.function_response
+            key = keys.get((ci, pi), "")
+            if response and response.name in (APPLY, PLAN_APPLY):
+                schedules_since_apply.clear()
             if response and response.name in REPORT_LABELS and _is_usable(result_text(response)):
                 latest[("report", response.name)] = (ci, pi, 0)
+                if response.name == "get_schedule":
+                    win = _schedule_window(result_text(response))
+                    if win:
+                        schedules_since_apply.append((ci, pi, win, key in schedule_detail_calls))
             elif response and response.name == PLAN_CONTEXT and _is_usable(result_text(response)):
                 latest[("context", PLAN_CONTEXT)] = (ci, pi, 0)
-            elif response and response.name == LOAD_SKILL and _skill_name(part, call_skills):
-                latest[("skill", _skill_name(part, call_skills))] = (ci, pi, 0)
+            elif response and response.name == LOAD_SKILL and _skill_name(part, key, call_skills):
+                latest[("skill", _skill_name(part, key, call_skills))] = (ci, pi, 0)
             elif part.text and not part.thought:
                 for m in _REPORT_BLOCK_RE.finditer(part.text):
                     latest[("report", m.group("tool"))] = (ci, pi, m.start() + 1)
+                    if m.group("tool") == "get_schedule":
+                        schedules_since_apply.clear()
+
+    kept_enclosing_schedules: set[tuple[int, int]] = set()
+    if len(schedules_since_apply) >= 2 and schedules_since_apply[-1][3]:
+        last_ci, last_pi, last_win, _ = schedules_since_apply[-1]
+        if latest.get(("report", "get_schedule")) == (last_ci, last_pi, 0):
+            for prev_ci, prev_pi, prev_win, _ in reversed(schedules_since_apply[:-1]):
+                if prev_win[0] <= last_win[0] and last_win[1] <= prev_win[1] and prev_win != last_win:
+                    kept_enclosing_schedules.add((prev_ci, prev_pi))
+                    break
 
     # Pass 2: drop or point away from every older copy; compact what the app already settled.
-    replaced, applied = staging_status(contents)
-    replaced = replaced | superseded_failed_stagings(contents)
-    plans = plan_status(contents)
-    turn_start = _last_runner_message(contents)
+    replaced, applied = staging_status(contents, keys)
+    replaced = replaced | superseded_failed_stagings(contents, keys, turn_start=turn_start)
+    plans = plan_status(contents, keys, turn_start=turn_start)
     out: list[types.Content] = []
     for ci, content in enumerate(contents):
         parts, changed = [], False
         for pi, part in enumerate(content.parts or []):
-            if _is_collapsed_apply(part, plans):
+            key = keys.get((ci, pi))
+            if _is_collapsed_apply(part, key, plans):
                 changed = True  # an earlier week of a plan apply: the latest one carries the summary
                 continue
             new = (
-                _compact_plan(part, plans, ci)
-                or _without_replaced_staging(part, replaced)
-                or _compact_applied(part, applied)
-                or _stale_skill_stub(part, ci, turn_start, call_skills)
-                or _keep_latest_in_part(part, ci, pi, latest, call_skills)
+                _compact_plan(part, key, plans, ci)
+                or _without_replaced_staging(part, key, replaced)
+                or _compact_applied(part, key, applied)
+                or _stale_skill_stub(part, ci, turn_start, key, call_skills)
+                or _stale_guard_stub(part, ci, turn_start)
+                or _keep_latest_in_part(part, ci, pi, latest, key, call_skills, kept_enclosing_schedules)
             )
             changed = changed or new is not part
             if new is not None:
@@ -298,7 +500,26 @@ def keep_latest_reports_and_skills(
         if changed:
             content = content.model_copy(update={"parts": parts})
         out.append(content)
-    llm_request.contents = out
+    return out
+
+
+def keep_latest_reports_and_skills(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> Optional[LlmResponse]:
+    """before_model_callback: one copy of each report's latest output and each skill's instructions.
+
+    On Step 2+ of an LLM-routed turn, locks `contents[:turn_start + 1]` to the exact byte-for-byte slice
+    Call 1 just sent so a new tool response never invalidates Call 1's warm KV prefix mid-turn; older
+    superseded reports are then stubbed cleanly on the next turn.
+    """
+    contents = llm_request.contents or []
+    turn_start = _last_runner_message(contents)
+    if _has_active_llm_routing_step(contents, turn_start):
+        prefix = _compact_slice(contents[: turn_start + 1], turn_start=turn_start)
+        tail = _compact_slice(contents[turn_start + 1 :], turn_start=0)
+        llm_request.contents = [*prefix, *tail]
+    else:
+        llm_request.contents = _compact_slice(contents, turn_start=turn_start)
     return None  # never short-circuits the model call
 
 
@@ -306,45 +527,53 @@ def keep_latest_reports_and_skills(
 # Training plans: applied spec stubbed, per-week apply events collapsed
 # ------------------------------------------------------------------------------
 
-def plan_status(contents: list[types.Content]) -> dict:
-    """Applied/replaced plans in the request: {"stubs": {stage call id: stub}, "replaced": set[str],
-    "drop": apply call ids of earlier weeks, "summaries": {latest apply call id per plan: summary line},
+def plan_status(
+    contents: list[types.Content],
+    keys: Optional[dict[tuple[int, int], str]] = None,
+    *,
+    turn_start: Optional[int] = None,
+) -> dict:
+    """Applied/replaced plans in the request: {"stubs": {stage key: stub}, "replaced": set[str],
+    "drop": apply keys of earlier weeks, "summaries": {latest apply key per plan: summary line},
     "last_apply_ci": int}."""
-    calls: dict[str, list[str]] = {}       # staged_id -> apply call ids, in order
-    call_plan: dict[str, str] = {}         # apply call id -> staged_id
-    responses: dict[str, dict] = {}        # apply call id -> result JSON
-    stages: dict[str, tuple[str, dict]] = {}  # stage call id -> (staged_id, result JSON)
+    keys = keys if keys is not None else _call_response_keys(contents)
+    calls: dict[str, list[str]] = {}       # staged_id -> apply keys, in order
+    responses: dict[str, dict] = {}        # apply key -> result JSON
+    stages: dict[str, tuple[str, dict]] = {}  # stage key -> (staged_id, result JSON)
     replaced: set[str] = set()
     failed_pending: set[str] = set()
     pending_cid: Optional[str] = None
     pending_sid: Optional[str] = None
     last_apply_ci = -1
     for ci, content in enumerate(contents):
-        for part in content.parts or []:
+        for pi, part in enumerate(content.parts or []):
             call, response = part.function_call, part.function_response
-            if call and call.name == PLAN_APPLY and call.id:
+            key = keys.get((ci, pi))
+            if call and call.name == PLAN_APPLY and key:
                 staged_id = str((call.args or {}).get("staged_id") or "")
-                calls.setdefault(staged_id, []).append(call.id)
-                call_plan[call.id] = staged_id
+                calls.setdefault(staged_id, []).append(key)
                 if pending_sid == staged_id:
                     pending_cid = None
                     pending_sid = None
-            elif response and response.id and response.name == PLAN_APPLY:
-                responses[response.id] = _result_json(response)
+            elif response and key and response.name == PLAN_APPLY:
+                responses[key] = _result_json(response)
                 last_apply_ci = ci
-            elif response and response.id and response.name == PLAN_STAGE:
+            elif response and key and response.name == PLAN_STAGE:
                 result = _result_json(response)
                 if result.get("staged_id"):
                     sid = result["staged_id"]
-                    stages[response.id] = (sid, result)
+                    stages[key] = (sid, result)
                     replaced.update(failed_pending)
                     failed_pending.clear()
                     if pending_cid and pending_sid not in calls:
                         replaced.add(pending_cid)
-                    pending_cid = response.id
+                    pending_cid = key
                     pending_sid = sid
                 elif result.get("staged") == 0:
-                    failed_pending.add(response.id)
+                    if turn_start is not None and ci < turn_start:
+                        replaced.add(key)
+                    else:
+                        failed_pending.add(key)
     stubs = {cid: APPLIED_PLAN_STUB.format(weeks=r.get("total_weeks", "?"), sessions=r.get("sessions", "?"))
              for cid, (sid, r) in stages.items() if sid in calls}
     for cid in replaced:
@@ -379,26 +608,26 @@ def applied_plan_summary(staged_id: str, result: dict) -> str:
     return line
 
 
-def _is_collapsed_apply(part: types.Part, plans: dict) -> bool:
+def _is_collapsed_apply(part: types.Part, key: Optional[str], plans: dict) -> bool:
     call, response = part.function_call, part.function_response
-    return bool((call and call.name == PLAN_APPLY and call.id in plans["drop"])
-                or (response and response.name == PLAN_APPLY and response.id in plans["drop"]))
+    return bool((call and call.name == PLAN_APPLY and key in plans["drop"])
+                or (response and response.name == PLAN_APPLY and key in plans["drop"]))
 
 
-def _compact_plan(part: types.Part, plans: dict, ci: int = 0) -> Optional[types.Part]:
+def _compact_plan(part: types.Part, key: Optional[str], plans: dict, ci: int = 0) -> Optional[types.Part]:
     """Applied or replaced plan stage calls / contexts as stubs and the latest apply response as one line."""
     call, response = part.function_call, part.function_response
-    if call and call.name == PLAN_STAGE and call.id in plans["stubs"]:
-        args = {"plan": plans["stubs"][call.id]}
-        if call.id not in plans["replaced"] and (call.args or {}).get("message"):
+    if call and call.name == PLAN_STAGE and key in plans["stubs"]:
+        args = {"plan": plans["stubs"][key]}
+        if key not in plans["replaced"] and (call.args or {}).get("message"):
             args["message"] = call.args["message"]
         return part.model_copy(update={"function_call": call.model_copy(update={"args": args})})
-    if response and response.name == PLAN_STAGE and response.id in plans["replaced"]:
+    if response and response.name == PLAN_STAGE and key in plans["replaced"]:
         return part.model_copy(
             update={"function_response": response.model_copy(update={"response": REPLACED_PLAN_RESULT})}
         )
-    if response and response.name == PLAN_APPLY and response.id in plans["summaries"]:
-        compact = {"result": plans["summaries"][response.id]}
+    if response and response.name == PLAN_APPLY and key in plans["summaries"]:
+        compact = {"result": plans["summaries"][key]}
         return part.model_copy(update={"function_response": response.model_copy(update={"response": compact})})
     if response and response.name == PLAN_CONTEXT and ci < plans.get("last_apply_ci", -1):
         compact = {"result": APPLIED_PLAN_CONTEXT_STUB}
@@ -406,12 +635,12 @@ def _compact_plan(part: types.Part, plans: dict, ci: int = 0) -> Optional[types.
     return None
 
 
-def _without_replaced_staging(part: types.Part, replaced: set[str]) -> Optional[types.Part]:
+def _without_replaced_staging(part: types.Part, key: Optional[str], replaced: set[str]) -> Optional[types.Part]:
     """The stubbed call / response of a replaced staged set (None when the part is not one)."""
     call, response = part.function_call, part.function_response
-    if call and call.name == STAGE and call.id in replaced:
+    if call and call.name == STAGE and key in replaced:
         return part.model_copy(update={"function_call": call.model_copy(update={"args": REPLACED_STAGE_ARGS})})
-    if response and response.name == STAGE and response.id in replaced:
+    if response and response.name == STAGE and key in replaced:
         return part.model_copy(update={"function_response": response.model_copy(update={"response": REPLACED_STAGE_RESULT})})
     return None
 
@@ -446,7 +675,7 @@ def applied_summary(response: types.FunctionResponse) -> str:
 
     items = []
     for r in results:
-        what = r.get("kind") if r.get("kind") == "note" else r.get("sport") or "workout"
+        what = r.get("kind") if r.get("kind") in ("note", "event") else r.get("sport") or "workout"
         item = f'{r.get("action") or "change"} {str(r.get("date") or "")[:10]} {what} "{r.get("title") or ""}"'
         if r.get("id"):
             item += f' [{r["id"]}]'
@@ -456,24 +685,24 @@ def applied_summary(response: types.FunctionResponse) -> str:
     return f"Applied {len(ok_items)}/{len(results)} (the app confirmed this to the runner): " + "; ".join(items)
 
 
-def _compact_applied(part: types.Part, applied: set[str]) -> Optional[types.Part]:
+def _compact_applied(part: types.Part, key: Optional[str], applied: set[str]) -> Optional[types.Part]:
     """An apply result as one compact line, and the staged set it applied as a stub (keeping the message)."""
     call, response = part.function_call, part.function_response
     if response and response.name == APPLY and "results" in _result_json(response):
         compact = {"result": applied_summary(response)}
         return part.model_copy(update={"function_response": response.model_copy(update={"response": compact})})
-    if call and call.name == STAGE and call.id in applied:
+    if call and call.name == STAGE and key in applied:
         args = {"changes": APPLIED_STAGE_CHANGES}
         if (call.args or {}).get("message"):
             args["message"] = call.args["message"]
         return part.model_copy(update={"function_call": call.model_copy(update={"args": args})})
-    if response and response.name == STAGE and response.id in applied:
+    if response and response.name == STAGE and key in applied:
         return part.model_copy(update={"function_response": response.model_copy(update={"response": APPLIED_STAGE_RESULT})})
     return None
 
 
 def _stale_skill_stub(
-    part: types.Part, ci: int, turn_start: int, call_skills: dict[str, str]
+    part: types.Part, ci: int, turn_start: int, key: Optional[str], call_skills: dict[str, str]
 ) -> Optional[types.Part]:
     """Stubs all completed-turn `load_skill` rubrics (`ci < turn_start`). `load_skill` sits after report data in
     the tool-response content, so stubbing it preserves prefix caching on `system_instruction + tools + report`
@@ -481,19 +710,40 @@ def _stale_skill_stub(
     response = part.function_response
     if not response or response.name != LOAD_SKILL or ci >= turn_start:
         return None
-    skill = _skill_name(part, call_skills)
+    skill = _skill_name(part, key, call_skills)
     if not skill:
         return None
     stub = {"skill_name": skill, "instructions": STALE_SKILL_STUB}
     return part.model_copy(update={"function_response": response.model_copy(update={"response": stub})})
 
 
+def _stale_guard_stub(part: types.Part, ci: int, turn_start: int) -> Optional[types.Part]:
+    """Stubs completed-turn `<tool> was not run:` guard responses while keeping active-turn guard guidance verbatim."""
+    response = part.function_response
+    if not response or ci >= turn_start:
+        return None
+    if not _NOT_RUN_RE.match(result_text(response).lstrip()):
+        return None
+    stub = {"result": STALE_GUARD_STUB.format(tool=response.name or "tool")}
+    return part.model_copy(update={"function_response": response.model_copy(update={"response": stub})})
+
+
 def _keep_latest_in_part(
-    part: types.Part, ci: int, pi: int, latest: dict, call_skills: dict[str, str]
+    part: types.Part,
+    ci: int,
+    pi: int,
+    latest: dict,
+    key: Optional[str],
+    call_skills: dict[str, str],
+    kept_enclosing_schedules: Optional[set[tuple[int, int]]] = None,
 ) -> Optional[types.Part]:
     response = part.function_response
     if response and response.name in REPORT_LABELS:
+        if not _is_usable(result_text(response)):
+            return part
         if latest.get(("report", response.name), (ci, pi, 0)) == (ci, pi, 0):
+            return part
+        if response.name == "get_schedule" and kept_enclosing_schedules and (ci, pi) in kept_enclosing_schedules:
             return part
         note = f"[superseded: the latest {REPORT_LABELS[response.name]} output is further below]"
         return part.model_copy(update={"function_response": response.model_copy(update={"response": {"result": note}})})
@@ -503,7 +753,7 @@ def _keep_latest_in_part(
         note = "[superseded: the latest plan context is further below]"
         return part.model_copy(update={"function_response": response.model_copy(update={"response": {"result": note}})})
     if response and response.name == LOAD_SKILL:
-        skill = _skill_name(part, call_skills)
+        skill = _skill_name(part, key, call_skills)
         if not skill or latest.get(("skill", skill), (ci, pi, 0)) == (ci, pi, 0):
             return part
         note = {"skill_name": skill, "instructions": "[same instructions as the later load_skill result below]"}

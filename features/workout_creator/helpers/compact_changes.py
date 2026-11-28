@@ -24,10 +24,14 @@ from ....shared.dates import iso_date, monday_of, parse_date
 from ....shared.session_codes.session_codes import code_sport
 
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_WEEKDAY_WORD_RE = (
+    r"(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)"
+)
 _KNOWN_SPORTS = {
     "run": "Run", "running": "Run",
-    "bike": "Bike", "cycling": "Bike",
-    "strength": "Strength", "str": "Strength", "gym": "Strength", "s&c": "Strength",
+    "bike": "Bike", "cycling": "Bike", "ride": "Bike", "biking": "Bike",
+    "strength": "Strength", "str": "Strength", "gym": "Strength", "s&c": "Strength", "sc": "Strength",
+    "conditioning": "Strength",
     "swim": "Swim", "walk": "Walk", "crosstrain": "Crosstrain", "other": "Other",
 }
 _WEEK_ANCHOR_RE = re.compile(r"^(?:w\d+\s+)?(?P<d>\d{4}-\d{2}-\d{2})$", re.IGNORECASE)
@@ -36,14 +40,19 @@ _DAY_SPEC_RE = re.compile(
     re.IGNORECASE,
 )
 _MOVE_LINE_RE = re.compile(
-    r"^(?P<from_d>\d{4}-\d{2}-\d{2})\s*(?:->|→)\s*(?P<to_d>\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?)"
+    r"^(?P<mv>move\s+)?(?P<from_d>\d{4}-\d{2}-\d{2})\s*(?P<sep>->|→|\bto\b)\s*"
+    r"(?P<to_d>\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?)"
     r"(?:\s*:\s*(?P<rhs>.*))?$",
     re.IGNORECASE,
 )
 _DATED_LINE_RE = re.compile(
-    r"^(?P<lhs>\d{4}-\d{2}-\d{2}[^|]*?)\s*:\s*(?P<rhs>.+)$"
+    rf"^(?P<lhs>(?:{_WEEKDAY_WORD_RE}\s+)?\d{{4}}-\d{{2}}-\d{{2}}[^|]*?)\s*:\s*(?P<rhs>.+)$",
+    re.IGNORECASE,
 )
-_DELETE_ID_RE = re.compile(r"^delete\s+(?:id=)?\[?(?P<wid>[A-Za-z0-9_-]+)\]?$", re.IGNORECASE)
+_DELETE_ID_RE = re.compile(
+    r"^(?:delete|remove|drop|clear)\s+(?:id=\[?(?P<wid1>[A-Za-z0-9_-]+)\]?|\[?(?P<wid2>[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*)\]?)$",
+    re.IGNORECASE,
+)
 _FLAG_CREATE_RE = re.compile(r"(?:^|\s)\+create\b", re.IGNORECASE)
 _FLAG_NOSTRIDES_RE = re.compile(r"(?:^|\s)(?:-strides|\bnostrides\b|\bno[-_]?strides\b)", re.IGNORECASE)
 MAX_EXPANDED_RANGE_DAYS = 31
@@ -58,12 +67,22 @@ def _strip_flags(text: str) -> tuple[str, bool, bool]:
     return " ".join(cleaned.split()), create, no_strides
 
 
+def _strip_weekday_affixes(token: str) -> str:
+    return re.sub(
+        rf"^(?:{_WEEKDAY_WORD_RE})\s+|\s*\((?:{_WEEKDAY_WORD_RE})\)$",
+        "",
+        token.strip(),
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def _expand_date_lhs(lhs: str) -> tuple[list[str], bool, bool] | None:
     cleaned, create, no_strides = _strip_flags(lhs)
     out: list[str] = []
-    for part in (p.strip() for p in cleaned.split(",") if p.strip()):
+    for raw_part in (p.strip() for p in cleaned.split(",") if p.strip()):
+        part = _strip_weekday_affixes(raw_part)
         if ".." in part:
-            s_raw, e_raw = (x.strip() for x in part.split("..", 1))
+            s_raw, e_raw = (_strip_weekday_affixes(x) for x in part.split("..", 1))
             s_day, e_day = parse_date(s_raw), parse_date(e_raw)
             if not s_day or not e_day or not (0 <= (e_day - s_day).days <= MAX_EXPANDED_RANGE_DAYS):
                 return None
@@ -93,20 +112,17 @@ def _expand_weekday_offsets(spec: str) -> list[int]:
     return list(dict.fromkeys(offsets))
 
 
-def _parse_rhs_for_date(date_str: str, rhs: str, *, base_create: bool = False, base_no_strides: bool = False) -> list[dict[str, Any]]:
-    raw = rhs.strip()
+def _parse_clause_for_date(
+    date_str: str,
+    clause: str,
+    *,
+    base_create: bool,
+    base_no_strides: bool,
+    seen_sports: set[str],
+) -> list[dict[str, Any]]:
+    raw = clause.strip()
     if not raw:
         return []
-
-    # Note creation: "note Title [| Description]"
-    note_m = re.match(r"^note\s+(?P<body>.+)$", raw, re.IGNORECASE)
-    if note_m:
-        body = note_m.group("body").strip()
-        title, _, desc = body.partition("|")
-        item: dict[str, Any] = {"kind": "note", "date_str": date_str[:10], "title": title.strip()}
-        if desc.strip():
-            item["description"] = desc.strip()
-        return [item]
 
     # Race event creation/update: "event A RunningRoad 21.1k Amsterdam HM | goal=1:35:00 place=10 pr=true"
     # Note: session-code "EVENT 16k @M Tilburg 10mi" carries "@<pace>" and no A/B/C priority -> stays a workout code.
@@ -143,11 +159,16 @@ def _parse_rhs_for_date(date_str: str, rhs: str, *, base_create: bool = False, b
             for part in (p.strip() for p in tail.split() if "=" in p):
                 k, _, v = part.partition("=")
                 kl = k.strip().lower()
-                vs = v.strip()
+                vs = v.strip().rstrip(",;")
+                if not vs:
+                    continue
+                is_unset = vs.lower() in ("none", "null", "n/a", "-")
                 if kl in ("goal", "goal_time", "time"):
-                    ev_item["goal_time"] = vs
+                    if not is_unset:
+                        ev_item["goal_time"] = vs
                 elif kl in ("place", "goal_place"):
-                    ev_item["goal_place"] = vs
+                    if not is_unset:
+                        ev_item["goal_place"] = vs
                 elif kl in ("pr", "goal_pr"):
                     ev_item["goal_pr"] = vs
                 elif kl in ("type", "event_type"):
@@ -162,8 +183,8 @@ def _parse_rhs_for_date(date_str: str, rhs: str, *, base_create: bool = False, b
                     ev_item["event_id"] = vs.strip("[]")
             return [ev_item]
 
-    # Delete item: "delete strength" | "delete note Title" | "delete event Title" | "delete id=w_1"
-    del_m = re.match(r"^delete(?:\s+(?P<body>.+))?$", raw, re.IGNORECASE)
+    # Delete item: "delete/remove/drop/clear strength" | "delete note Title" | "delete event Title" | "delete id=w_1"
+    del_m = re.match(r"^(?:delete|remove|drop|clear)(?:\s+(?P<body>.+))?$", raw, re.IGNORECASE)
     if del_m:
         body = (del_m.group("body") or "").strip()
         if not body:
@@ -183,21 +204,46 @@ def _parse_rhs_for_date(date_str: str, rhs: str, *, base_create: bool = False, b
             return [{"date_str": date_str[:10], "sport": _KNOWN_SPORTS[parts[0].lower()], "title": parts[1].strip(), "delete": True}]
         return [{"date_str": date_str[:10], "title": body, "delete": True}]
 
-    # One or more `;`-separated session codes on this date:
+    code_text, seg_create, seg_no_strides = _strip_flags(raw)
+    if not code_text:
+        return []
+    sport = (code_sport(code_text) or "Run").lower()
+    entry: dict[str, Any] = {"date_str": date_str, "code": code_text}
+    if base_create or seg_create or sport in seen_sports:
+        entry["create"] = True
+    if base_no_strides or seg_no_strides:
+        entry["strides"] = False
+    seen_sports.add(sport)
+    return [entry]
+
+
+def _parse_rhs_for_date(date_str: str, rhs: str, *, base_create: bool = False, base_no_strides: bool = False) -> list[dict[str, Any]]:
+    raw = rhs.strip()
+    if not raw:
+        return []
+
+    # Note creation stays unsplit so semicolons inside note descriptions remain intact.
+    note_m = re.match(r"^note\s+(?P<body>.+)$", raw, re.IGNORECASE)
+    if note_m:
+        body = note_m.group("body").strip()
+        title, _, desc = body.partition("|")
+        item: dict[str, Any] = {"kind": "note", "date_str": date_str[:10], "title": title.strip()}
+        if desc.strip():
+            item["description"] = desc.strip()
+        return [item]
+
     items: list[dict[str, Any]] = []
     seen_sports: set[str] = set()
     for seg in (s.strip() for s in raw.split(";") if s.strip()):
-        code_text, seg_create, seg_no_strides = _strip_flags(seg)
-        if not code_text:
-            continue
-        sport = (code_sport(code_text) or "Run").lower()
-        entry: dict[str, Any] = {"date_str": date_str, "code": code_text}
-        if base_create or seg_create or sport in seen_sports:
-            entry["create"] = True
-        if base_no_strides or seg_no_strides:
-            entry["strides"] = False
-        seen_sports.add(sport)
-        items.append(entry)
+        items.extend(
+            _parse_clause_for_date(
+                date_str,
+                seg,
+                base_create=base_create,
+                base_no_strides=base_no_strides,
+                seen_sports=seen_sports,
+            )
+        )
     return items
 
 
@@ -229,6 +275,14 @@ def _expand_week_line(line: str) -> list[dict[str, Any]] | None:
     return out if saw_day else None
 
 
+def _clean_entry_line(raw: str) -> str:
+    line = raw.strip()
+    line = re.sub(r"^(?:[-*•]|\d+[.)])\s+", "", line).strip()
+    while len(line) >= 2 and line[0] == line[-1] and line[0] in ("`", '"', "'"):
+        line = line[1:-1].strip()
+    return line
+
+
 def _expand_move_line(line: str) -> dict[str, Any] | None:
     mm = _MOVE_LINE_RE.match(line)
     if not mm:
@@ -239,6 +293,7 @@ def _expand_move_line(line: str) -> dict[str, Any] | None:
     if len(to_d) == 16:
         to_d = f"{to_d}:00"
     rhs = (mm.group("rhs") or "").strip()
+    is_word_to = mm.group("sep").lower() == "to" and not mm.group("mv")
     if not rhs:
         return {"from_date_str": from_d, "date_str": to_d, "sport": "Run"}
     if rhs.lower().startswith("id="):
@@ -254,6 +309,8 @@ def _expand_move_line(line: str) -> dict[str, Any] | None:
         if len(parts) > 1 and parts[1].strip():
             item["title"] = parts[1].strip()
         return item
+    if is_word_to:
+        return None
     return {"from_date_str": from_d, "date_str": to_d, "sport": "Run", "title": rhs}
 
 
@@ -266,7 +323,7 @@ def expand_change_entries(entries: Iterable[Any] | None) -> list[dict[str, Any]]
             continue
         if not isinstance(raw, str):
             continue
-        line = raw.strip()
+        line = _clean_entry_line(raw)
         if not line:
             continue
         if "|" in line and (week_items := _expand_week_line(line)) is not None:
@@ -277,7 +334,7 @@ def expand_change_entries(entries: Iterable[Any] | None) -> list[dict[str, Any]]
             continue
         del_id_m = _DELETE_ID_RE.match(line)
         if del_id_m:
-            expanded.append({"workout_id": del_id_m.group("wid"), "delete": True})
+            expanded.append({"workout_id": del_id_m.group("wid1") or del_id_m.group("wid2"), "delete": True})
             continue
         dm = _DATED_LINE_RE.match(line)
         if dm and (lhs_parsed := _expand_date_lhs(dm.group("lhs"))) is not None:

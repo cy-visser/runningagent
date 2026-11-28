@@ -5,6 +5,7 @@ volume, same intensity), recovery = a lighter week, taper = activation only. TSS
 by focus so strength counts in the weekly load.
 """
 
+import re
 from typing import Optional
 
 # focus -> card title
@@ -22,6 +23,21 @@ FOCUS_ALIASES = {
     "plyo": "plyo", "plyos": "plyo", "plyometrics": "plyo", "reactive": "plyo",
     "mobility": "mobility", "prehab": "mobility",
 }
+_TOKEN_FOCUS = {
+    "heavy": "heavy-lower", "lower": "heavy-lower", "legs": "heavy-lower", "leg": "heavy-lower",
+    "unilateral": "heavy-lower", "posterior": "heavy-lower",
+    "full": "full", "general": "full", "upper": "full",
+    "core": "core-hips", "hips": "core-hips", "hip": "core-hips", "glute": "core-hips", "glutes": "core-hips",
+    "plyo": "plyo", "plyos": "plyo", "plyometric": "plyo", "plyometrics": "plyo", "reactive": "plyo",
+    "mobility": "mobility", "prehab": "mobility", "stretch": "mobility", "stretching": "mobility",
+}
+_MODIFIER_PHASE = {
+    "maintenance": "peak", "moderate": "peak",
+    "easy": "recovery", "deload": "recovery",
+    "light": "taper", "taper": "taper", "activation": "taper",
+}
+_GENERIC_STRENGTH_TOKENS = frozenset({"sc", "strength", "conditioning"})
+_FILLER_TOKENS = _GENERIC_STRENGTH_TOKENS | frozenset({"body", "session", "work", "training", "routine"})
 # Estimated TSS per minute of the session, by focus.
 TSS_PER_MIN = {"heavy-lower": 0.8, "full": 0.7, "core-hips": 0.5, "plyo": 0.85, "mobility": 0.3}
 
@@ -107,8 +123,39 @@ def phase_key(phase: Optional[str]) -> str:
     return "base"
 
 
+def focus_and_phase(text: str, phase: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
+    """Resolves `(focus_key, effective_phase)` from multi-word or modifier focus strings; `(None, phase)` on unknown words."""
+    cleaned = text.strip().lower()
+    if not cleaned:
+        return None, phase
+    direct = FOCUS_ALIASES.get(cleaned)
+    if direct:
+        return direct, phase
+    norm = re.sub(r"\bs\s*&\s*c\b", "sc", cleaned)
+    tokens = [t for t in re.split(r"[\s/_+&,-]+", norm) if t]
+    if not tokens:
+        return None, phase
+    foci: list[str] = []
+    inferred_phase: Optional[str] = None
+    has_generic = False
+    for tok in tokens:
+        if tok in _TOKEN_FOCUS:
+            foci.append(_TOKEN_FOCUS[tok])
+        elif tok in _MODIFIER_PHASE:
+            inferred_phase = inferred_phase or _MODIFIER_PHASE[tok]
+        elif tok in _FILLER_TOKENS:
+            if tok in _GENERIC_STRENGTH_TOKENS:
+                has_generic = True
+        else:
+            return None, phase
+    focus = next((f for f in foci if f != "full"), foci[0] if foci else None)
+    if focus is None and (inferred_phase is not None or has_generic):
+        focus = "full"
+    return focus, (inferred_phase or phase)
+
+
 def focus_key(text: str) -> Optional[str]:
-    return FOCUS_ALIASES.get(text.strip().lower())
+    return focus_and_phase(text)[0]
 
 
 def strength_session(focus: str, minutes: int, phase: Optional[str]) -> dict:

@@ -42,12 +42,13 @@ app = App(
     root_agent=root_agent,
     # QuickActionPlugin: web quick actions arrive as a message part (Agent Runtime drops state_delta).
     plugins=[AutoTracingPlugin(), QuickActionPlugin()],
-    # Compact session history every 10 runner messages, with a 2-invocation overlap (no token
-    # trigger); a Workflow root needs an explicit summarizer model. The summary keeps the latest
-    # report output verbatim (coach/report_memory.py).
+    # Token-threshold session compaction (retains the latest 6 raw events verbatim so warm sessions
+    # under 20k tokens keep their prefix KV cache intact and never summarize the active turn).
+    # A Workflow root needs an explicit summarizer model; ReportMemorySummarizer preserves the
+    # latest report output verbatim (coach/report_memory.py).
     events_compaction_config=EventsCompactionConfig(
-        compaction_interval=10,
-        overlap_size=2,
+        token_threshold=20_000,
+        event_retention_size=6,
         summarizer=ReportMemorySummarizer(llm=build_model(ONBOARDING_MODEL)),
     ),
 )

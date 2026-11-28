@@ -48,15 +48,15 @@ _NOT_FOUND_MESSAGE = (
 _REFUSED_MESSAGE = "Completed workouts are never deleted: tell the runner which `refused` entries stay."
 _NEEDS_STRUCTURE_MESSAGE = (
     "Nothing was staged: every Run/Bike workout you create, or whose distance/duration you change, needs a session "
-    "`code` (e.g. 'E 8', 'T 2x15\\' r2\\'', 'L 22 +6@M', 'B 60\\' Z2') or complete `structure` (when "
-    "`current_structure` is given and only one step changes, copy untouched blocks verbatim). "
+    "`code` (e.g. 'E 8', 'T 2x15\\' r2\\'', 'L 22 +6@M', 'RACE 15k @4:35 Name', 'B 60\\' Z2') or complete `structure` "
+    "(when `current_structure` is given and only one step changes, copy untouched blocks verbatim). "
     'Fallback `structure` schema (only for custom WU/CD, ladders, or `current_structure` edits): '
     '{"steps":[step|{"type":"repetition","reps":N,"steps":[work,rest]}]} '
     '(primaryIntensityMetric: omit for run pace; "percentOfThresholdHr"|bike "percentOfFtp"); '
     'step={"name","intensityClass":"warmUp"|"active"|"rest"|"coolDown"|"other","distance_m"|"duration_seconds",'
     '"pace":"M:SS-M:SS"|"intensity_min"+"intensity_max"}. '
-    "Ready items from this turn are kept automatically—re-send ONLY the `needs_structure` entries "
-    "(without distance_km/duration_minutes) and do not ask the runner."
+    "Ready items and `message` from this turn are kept automatically—re-send ONLY the `needs_structure` entries "
+    "(omit `message` and distance_km/duration_minutes) and do not ask the runner."
 )
 # Rejected (needs_structure) staging attempts allowed in one turn before the app stops the retries.
 MAX_NEEDS_STRUCTURE_ATTEMPTS = 3
@@ -231,14 +231,14 @@ def _preview_staged_lines(staged: list[dict]) -> list[str]:
 async def stage_workout_changes(
     tool_context: ToolContext, changes: list[Union[str, dict[str, Any]]], message: str = ""
 ) -> str:
-    """Stages workout / note / race-event changes of any count (1 to 150+). `message`: coaching rationale (<= 35w if already discussed, else <= 80w + ⚠️/🔴 numeric risks; omit on plain move/rename). When staging agreed recommendations, map directly to compact strings without re-auditing.
-    Prefer compact 1-line strings in `changes`:
-    - Workout: `"2027-01-05: P 4x1.2k @4:08-4:10 r2'"` | multi-date `"2026-12-30,2026-12-31: E 8 -strides"` (`+create` adds 2nd same-sport; `-strides` drops strides; `;` adds same-day double).
-    - Full week (for multi-week batches): `"2026-11-30 | Tue: I 6x400 @4:18 r90\\"; S 45' heavy-lower | Wed/Thu: E 6 | Sun: L 14"`.
+    """Stages workout / note / race-event changes of any count (1 to 150+). `message`: coaching rationale (<= 35w if already discussed, else <= 80w + ⚠️/🔴 numeric risks; omit on plain move/rename). Map agreed recommendations directly to compact strings without re-auditing.
+    Prefer compact 1-line strings in `changes` (`;` combines same-day doubles, `delete`, or `event`):
+    - Workout: `"2027-01-05: P 4x1.2k @4:08-4:10 r2'"` | `"2026-12-30,2026-12-31: E 8 -strides"` (`+create` adds 2nd same-sport; `-strides` drops strides; `"2027-01-29: T 2x2k @4:25 r2'; delete strength"`).
+    - Full week: `"2026-11-30 | Tue: I 6x400 @4:18 r90\\"; S 45' heavy-lower | Wed/Thu: E 6 | Sun: L 14"`.
     - Move / Delete / Note: `"2026-12-25 -> 2026-12-26: run"` | `"2027-01-29: delete strength"` (`delete id=<wid>`) | `"2026-12-19: note Holiday | Travel"`.
-    - Race Event (TP Calendar Event): `"2026-10-31: event A RunningRoad 21.1k Amsterdam HM | goal=1:35:00 place=10 pr=true"` (or dict `{"kind": "event", "date_str": "YYYY-MM-DD", "name": "...", "event_type": "RunningRoad", "distance_km": 21.1, "race_type_duration": "RunOnetoTwoHours", "priority": "A"|"B"|"C", "goal_time": "1:35:00", "goal_place": 10, "goal_pr": true}`; intermediate races must be B or C, never A).
-    - Codes: lengths 8|1.5k|10mi|400m|50'|90"|1h30, reps 6x1k, rec r2'|r90"|r200, slot am|mid|pm. Run: E 8 (+strides), R 6, L 22 (+6@M|+4x4k@HM r1k [+2@E]), RACE/EVENT [16k @HM] [Name] (no auto WU/CD); quality (15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2' (@5K|@10K|@HM|@M) or @M:SS[-M:SS], H 8x60" r90", REST. Other: B 60' Z2 (Z1-Z3) | B 4x8' @SS r4' (@SS|@T|@VO2), S 40' heavy-lower (full|core-hips|plyo|mobility), X 40' swim (walk|crosstrain).
-    - Dict items also supported for `[workout_id]` renames, events, or custom `structure` ladders/WU/CD (schema returned on retry)."""
+    - Race Event (TP Calendar Event): `"2026-10-31: event A RunningRoad 21.1k Amsterdam HM | goal=1:35:00 place=10 pr=true"` (intermediate races must be B or C, never A).
+    - Codes: lengths 8|1.5k|10mi|400m|50'|90"|1h30, reps 6x1k, rec r2'|r90"|r200, slot am|mid|pm, run `@M:SS[-M:SS]` or `@5K|@10K|@HM|@M|@T|@E`. Run: E 8 (+strides), R 6, L 22 (+6@M|+4x4k@HM r1k [+2@E]), RACE/EVENT 15k @HM|@4:35 [Name] (no auto WU/CD); quality (15'WU+strides+10'CD): T 2x15' r2', I 6x1k r2', Rp 10x200 r200, M 12k, P 4x2k@HM r2', H 8x60" r90", REST. Other: B 60' Z2 (Z1-Z3) | B 4x8' @SS r4' (@SS|@T|@VO2), S 40' heavy-lower (full|core-hips|plyo|mobility), X 40' swim (walk|crosstrain).
+    - Dict items supported for `[workout_id]` renames, events, or custom `structure` ladders/WU/CD (schema returned on retry)."""
     invocation = getattr(tool_context, "invocation_id", None)
     saved_cache = tool_context.state.get(_TP_CACHE_STATE_KEY)
     tp_cache: dict[str, Any] = (
@@ -345,8 +345,7 @@ async def stage_workout_changes(
             })
             if totals_notes:
                 result["totals_from_builder"] = totals_notes
-            strides = [{"date": c["date"][:10], "title": c.get("title"), "strides": c["strides_added"]}
-                       for c in staged[:MAX_STAGED_PREVIEW_LINES] if c.get("strides_added")]
+            strides = [c["date"][:10] for c in staged[:MAX_STAGED_PREVIEW_LINES] if c.get("strides_added")]
             if strides:
                 result["strides_added"] = strides
             if not problems:
